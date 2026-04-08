@@ -1,0 +1,38 @@
+{
+  "include": [
+    "backend",
+    "worker",
+    "frontend"
+  ],
+  "exclude": [
+    "**/node_modules",
+    "**/__pycache__",
+    "**/.*",
+    "backend/alembic/versions"
+  ],
+  "venvPath": "/Users/yswtrue/Codes/clothes-design/backend",
+  "venv": ".venv",
+  "executionEnvironments": [
+    {
+      "root": "backend",
+      "pythonVersion": "3.13",
+      "pythonPlatform": "Darwin",
+      "extraPaths": []
+    },
+    {
+      "root": "worker",
+      "pythonVersion": "3.13",
+      "pythonPlatform": "Darwin",
+      "extraPaths": [
+        "../backend"
+      ]
+    }
+  ],
+  "reportMissingImports": "error",
+  "reportMissingTypeStubs": "warning",
+  "reportUnusedImport": "warning",
+  "reportUnusedVariable": "warning",
+  "reportDuplicateImport": "error",
+  "reportOptionalMemberAccess": "error",
+  "typeCheckingMode": "basic"
+}

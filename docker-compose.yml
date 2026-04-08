@@ -1,0 +1,177 @@
+services:
+  # PostgreSQL database service
+  postgres:
+    image: postgres:17-alpine
+    container_name: clothes-design-postgres
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: ${POSTGRES_DB:-clothes_design_prod}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - clothes-design-net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  # Redis cache and queue service
+  redis:
+    image: redis:7-alpine
+    container_name: clothes-design-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - clothes-design-net
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  # MinIO S3-compatible object storage
+  minio:
+    image: minio/minio:latest
+    container_name: clothes-design-minio
+    environment:
+      MINIO_ROOT_USER: ${AWS_ACCESS_KEY_ID:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${AWS_SECRET_ACCESS_KEY:-minioadmin}
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - minio_data:/minio_data
+    networks:
+      - clothes-design-net
+    command: minio server /minio_data --console-address ":9001"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  # FastAPI backend service
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    container_name: clothes-design-backend
+    environment:
+      DATABASE_URL: ${DATABASE_URL:-postgresql://postgres:postgres@postgres:5432/clothes_design_prod}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+      REDIS_QUEUE_URL: ${REDIS_QUEUE_URL:-redis://redis:6379/1}
+      JWT_SECRET: ${JWT_SECRET:-change-this-secret-in-production}
+      JWT_EXPIRY: ${JWT_EXPIRY:-900}
+      JWT_REFRESH_EXPIRY: ${JWT_REFRESH_EXPIRY:-604800}
+      STORAGE_TYPE: ${STORAGE_TYPE:-s3}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-minioadmin}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-minioadmin}
+      AWS_S3_ENDPOINT: ${AWS_S3_ENDPOINT:-http://minio:9000}
+      AWS_S3_BUCKET: ${AWS_S3_BUCKET:-clothes-design-prod}
+      AWS_S3_USE_PATH_STYLE: ${AWS_S3_USE_PATH_STYLE:-true}
+      AWS_REGION: ${AWS_REGION:-us-east-1}
+      FRONTEND_URL: ${FRONTEND_URL:-http://localhost:3000}
+      BACKEND_URL: ${BACKEND_URL:-http://localhost:8000}
+      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8000}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      ENVIRONMENT: ${ENVIRONMENT:-production}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4-turbo-preview}
+      STABILITY_AI_API_KEY: ${STABILITY_AI_API_KEY:-}
+      VECTORIZER_AI_API_KEY: ${VECTORIZER_AI_API_KEY:-}
+      REPLICATE_API_TOKEN: ${REPLICATE_API_TOKEN:-}
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    networks:
+      - clothes-design-net
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  # Worker service for async task processing
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.worker
+    container_name: clothes-design-worker
+    environment:
+      DATABASE_URL: ${DATABASE_URL:-postgresql://postgres:postgres@postgres:5432/clothes_design_prod}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+      REDIS_QUEUE_URL: ${REDIS_QUEUE_URL:-redis://redis:6379/1}
+      JWT_SECRET: ${JWT_SECRET:-change-this-secret-in-production}
+      STORAGE_TYPE: ${STORAGE_TYPE:-s3}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-minioadmin}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-minioadmin}
+      AWS_S3_ENDPOINT: ${AWS_S3_ENDPOINT:-http://minio:9000}
+      AWS_S3_BUCKET: ${AWS_S3_BUCKET:-clothes-design-prod}
+      AWS_S3_USE_PATH_STYLE: ${AWS_S3_USE_PATH_STYLE:-true}
+      AWS_REGION: ${AWS_REGION:-us-east-1}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      ENVIRONMENT: ${ENVIRONMENT:-production}
+      WORKER_CONCURRENCY: ${WORKER_CONCURRENCY:-4}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      STABILITY_AI_API_KEY: ${STABILITY_AI_API_KEY:-}
+      VECTORIZER_AI_API_KEY: ${VECTORIZER_AI_API_KEY:-}
+      REPLICATE_API_TOKEN: ${REPLICATE_API_TOKEN:-}
+    depends_on:
+      backend:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    networks:
+      - clothes-design-net
+    restart: unless-stopped
+
+  # Next.js frontend service
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile.frontend
+    container_name: clothes-design-frontend
+    environment:
+      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8000}
+    ports:
+      - "3000:3000"
+    depends_on:
+      backend:
+        condition: service_healthy
+    networks:
+      - clothes-design-net
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+# Define custom network
+networks:
+  clothes-design-net:
+    driver: bridge
+
+# Define named volumes for data persistence
+volumes:
+  postgres_data:
+  redis_data:
+  minio_data:

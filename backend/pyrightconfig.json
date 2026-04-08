@@ -1,0 +1,8 @@
+{
+  "venvPath": "/Users/yswtrue/Codes/clothes-design/backend",
+  "venv": ".venv",
+  "typeCheckingMode": "off",
+  "reportMissingImports": "none",
+  "reportMissingModuleSource": "none",
+  "reportOptionalMemberAccess": "none"
+}

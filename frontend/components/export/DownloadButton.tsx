@@ -1,0 +1,61 @@
+'use client';
+
+interface DownloadButtonProps {
+  downloadUrl: string;
+  designId: number;
+}
+
+export default function DownloadButton({ downloadUrl, designId }: DownloadButtonProps) {
+  return (
+    <div className="rounded-lg border border-green-200 dark:border-green-800 bg-green-50 dark:bg-green-900/20 p-6">
+      <div className="flex flex-col items-center gap-4">
+        <div className="h-12 w-12 rounded-full bg-green-100 dark:bg-green-900/30 flex items-center justify-center">
+          <svg
+            className="h-6 w-6 text-green-600 dark:text-green-400"
+            fill="none"
+            viewBox="0 0 24 24"
+            stroke="currentColor"
+          >
+            <path
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              strokeWidth={2}
+              d="M5 13l4 4L19 7"
+            />
+          </svg>
+        </div>
+        <div className="text-center">
+          <h3 className="text-lg font-medium text-zinc-950 dark:text-zinc-50">
+            Export Complete!
+          </h3>
+          <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-400">
+            Your high-resolution TIF file is ready for download
+          </p>
+        </div>
+        <a
+          href={downloadUrl}
+          download={`design-${designId}-12K-CMYK.tif`}
+          className="inline-flex items-center gap-2 rounded-md bg-zinc-950 dark:bg-zinc-50 px-6 py-3 text-sm font-medium text-white dark:text-zinc-950 hover:bg-zinc-800 dark:hover:bg-zinc-200 transition-colors"
+        >
+          <svg
+            className="h-5 w-5"
+            fill="none"
+            viewBox="0 0 24 24"
+            stroke="currentColor"
+          >
+            <path
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              strokeWidth={2}
+              d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"
+            />
+          </svg>
+          Download TIF (CMYK, 12K)
+        </a>
+        <p className="text-xs text-zinc-500 dark:text-zinc-500">
+          Format: TIF • Color Space: CMYK • Resolution: 12000px
+        </p>
+      </div>
+    </div>
+  );
+}

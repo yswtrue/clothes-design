@@ -1,0 +1,44 @@
+# Worker image based on FastAPI backend (reuses same Python environment)
+FROM ghcr.io/astral-sh/uv:python3.13-bookworm-slim AS builder
+
+WORKDIR /app
+
+# Copy pyproject.toml and lock file
+COPY backend/pyproject.toml .
+COPY backend/uv.lock* .
+
+# Create virtual environment and sync dependencies
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv venv /opt/venv && \
+    UV_PROJECT_ENVIRONMENT=/opt/venv uv sync --frozen
+
+# Stage 2: Runtime
+FROM python:3.13-slim
+
+WORKDIR /app
+
+# Install runtime dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    postgresql-client \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create non-root user
+RUN groupadd -r appuser && useradd -r -g appuser appuser
+
+# Copy virtual environment from builder
+COPY --from=builder /opt/venv /opt/venv
+
+# Set environment variables
+ENV PATH="/opt/venv/bin:$PATH" \
+    PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1
+
+# Copy backend and worker code
+COPY --chown=appuser:appuser backend ./backend
+COPY --chown=appuser:appuser worker ./worker
+
+# Change to non-root user
+USER appuser
+
+# Start worker process with uv (ensures PYTHONPATH is correct)
+CMD ["uv", "run", "python", "-m", "worker.main"]

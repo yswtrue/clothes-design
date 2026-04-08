@@ -1,0 +1,141 @@
+# Devenv
+.devenv*
+devenv.local.nix
+devenv.local.yaml
+
+# direnv
+.direnv
+
+# pre-commit
+.pre-commit-config.yaml
+
+# Node.js / Frontend
+frontend/node_modules/
+frontend/.next/
+frontend/.turbo/
+frontend/dist/
+frontend/build/
+frontend/.env.local
+frontend/.env.*.local
+frontend/npm-debug.log*
+frontend/yarn-debug.log*
+frontend/yarn-error.log*
+frontend/.pnpm-debug.log*
+
+# Python / Backend
+backend/__pycache__/
+backend/*.py[cod]
+backend/*$py.class
+backend/*.so
+backend/.Python
+backend/build/
+backend/develop-eggs/
+backend/dist/
+backend/downloads/
+backend/eggs/
+backend/.eggs/
+backend/lib/
+backend/lib64/
+backend/parts/
+backend/sdist/
+backend/var/
+backend/wheels/
+backend/*.egg-info/
+backend/.installed.cfg
+backend/*.egg
+backend/MANIFEST
+backend/.venv/
+backend/venv/
+backend/ENV/
+backend/env/
+backend/.uv/
+backend/.ruff_cache/
+backend/.mypy_cache/
+backend/.dmypy.json
+backend/dmypy.json
+backend/.pyre/
+backend/.vscode/
+
+# Worker (async job processor)
+worker/__pycache__/
+worker/*.py[cod]
+worker/*$py.class
+worker/.venv/
+worker/venv/
+worker/.uv/
+worker/.ruff_cache/
+
+# Shared
+shared/node_modules/
+shared/dist/
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+.project
+.pydevproject
+.settings/
+*.sublime-project
+*.sublime-workspace
+*.iml
+
+# OS
+.DS_Store
+Thumbs.db
+.vagrant/
+.cache/
+
+# Environment files
+.env
+.env.local
+.env.*.local
+.env.production.local
+
+# Build outputs
+dist/
+build/
+out/
+
+# devenv artifacts (additional)
+.devenv/
+.direnv/
+
+# Python virtual environments (comprehensive)
+.venv
+env/
+venv/
+ENV/
+.uv/
+
+# Turbo
+.turbo/
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+pnpm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Package manager files (for clarity)
+package-lock.json
+yarn.lock
+pnpm-lock.yaml
+bun.lockb
+
+# Playwright
+playwright-report/
+playwright/.cache/
+
+.sisyphus
+.ruff_cache
+.playwright-mcp
+.mypy_cache
+.pytest_cache
+
+**/__pycache__
