@@ -3,10 +3,7 @@
 import os
 from typing import Any
 
-try:
-    import redis.asyncio as redis
-except Exception:
-    redis = None  # type: ignore[assignment]
+import redis.asyncio as redis
 
 RedisType = Any
 

@@ -12,7 +12,7 @@ license = { text = "MIT" }
 authors = [{ name = "Clothes Design Team" }]
 dependencies = [
     "fastapi>=0.104.1",
-    "uvicorn[standard]>=0.24.0",
+    "uvicorn[standard]>=0.44.0",
     "pydantic>=2.0.0",
     "pydantic-settings>=2.0.0",
     "sqlalchemy[asyncio]>=2.0.0",
@@ -22,15 +22,15 @@ dependencies = [
     "passlib[bcrypt]>=1.7.4",
     "bcrypt<5",
     "python-jose[cryptography]>=3.3.0",
-    "python-multipart>=0.0.9",
+    "python-multipart>=0.0.24",
     "email-validator>=2.0.0",
-    "aiosqlite>=0.20.0",
-    "redis[hiredis]>=5.0.0",
+    "aiosqlite>=0.22.1",
+    "redis[hiredis]>=7.4.0",
     "filetype>=1.2.0",
     "aiohttp>=3.13.5",
     "pillow>=12.2.0",
-    "boto3>=1.42.83",
-    "fastapi-cache2[redis]>=0.1.8",
+    "boto3>=1.42.85",
+    "fastapi-cache2-fork[redis]>=2.3.0",
     "setuptools>=82.0.1",
 ]
 

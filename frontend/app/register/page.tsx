@@ -3,13 +3,13 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { register, validateRegisterForm } from '@/lib/auth';
+import { register, validateRegisterForm, login } from '@/lib/auth';
 import type { RegisterCredentials, ValidationErrors } from '@/types/auth';
 
 export default function RegisterPage() {
   const router = useRouter();
   const [credentials, setCredentials] = useState<RegisterCredentials>({
-    email: '',
+    username: '',
     password: '',
     confirmPassword: '',
   });
@@ -28,10 +28,15 @@ export default function RegisterPage() {
     setIsSubmitting(true);
     setErrors({});
 
-    const result = await register(credentials.email, credentials.password);
+    const result = await register(credentials.username, credentials.password);
 
     if (result.success) {
-      router.push('/');
+      const loginResult = await login(credentials.username, credentials.password, true);
+      if (loginResult.success) {
+        router.replace('/dashboard');
+      } else {
+        router.replace('/login');
+      }
     } else {
       setErrors({ general: result.error });
       setIsSubmitting(false);
@@ -43,7 +48,7 @@ export default function RegisterPage() {
       <div className="w-full max-w-md">
         <div className="bg-white dark:bg-zinc-900 rounded-lg border border-zinc-200 dark:border-zinc-800 p-8">
           <h1 className="text-2xl font-semibold text-zinc-950 dark:text-zinc-50 mb-6">
-            Create your account
+            创建您的账号
           </h1>
 
           {errors.general && (
@@ -55,26 +60,26 @@ export default function RegisterPage() {
           <form onSubmit={handleSubmit} className="space-y-4">
             <div>
               <label
-                htmlFor="email"
+                htmlFor="username"
                 className="block text-sm font-medium text-zinc-700 dark:text-zinc-300 mb-1"
               >
-                Email address
+                用户名
               </label>
               <input
-                id="email"
-                name="email"
-                type="email"
-                autoComplete="email"
+                id="username"
+                name="username"
+                type="text"
+                autoComplete="username"
                 required
-                value={credentials.email}
+                value={credentials.username}
                 onChange={(e) =>
-                  setCredentials({ ...credentials, email: e.target.value })
+                  setCredentials({ ...credentials, username: e.target.value })
                 }
                 className="w-full px-3 py-2 border border-zinc-300 dark:border-zinc-700 rounded-md bg-white dark:bg-zinc-900 text-zinc-950 dark:text-zinc-50 focus:outline-none focus:ring-2 focus:ring-zinc-950 dark:focus:ring-zinc-50"
               />
-              {errors.email && (
+              {errors.username && (
                 <p className="mt-1 text-sm text-red-600 dark:text-red-400">
-                  {errors.email}
+                  {errors.username}
                 </p>
               )}
             </div>
@@ -84,7 +89,7 @@ export default function RegisterPage() {
                 htmlFor="password"
                 className="block text-sm font-medium text-zinc-700 dark:text-zinc-300 mb-1"
               >
-                Password
+                密码
               </label>
               <input
                 id="password"
@@ -104,7 +109,7 @@ export default function RegisterPage() {
                 </p>
               )}
               <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
-                At least 8 characters with uppercase, lowercase, and number
+                至少8个字符，包含大写、小写字母和数字
               </p>
             </div>
 
@@ -113,7 +118,7 @@ export default function RegisterPage() {
                 htmlFor="confirmPassword"
                 className="block text-sm font-medium text-zinc-700 dark:text-zinc-300 mb-1"
               >
-                Confirm password
+                确认密码
               </label>
               <input
                 id="confirmPassword"
@@ -139,17 +144,17 @@ export default function RegisterPage() {
               disabled={isSubmitting}
               className="w-full py-2 px-4 bg-zinc-950 dark:bg-zinc-50 text-white dark:text-zinc-950 rounded-md font-medium hover:bg-zinc-800 dark:hover:bg-zinc-200 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
             >
-              {isSubmitting ? 'Creating account...' : 'Sign up'}
+              {isSubmitting ? '创建账号中...' : '注册'}
             </button>
           </form>
 
           <p className="mt-6 text-center text-sm text-zinc-600 dark:text-zinc-400">
-            Already have an account?{' '}
+            已有账号？{' '}
             <Link
               href="/login"
               className="font-medium text-zinc-950 dark:text-zinc-50 hover:underline"
             >
-              Sign in
+              登录
             </Link>
           </p>
         </div>

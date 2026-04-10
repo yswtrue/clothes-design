@@ -4,34 +4,21 @@ import type {
   RollbackResponse,
   VersionsListResponse,
 } from '@/types/history';
+import { apiRequest } from './api';
 
 export async function fetchDesigns(
   page: number = 1,
   limit: number = 20
 ): Promise<PaginatedDesignsResponse> {
-  const response = await fetch(`/api/designs?page=${page}&limit=${limit}`, {
-    credentials: 'include',
-  });
-
-  if (!response.ok) {
-    const errorData = await response.json().catch(() => ({}));
-    throw new Error(errorData.detail || 'Failed to fetch designs');
-  }
-
-  return response.json();
+  return apiRequest<PaginatedDesignsResponse>(
+    `/api/designs?page=${page}&limit=${limit}`
+  );
 }
 
 export async function fetchVersions(designId: number): Promise<DesignVersion[]> {
-  const response = await fetch(`/api/designs/${designId}/versions`, {
-    credentials: 'include',
-  });
-
-  if (!response.ok) {
-    const errorData = await response.json().catch(() => ({}));
-    throw new Error(errorData.detail || 'Failed to fetch versions');
-  }
-
-  const data: VersionsListResponse = await response.json();
+  const data = await apiRequest<VersionsListResponse>(
+    `/api/designs/${designId}/versions`
+  );
   return data.versions;
 }
 
@@ -39,31 +26,23 @@ export async function rollbackVersion(
   designId: number,
   version: number
 ): Promise<RollbackResponse> {
-  const response = await fetch(`/api/designs/${designId}/rollback`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-    },
-    credentials: 'include',
-    body: JSON.stringify({ version }),
-  });
-
-  if (!response.ok) {
-    const errorData = await response.json().catch(() => ({}));
-    throw new Error(errorData.detail || 'Failed to rollback version');
-  }
-
-  return response.json();
+  return apiRequest<RollbackResponse>(
+    `/api/designs/${designId}/rollback`,
+    {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ version }),
+    }
+  );
 }
 
 export async function deleteDesign(designId: number): Promise<void> {
-  const response = await fetch(`/api/designs/${designId}`, {
-    method: 'DELETE',
-    credentials: 'include',
-  });
-
-  if (!response.ok) {
-    const errorData = await response.json().catch(() => ({}));
-    throw new Error(errorData.detail || 'Failed to delete design');
-  }
+  await apiRequest<void>(
+    `/api/designs/${designId}`,
+    {
+      method: 'DELETE',
+    }
+  );
 }

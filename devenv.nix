@@ -28,6 +28,8 @@ in
   languages.javascript.package = pkgs-playwright.nodejs;
 
   languages.python.enable = true;
+  languages.python.uv.enable = true;
+  languages.python.venv.enable = true;
 
   # https://devenv.sh/services/
   services.postgres = {
@@ -35,8 +37,8 @@ in
     listen_addresses = "127.0.0.1";
     port = 5432;
     initialDatabases = [
-      { name = "clothes_design_dev"; user="postgres";pass="postgres"; }
-      { name = "clothes_design_test"; user="postgres";pass="postgres"; }
+      { name = "clothes_design_dev"; user = "postgres"; pass = "postgres"; }
+      { name = "clothes_design_test"; user = "postgres"; pass = "postgres"; }
     ];
   };
 

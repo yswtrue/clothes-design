@@ -55,6 +55,7 @@ backend/.dmypy.json
 backend/dmypy.json
 backend/.pyre/
 backend/.vscode/
+backend/uploads/
 
 # Worker (async job processor)
 worker/__pycache__/

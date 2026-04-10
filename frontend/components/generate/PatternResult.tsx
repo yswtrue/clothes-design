@@ -16,7 +16,7 @@ export default function PatternResult({
   onGenerateAnother,
 }: PatternResultProps) {
   const formatFileSize = (bytes?: number) => {
-    if (!bytes) return 'Unknown';
+    if (!bytes) return '未知';
     if (bytes < 1024) return `${bytes} B`;
     if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
     return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
@@ -36,18 +36,18 @@ export default function PatternResult({
 
       <div className="rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 p-6">
         <h3 className="text-lg font-medium text-zinc-950 dark:text-zinc-50 mb-4">
-          Pattern Details
+          图案详情
         </h3>
         <dl className="space-y-3">
           <div className="flex justify-between">
-            <dt className="text-sm text-zinc-600 dark:text-zinc-400">File Name</dt>
+            <dt className="text-sm text-zinc-600 dark:text-zinc-400">文件名</dt>
             <dd className="text-sm font-medium text-zinc-950 dark:text-zinc-50 font-mono">
               {fileName}
             </dd>
           </div>
           {fileSize && (
             <div className="flex justify-between">
-              <dt className="text-sm text-zinc-600 dark:text-zinc-400">File Size</dt>
+              <dt className="text-sm text-zinc-600 dark:text-zinc-400">文件大小</dt>
               <dd className="text-sm font-medium text-zinc-950 dark:text-zinc-50">
                 {formatFileSize(fileSize)}
               </dd>
@@ -55,7 +55,7 @@ export default function PatternResult({
           )}
           {dimensions && (
             <div className="flex justify-between">
-              <dt className="text-sm text-zinc-600 dark:text-zinc-400">Dimensions</dt>
+              <dt className="text-sm text-zinc-600 dark:text-zinc-400">尺寸</dt>
               <dd className="text-sm font-medium text-zinc-950 dark:text-zinc-50">
                 {dimensions.width} × {dimensions.height} px
               </dd>
@@ -70,13 +70,13 @@ export default function PatternResult({
           download={fileName}
           className="flex-1 rounded-md bg-zinc-950 dark:bg-zinc-50 px-4 py-2.5 text-sm font-medium text-white dark:text-zinc-950 hover:bg-zinc-800 dark:hover:bg-zinc-200 transition-colors text-center"
         >
-          Download Pattern
+          下载图案
         </a>
         <button
           onClick={onGenerateAnother}
           className="flex-1 rounded-md border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 px-4 py-2.5 text-sm font-medium text-zinc-950 dark:text-zinc-50 hover:bg-zinc-50 dark:hover:bg-zinc-800 transition-colors"
         >
-          Generate Another
+          再生成一个
         </button>
       </div>
     </div>

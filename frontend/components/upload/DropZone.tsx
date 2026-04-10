@@ -24,11 +24,11 @@ export default function DropZone({ onFileAccepted, disabled = false }: DropZoneP
         const rejection = rejectedFiles[0];
         const error = rejection.errors[0];
         
-        let errorMessage = 'Upload failed';
+        let errorMessage = '上传失败';
         if (error.code === 'file-too-large') {
-          errorMessage = 'File size exceeds 50MB limit';
+          errorMessage = '文件大小超过 50MB 限制';
         } else if (error.code === 'file-invalid-type') {
-          errorMessage = 'Unsupported file type. Please upload JPG, PNG, or WebP images.';
+          errorMessage = '不支持的文件类型。请上传 JPG、PNG 或 WebP 图片。';
         }
         
         alert(errorMessage);
@@ -81,18 +81,18 @@ export default function DropZone({ onFileAccepted, disabled = false }: DropZoneP
 
       {isDragActive ? (
         <p className="text-lg font-medium text-zinc-950 dark:text-zinc-50">
-          Drop file here
+          放在这里
         </p>
       ) : (
         <div>
           <p className="text-lg font-medium text-zinc-950 dark:text-zinc-50 mb-1">
-            Drag & drop an image here
+            拖放图片到这里
           </p>
           <p className="text-sm text-zinc-600 dark:text-zinc-400">
-            or click to select a file
+            或点击选择文件
           </p>
           <p className="text-xs text-zinc-500 dark:text-zinc-500 mt-2">
-            JPG, PNG, or WebP up to 50MB
+            支持 JPG、PNG 或 WebP，最大 50MB
           </p>
         </div>
       )}

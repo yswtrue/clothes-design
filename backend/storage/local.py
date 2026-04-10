@@ -4,6 +4,7 @@ import asyncio
 import os
 from pathlib import Path
 
+from fastapi.logger import logger
 from storage.base import StorageService
 from storage.exceptions import (
     StorageDeleteError,
@@ -45,7 +46,7 @@ class LocalStorage(StorageService):
             # Run file write in executor to avoid blocking
             loop = asyncio.get_event_loop()
             await loop.run_in_executor(None, file_path.write_bytes, file)
-            return str(file_path)
+            return key
         except Exception as e:
             raise StorageUploadError(f"Failed to upload file {key}: {e}") from e
 
@@ -113,9 +114,10 @@ class LocalStorage(StorageService):
         try:
             file_path = self.upload_dir / key
             if not file_path.exists():
-                raise StorageURLError(f"File not found: {key}")
+                logger.error(f"File not found: {key}")
             return str(file_path)
-        except StorageURLError:
-            raise
+        except StorageURLError as e:
+            logger.error(f"Storage URL error for {key}: {e}")
         except Exception as e:
-            raise StorageURLError(f"Failed to get URL for {key}: {e}") from e
+            logger.error(f"Failed to get URL for {key}: {e}")
+        return str(self.upload_dir / key)

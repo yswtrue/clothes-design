@@ -1,4 +1,5 @@
 import type { UploadResponse, Material, UploadProgress, UploadError } from '@/types/upload';
+import { apiRequest } from './api';
 
 const MAX_FILE_SIZE = 50 * 1024 * 1024; // 50MB
 
@@ -73,14 +74,7 @@ export async function uploadFile(
 }
 
 export async function fetchMaterial(materialId: number): Promise<Material> {
-  const response = await fetch(`/api/materials/${materialId}`);
-
-  if (!response.ok) {
-    const errorData = await response.json().catch(() => ({}));
-    throw new Error(errorData.detail || 'Failed to fetch material');
-  }
-
-  return response.json();
+  return apiRequest<Material>(`/api/materials/${materialId}`);
 }
 
 export async function pollForAnalysis(

@@ -1,30 +1,17 @@
 import type { ExportResponse, ExportStatusResponse } from '@/types/export';
+import { apiRequest } from './api';
 
 export async function triggerExport(designId: number): Promise<ExportResponse> {
-  const response = await fetch(`/api/export/designs/${designId}`, {
-    method: 'POST',
-    credentials: 'include',
-  });
-
-  if (!response.ok) {
-    const errorData = await response.json().catch(() => ({}));
-    throw new Error(errorData.detail || 'Failed to start export');
-  }
-
-  return response.json();
+  return apiRequest<ExportResponse>(
+    `/api/export/designs/${designId}`,
+    {
+      method: 'POST',
+    }
+  );
 }
 
 export async function fetchExportStatus(taskId: string): Promise<ExportStatusResponse> {
-  const response = await fetch(`/api/export/tasks/${taskId}`, {
-    credentials: 'include',
-  });
-
-  if (!response.ok) {
-    const errorData = await response.json().catch(() => ({}));
-    throw new Error(errorData.detail || 'Failed to fetch export status');
-  }
-
-  return response.json();
+  return apiRequest<ExportStatusResponse>(`/api/export/tasks/${taskId}`);
 }
 
 export async function pollExportStatus(

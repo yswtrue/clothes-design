@@ -1,7 +1,6 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import Link from 'next/link';
 import { fetchDesigns, deleteDesign, rollbackVersion } from '@/lib/history';
 import type { Design } from '@/types/history';
 import DesignCard from '@/components/history/DesignCard';
@@ -20,7 +19,7 @@ interface ConfirmModalState {
   onConfirm: () => void;
 }
 
-export default function HistoryPage() {
+export default function HistoryTab() {
   const [state, setState] = useState<PageState>('loading');
   const [designs, setDesigns] = useState<Design[]>([]);
   const [expandedDesignIds, setExpandedDesignIds] = useState<Set<number>>(new Set());
@@ -59,7 +58,7 @@ export default function HistoryPage() {
         }
       } catch (err) {
         if (!cancelled) {
-          setError(err instanceof Error ? err.message : 'Failed to load designs');
+          setError(err instanceof Error ? err.message : '加载设计失败');
           setState('error');
         }
       }
@@ -72,7 +71,6 @@ export default function HistoryPage() {
     };
   }, [currentPage, retryTrigger]);
 
-  // Auto-clear success message after 5 seconds
   useEffect(() => {
     if (successMessage) {
       const timer = setTimeout(() => setSuccessMessage(null), 5000);
@@ -80,9 +78,6 @@ export default function HistoryPage() {
     }
   }, [successMessage]);
 
-  /**
-   * Toggle expand/collapse for a design card.
-   */
   function toggleExpand(designId: number) {
     setExpandedDesignIds((prev) => {
       const next = new Set(prev);
@@ -95,23 +90,17 @@ export default function HistoryPage() {
     });
   }
 
-  /**
-   * Open delete confirmation modal.
-   */
   function confirmDelete(design: Design) {
     setConfirmModal({
       isOpen: true,
-      title: 'Delete Design',
-      message: `Are you sure you want to delete "${design.name}"? This will also delete all ${design.versions_count} version(s). This action cannot be undone.`,
-      confirmText: 'Delete',
+      title: '删除设计',
+      message: `确定要删除"${design.name}"吗？这将同时删除全部 ${design.versions_count} 个版本。此操作无法撤销。`,
+      confirmText: '删除',
       variant: 'danger',
       onConfirm: () => handleDelete(design.id),
     });
   }
 
-  /**
-   * Delete a design and refresh the list.
-   */
   async function handleDelete(designId: number) {
     setConfirmModal((prev) => ({ ...prev, isOpen: false }));
     setState('deleting');
@@ -128,7 +117,7 @@ export default function HistoryPage() {
         return next;
       });
 
-      setSuccessMessage('Design deleted successfully');
+      setSuccessMessage('设计删除成功');
       setState('idle');
 
       if (designs.length === 1 && currentPage > 1) {
@@ -137,28 +126,22 @@ export default function HistoryPage() {
         setRetryTrigger(prev => prev + 1);
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to delete design');
+      setError(err instanceof Error ? err.message : '删除设计失败');
       setState('error');
     }
   }
 
-  /**
-   * Open rollback confirmation modal.
-   */
   function confirmRollback(designId: number, designName: string, versionNumber: number) {
     setConfirmModal({
       isOpen: true,
-      title: 'Rollback to Version',
-      message: `Rollback "${designName}" to version ${versionNumber}? This will create a new version with the data from version ${versionNumber}.`,
-      confirmText: 'Rollback',
+      title: '回滚到版本',
+      message: `将"${designName}"回滚到版本 ${versionNumber}？这将使用版本 ${versionNumber} 的数据创建一个新版本。`,
+      confirmText: '回滚',
       variant: 'default',
       onConfirm: () => handleRollback(designId, versionNumber),
     });
   }
 
-  /**
-   * Rollback a design to a specific version.
-   */
   async function handleRollback(designId: number, versionNumber: number) {
     setConfirmModal((prev) => ({ ...prev, isOpen: false }));
     setState('rolling-back');
@@ -167,7 +150,7 @@ export default function HistoryPage() {
 
     try {
       const response = await rollbackVersion(designId, versionNumber);
-      setSuccessMessage(`Rolled back to version ${versionNumber}. New version ${response.version} created.`);
+      setSuccessMessage(`已回滚到版本 ${versionNumber}。新版本 ${response.version} 已创建。`);
       setState('idle');
       setRollingBackDesignId(null);
 
@@ -190,39 +173,26 @@ export default function HistoryPage() {
         });
       }, 100);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to rollback version');
+      setError(err instanceof Error ? err.message : '版本回滚失败');
       setState('error');
       setRollingBackDesignId(null);
     }
   }
 
-  /**
-   * Handle page change from pagination component.
-   */
   function handlePageChange(page: number) {
     setCurrentPage(page);
     window.scrollTo({ top: 0, behavior: 'smooth' });
   }
 
   return (
-    <div className="min-h-screen bg-gray-50 dark:bg-gray-900 py-8 px-4 sm:px-6 lg:px-8">
+    <div className="py-8 px-4 sm:px-6 lg:px-8">
       <div className="max-w-5xl mx-auto">
-        {/* Header */}
-        <div className="mb-8">
-          <h1 className="text-3xl font-bold text-gray-900 dark:text-white">Design History</h1>
-          <p className="mt-2 text-gray-600 dark:text-gray-400">
-            View and manage all your design projects and their version history.
-          </p>
-        </div>
-
-        {/* Success Message */}
         {successMessage && (
           <div className="mb-6 p-4 bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 rounded-lg">
             <p className="text-green-800 dark:text-green-200">{successMessage}</p>
           </div>
         )}
 
-        {/* Error Message */}
         {error && state === 'error' && (
           <div className="mb-6 p-4 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg">
             <p className="text-red-800 dark:text-red-200">{error}</p>
@@ -230,19 +200,17 @@ export default function HistoryPage() {
               onClick={() => setRetryTrigger(prev => prev + 1)}
               className="mt-2 text-red-600 dark:text-red-400 underline hover:text-red-700 dark:hover:text-red-300"
             >
-              Try Again
+              重试
             </button>
           </div>
         )}
 
-        {/* Loading State */}
         {state === 'loading' && (
           <div className="flex justify-center items-center py-12">
             <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 dark:border-blue-400"></div>
           </div>
         )}
 
-        {/* Empty State */}
         {state === 'idle' && designs.length === 0 && (
           <div className="text-center py-12 bg-white dark:bg-gray-800 rounded-lg shadow">
             <svg
@@ -259,22 +227,13 @@ export default function HistoryPage() {
                 d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"
               />
             </svg>
-            <h3 className="mt-2 text-sm font-medium text-gray-900 dark:text-white">No designs yet</h3>
+            <h3 className="mt-2 text-sm font-medium text-gray-900 dark:text-white">暂无设计</h3>
             <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
-              Upload materials to get started.
+              上传素材开始创作。
             </p>
-            <div className="mt-6">
-              <Link
-                href="/upload"
-                className="inline-flex items-center px-4 py-2 border border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700 dark:bg-blue-500 dark:hover:bg-blue-600"
-              >
-                Upload Materials
-              </Link>
-            </div>
           </div>
         )}
 
-        {/* Design List */}
         {state !== 'loading' && designs.length > 0 && (
           <div className="space-y-4">
             {designs.map((design) => (
@@ -301,7 +260,6 @@ export default function HistoryPage() {
           </div>
         )}
 
-        {/* Pagination */}
         {state !== 'loading' && designs.length > 0 && totalPages > 1 && (
           <div className="mt-8">
             <Pagination
@@ -312,13 +270,12 @@ export default function HistoryPage() {
           </div>
         )}
 
-        {/* Confirm Modal */}
         <ConfirmModal
           isOpen={confirmModal.isOpen}
           title={confirmModal.title}
           message={confirmModal.message}
           confirmText={confirmModal.confirmText}
-          cancelText="Cancel"
+          cancelText="取消"
           variant={confirmModal.variant}
           onConfirm={confirmModal.onConfirm}
           onCancel={() => setConfirmModal((prev) => ({ ...prev, isOpen: false }))}

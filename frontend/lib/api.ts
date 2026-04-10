@@ -52,6 +52,20 @@ export async function fetchWithRetry<T = unknown>(
       const response = await fetch(url, options);
 
       if (!response.ok) {
+        // Handle 401 Unauthorized - clear tokens and redirect to login
+        if (response.status === 401) {
+          if (typeof window !== 'undefined') {
+            localStorage.removeItem('access_token');
+            localStorage.removeItem('refresh_token');
+            localStorage.removeItem('user');
+            sessionStorage.removeItem('access_token');
+            sessionStorage.removeItem('refresh_token');
+            
+            // Redirect to login page
+            window.location.href = '/login';
+          }
+        }
+
         const errorData = await response.json().catch(() => ({}));
         throw new NetworkError(
           errorData.detail || `HTTP ${response.status}: ${response.statusText}`,
@@ -63,6 +77,11 @@ export async function fetchWithRetry<T = unknown>(
       return (await response.json()) as T;
     } catch (error) {
       lastError = error instanceof Error ? error : new Error(String(error));
+
+      // Don't retry 401 errors
+      if (error instanceof NetworkError && error.statusCode === 401) {
+        throw lastError;
+      }
 
       if (attempt < maxRetries && isRetriableError(error)) {
         const delayMs = initialDelay * 2 ** attempt;
@@ -97,4 +116,17 @@ export async function postWithRetry<T = unknown>(
     },
     retryOptions
   );
+}
+
+export async function apiRequest<T = unknown>(
+  url: string,
+  options?: RequestInit,
+  retryOptions?: RetryOptions
+): Promise<T> {
+  const defaultOptions: RequestInit = {
+    credentials: 'include',
+    ...options,
+  };
+
+  return fetchWithRetry<T>(url, defaultOptions, retryOptions);
 }

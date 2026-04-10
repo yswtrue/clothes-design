@@ -5,6 +5,7 @@ import { triggerExport, pollExportStatus } from '@/lib/export';
 import { ExportStatusResponse } from '@/types/export';
 import ExportProgress from '@/components/export/ExportProgress';
 import DownloadButton from '@/components/export/DownloadButton';
+import { apiRequest } from '@/lib/api';
 
 type ExportState = 'idle' | 'loading' | 'exporting' | 'complete' | 'error';
 
@@ -31,15 +32,10 @@ export default function ExportPage({ params }: PageProps) {
     setState('loading');
     setError(null);
     try {
-      const response = await fetch(`/api/designs/${designIdNum}`, {
-        credentials: 'include',
-      });
-
-      if (!response.ok) {
-        throw new Error('Failed to load design');
-      }
-
-      const design = await response.json();
+      const design = await apiRequest<{ preview_state?: { pattern_url: string } }>(
+        `/api/designs/${designIdNum}`
+      );
+      
       if (design.preview_state?.pattern_url) {
         setPreviewUrl(design.preview_state.pattern_url);
       }

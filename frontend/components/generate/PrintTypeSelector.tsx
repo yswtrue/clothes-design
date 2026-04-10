@@ -9,18 +9,18 @@ interface PrintTypeSelectorProps {
 const PRINT_TYPES: { value: PrintType; label: string; description: string }[] = [
   {
     value: 'seamless',
-    label: 'Seamless Pattern',
-    description: 'Repeating pattern that tiles without visible seams',
+    label: '无缝图案',
+    description: '重复平铺无缝拼接的图案',
   },
   {
     value: 'standalone',
-    label: 'Standalone Design',
-    description: 'Individual design element for placement',
+    label: '独立设计',
+    description: '用于放置的单独设计元素',
   },
   {
     value: 'full',
-    label: 'Full Coverage',
-    description: 'Complete design filling the entire garment',
+    label: '全覆盖',
+    description: '填充整个服装的完整设计',
   },
 ];
 
@@ -32,7 +32,7 @@ export default function PrintTypeSelector({
   return (
     <div className="space-y-4">
       <label className="block text-sm font-medium text-zinc-950 dark:text-zinc-50">
-        Print Type
+        印刷类型
       </label>
       <div className="space-y-3">
         {PRINT_TYPES.map((type) => {
@@ -73,7 +73,7 @@ export default function PrintTypeSelector({
                     </span>
                     {isSuggested && (
                       <span className="text-xs bg-zinc-950 dark:bg-zinc-50 text-white dark:text-zinc-950 px-2 py-0.5 rounded">
-                        Suggested
+                        建议
                       </span>
                     )}
                   </div>

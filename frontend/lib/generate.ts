@@ -1,19 +1,15 @@
 import type { GenerateRequest, GenerateResponse, TaskStatusResponse } from '@/types/generate';
+import { apiRequest } from './api';
 
 export async function submitGeneration(request: GenerateRequest): Promise<GenerateResponse> {
-  const response = await fetch('/api/generate', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    credentials: 'include',
-    body: JSON.stringify(request),
-  });
-
-  if (!response.ok) {
-    const errorData = await response.json().catch(() => ({}));
-    throw new Error(errorData.detail || 'Failed to start generation');
-  }
-
-  return response.json();
+  return apiRequest<GenerateResponse>(
+    '/api/generate',
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(request),
+    }
+  );
 }
 
 export async function pollTaskStatus(
@@ -25,16 +21,9 @@ export async function pollTaskStatus(
   let attempts = 0;
 
   while (attempts < maxAttempts) {
-    const response = await fetch(`/api/generate/tasks/${taskId}`, {
-      credentials: 'include',
-    });
-
-    if (!response.ok) {
-      const errorData = await response.json().catch(() => ({}));
-      throw new Error(errorData.detail || 'Failed to fetch task status');
-    }
-
-    const task: TaskStatusResponse = await response.json();
+    const task = await apiRequest<TaskStatusResponse>(
+      `/api/generate/tasks/${taskId}`
+    );
 
     if (onProgress) {
       onProgress(task);

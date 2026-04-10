@@ -6,7 +6,7 @@ export interface TokenResponse {
 
 export interface UserResponse {
   id: number;
-  email: string;
+  username: string;
   created_at: string | null;
 }
 
@@ -15,18 +15,18 @@ export interface AuthError {
 }
 
 export interface LoginCredentials {
-  email: string;
+  username: string;
   password: string;
 }
 
 export interface RegisterCredentials {
-  email: string;
+  username: string;
   password: string;
   confirmPassword: string;
 }
 
 export interface ValidationErrors {
-  email?: string;
+  username?: string;
   password?: string;
   confirmPassword?: string;
   general?: string;

@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import Image from 'next/image';
+import { apiRequest } from '@/lib/api';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
 
@@ -26,11 +27,8 @@ export default function AdminTemplatesPage() {
   
   const fetchTemplates = async () => {
     try {
-      const res = await fetch(`${API_URL}/api/templates`);
-      if (res.ok) {
-        const data = await res.json();
-        setTemplates(data);
-      }
+      const data = await apiRequest<Template[]>(`${API_URL}/api/templates`);
+      setTemplates(data);
     } catch (err) {
       console.error('Failed to fetch templates:', err);
     }
@@ -45,23 +43,19 @@ export default function AdminTemplatesPage() {
     const formData = new FormData(e.currentTarget);
     
     try {
-      const res = await fetch(`${API_URL}/api/templates`, {
-        method: 'POST',
-        credentials: 'include',
-        body: formData,
-      });
+      const newTemplate = await apiRequest<Template>(
+        `${API_URL}/api/templates`,
+        {
+          method: 'POST',
+          body: formData,
+        }
+      );
       
-      if (res.ok) {
-        const newTemplate = await res.json();
-        setTemplates([...templates, newTemplate]);
-        setSuccess('Template uploaded successfully!');
-        e.currentTarget.reset();
-      } else {
-        const errorData = await res.json();
-        setError(errorData.detail || 'Failed to upload template');
-      }
-    } catch {
-      setError('Network error: Failed to upload template');
+      setTemplates([...templates, newTemplate]);
+      setSuccess('Template uploaded successfully!');
+      e.currentTarget.reset();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to upload template');
     } finally {
       setUploading(false);
     }
@@ -71,20 +65,17 @@ export default function AdminTemplatesPage() {
     if (!confirm('Delete this template? This action cannot be undone.')) return;
     
     try {
-      const res = await fetch(`${API_URL}/api/templates/${id}`, {
-        method: 'DELETE',
-        credentials: 'include',
-      });
+      await apiRequest<void>(
+        `${API_URL}/api/templates/${id}`,
+        {
+          method: 'DELETE',
+        }
+      );
       
-      if (res.ok) {
-        setTemplates(templates.filter(t => t.id !== id));
-        setSuccess('Template deleted successfully!');
-      } else {
-        const errorData = await res.json();
-        setError(errorData.detail || 'Failed to delete template');
-      }
-    } catch {
-      setError('Network error: Failed to delete template');
+      setTemplates(templates.filter(t => t.id !== id));
+      setSuccess('Template deleted successfully!');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to delete template');
     }
   };
   

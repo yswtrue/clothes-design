@@ -14,7 +14,7 @@ export default function MaterialSelector({
   if (materials.length === 0) {
     return (
       <div className="text-center py-8 text-zinc-600 dark:text-zinc-400">
-        No materials found. <a href="/upload" className="underline">Upload a material</a> to get started.
+        未找到素材。<a href="/upload" className="underline">上传素材</a>开始创作。
       </div>
     );
   }
@@ -22,7 +22,7 @@ export default function MaterialSelector({
   return (
     <div className="space-y-4">
       <label className="block text-sm font-medium text-zinc-950 dark:text-zinc-50">
-        Select Material
+        选择素材
       </label>
       <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
         {materials.map((material) => {
@@ -66,13 +66,13 @@ export default function MaterialSelector({
       {selectedMaterial?.meta?.style_analysis && (
         <div className="bg-zinc-100 dark:bg-zinc-800 rounded-lg p-4 mt-4">
           <h4 className="text-sm font-medium text-zinc-950 dark:text-zinc-50 mb-2">
-            Style Analysis
+            风格分析
           </h4>
           <p className="text-sm text-zinc-700 dark:text-zinc-300 mb-3">
             {selectedMaterial.meta.style_analysis.style_description}
           </p>
           <div className="flex items-center gap-2">
-            <span className="text-xs text-zinc-600 dark:text-zinc-400">Pattern Type:</span>
+            <span className="text-xs text-zinc-600 dark:text-zinc-400">图案类型：</span>
             <span className="text-xs font-medium bg-zinc-950 dark:bg-zinc-50 text-white dark:text-zinc-950 px-2 py-1 rounded">
               {selectedMaterial.meta.style_analysis.pattern_type}
             </span>
