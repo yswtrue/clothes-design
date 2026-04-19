@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.models import Material, User
 from upload.service import MAX_FILE_SIZE, UploadService
+from task_queue.tasks import enqueue_task
 
 
 @pytest.fixture
@@ -66,7 +67,10 @@ async def test_upload_service_valid_file(
     db_session: AsyncSession, test_user: User, mock_storage, valid_jpeg_bytes
 ):
     """Test uploading a valid JPEG file."""
-    with patch("upload.service.get_storage_service", return_value=mock_storage):
+    with (
+        patch("upload.service.get_storage_service", return_value=mock_storage),
+        patch("upload.service.enqueue_task", return_value="test-task-id"),
+    ):
         service = UploadService(db_session)
         result = await service.upload_material(valid_jpeg_bytes, "test.jpg", test_user)
         await db_session.commit()
@@ -84,6 +88,49 @@ async def test_upload_service_valid_file(
         material = materials.scalar_one_or_none()
         assert material is not None
         assert material.uploaded_by == test_user.id
+
+
+async def test_upload_service_enqueues_analyze_task(
+    db_session: AsyncSession, test_user: User, mock_storage, valid_jpeg_bytes
+):
+    """Test that uploading a file enqueues an analyze task."""
+    with (
+        patch("upload.service.get_storage_service", return_value=mock_storage),
+        patch("upload.service.enqueue_task") as mock_enqueue,
+    ):
+        mock_enqueue.return_value = "analyze-task-123"
+        service = UploadService(db_session)
+        result = await service.upload_material(valid_jpeg_bytes, "test.jpg", test_user)
+        await db_session.commit()
+
+        mock_enqueue.assert_called_once()
+        call_kwargs = mock_enqueue.call_args[1]
+        assert call_kwargs["task_type"] == "analyze"
+        assert call_kwargs["user_id"] == test_user.id
+        assert "image_data" in call_kwargs["data"]
+        assert call_kwargs["data"]["material_id"] == result.id
+
+
+async def test_upload_service_stores_task_id_in_meta(
+    db_session: AsyncSession, test_user: User, mock_storage, valid_jpeg_bytes
+):
+    """Test that the analysis task ID is stored in material meta."""
+    with (
+        patch("upload.service.get_storage_service", return_value=mock_storage),
+        patch("upload.service.enqueue_task") as mock_enqueue,
+    ):
+        mock_enqueue.return_value = "analyze-task-456"
+        service = UploadService(db_session)
+        result = await service.upload_material(valid_jpeg_bytes, "test.jpg", test_user)
+        await db_session.commit()
+
+        from sqlalchemy.future import select
+
+        stmt = select(Material).filter_by(id=result.id)
+        materials = await db_session.execute(stmt)
+        material = materials.scalar_one_or_none()
+        assert material is not None
+        assert material.meta["analysis_task_id"] == "analyze-task-456"
 
 
 async def test_upload_service_file_too_large(
@@ -138,7 +185,10 @@ async def test_upload_service_different_formats(
     expected_mime,
 ):
     """Test uploading different supported image formats."""
-    with patch("upload.service.get_storage_service", return_value=mock_storage):
+    with (
+        patch("upload.service.get_storage_service", return_value=mock_storage),
+        patch("upload.service.enqueue_task", return_value="test-task-id"),
+    ):
         service = UploadService(db_session)
         result = await service.upload_material(file_bytes, f"test{extension}", test_user)
 
@@ -161,7 +211,10 @@ async def test_upload_endpoint_success(client: AsyncClient, test_env, valid_jpeg
     assert login_response.status_code == 200
     token = login_response.json()["access_token"]
 
-    with patch("backend.upload.service.get_storage_service") as mock_get_storage:
+    with (
+        patch("upload.service.get_storage_service") as mock_get_storage,
+        patch("upload.service.enqueue_task", return_value="test-task-id"),
+    ):
         mock_storage = AsyncMock()
         mock_storage.upload = AsyncMock(return_value="/uploads/stored.jpg")
         mock_storage.get_url = AsyncMock(return_value="http://localhost:8000/uploads/stored.jpg")
@@ -262,3 +315,43 @@ async def test_upload_endpoint_missing_file(client: AsyncClient, test_env):
     )
 
     assert response.status_code == 422
+
+
+async def test_upload_endpoint_enqueues_analyze_task(
+    client: AsyncClient, test_env, valid_jpeg_bytes
+):
+    """Test that the upload endpoint enqueues an analyze task."""
+    register_response = await client.post(
+        "/api/auth/register",
+        json={"username": "uploader_task", "password": "Test123!@#"},
+    )
+    assert register_response.status_code == 201
+
+    login_response = await client.post(
+        "/api/auth/login",
+        json={"username": "uploader_task", "password": "Test123!@#"},
+    )
+    token = login_response.json()["access_token"]
+
+    with (
+        patch("upload.service.get_storage_service") as mock_get_storage,
+        patch("upload.service.enqueue_task") as mock_enqueue,
+    ):
+        mock_storage = AsyncMock()
+        mock_storage.upload = AsyncMock(return_value="/uploads/stored.jpg")
+        mock_storage.get_url = AsyncMock(return_value="http://localhost:8000/uploads/stored.jpg")
+        mock_get_storage.return_value = mock_storage
+        mock_enqueue.return_value = "analyze-task-endpoint-123"
+
+        files = {"file": ("test.jpg", io.BytesIO(valid_jpeg_bytes), "image/jpeg")}
+        upload_response = await client.post(
+            "/api/upload",
+            files=files,
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
+        assert upload_response.status_code == 201
+        mock_enqueue.assert_called_once()
+        call_kwargs = mock_enqueue.call_args[1]
+        assert call_kwargs["task_type"] == "analyze"
+        assert "image_data" in call_kwargs["data"]

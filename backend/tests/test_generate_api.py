@@ -90,6 +90,29 @@ async def test_generate_pattern_success(
 
 @pytest.mark.asyncio
 @patch("api.generate.enqueue_task")
+async def test_generate_pattern_uses_correct_task_type(
+    mock_enqueue, client: AsyncClient, auth_headers: dict, test_material_with_analysis: Material
+):
+    """Verify that generate API uses 'generate' task_type (not 'generate_pattern')."""
+    mock_enqueue.return_value = "test-task-verify-type"
+
+    response = await client.post(
+        "/api/generate",
+        headers=auth_headers,
+        json={"material_id": test_material_with_analysis.id, "pattern_type": "seamless"},
+    )
+
+    assert response.status_code == 201
+    mock_enqueue.assert_called_once()
+    call_kwargs = mock_enqueue.call_args[1]
+    assert call_kwargs["task_type"] == "generate"
+    assert "material_id" in call_kwargs["data"]
+    assert "design_id" in call_kwargs["data"]
+    assert "params" in call_kwargs["data"]
+
+
+@pytest.mark.asyncio
+@patch("api.generate.enqueue_task")
 async def test_generate_pattern_with_custom_prompt(
     mock_enqueue, client: AsyncClient, auth_headers: dict, test_material_with_analysis: Material
 ):

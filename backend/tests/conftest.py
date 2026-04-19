@@ -1,7 +1,14 @@
 from collections.abc import AsyncGenerator
+import sys
+from pathlib import Path
 
 import pytest
 from httpx import ASGITransport, AsyncClient
+
+# Ensure backend directory is in path
+backend_dir = Path(__file__).parent.parent
+if str(backend_dir) not in sys.path:
+    sys.path.insert(0, str(backend_dir))
 
 pytest_plugins = ("pytest_asyncio",)
 from sqlalchemy import delete, select

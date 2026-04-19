@@ -1,5 +1,6 @@
 """Upload service business logic."""
 
+import base64
 import uuid
 from datetime import datetime
 from pathlib import Path
@@ -10,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from db.models import Material, User
 from storage.factory import get_storage_service
 from storage.thumbnail import ThumbnailGenerator
+from task_queue.tasks import enqueue_task
 from upload.schemas import UploadResponse
 
 MAX_FILE_SIZE = 50 * 1024 * 1024
@@ -71,6 +73,16 @@ class UploadService:
         await self.session.flush()
 
         url = await self.storage.get_url(stored_filename)
+
+        # Enqueue analyze task for style analysis
+        image_b64 = base64.b64encode(file_content).decode("utf-8")
+        task_id = await enqueue_task(
+            task_type="analyze",
+            user_id=int(user.id) if user.id else 0,
+            data={"image_data": image_b64, "material_id": int(material.id)},
+        )
+        # Store task_id in material meta for tracking
+        material.meta = {**material.meta, "analysis_task_id": task_id}  # type: ignore[assignment]
 
         return UploadResponse(
             id=int(material.id) if material.id else 0,

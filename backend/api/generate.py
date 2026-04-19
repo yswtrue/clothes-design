@@ -126,9 +126,7 @@ async def generate_pattern(
         "params": gen_params.model_dump(),
     }
 
-    task_id = await enqueue_task(
-        task_type="generate_pattern", user_id=current_user.id, data=task_data
-    )
+    task_id = await enqueue_task(task_type="generate", user_id=current_user.id, data=task_data)
 
     await session.commit()
 
