@@ -1,11 +1,11 @@
-# Worker image based on FastAPI backend (reuses same Python environment)
+# Worker image for Celery tasks
+# Stage 1: Builder
 FROM ghcr.io/astral-sh/uv:python3.13-bookworm-slim AS builder
 
 WORKDIR /app
 
 # Copy pyproject.toml and lock file
-COPY backend/pyproject.toml .
-COPY backend/uv.lock* .
+COPY backend/pyproject.toml backend/uv.lock* ./
 
 # Create virtual environment and sync dependencies
 RUN --mount=type=cache,target=/root/.cache/uv \
@@ -31,14 +31,14 @@ COPY --from=builder /opt/venv /opt/venv
 # Set environment variables
 ENV PATH="/opt/venv/bin:$PATH" \
     PYTHONUNBUFFERED=1 \
-    PYTHONDONTWRITEBYTECODE=1
+    PYTHONDONTWRITEBYTECODE=1 \
+    C_FORCE_ROOT=true
 
-# Copy backend and worker code
-COPY --chown=appuser:appuser backend ./backend
-COPY --chown=appuser:appuser worker ./worker
+# Copy backend code (contains api, worker, shared)
+COPY --chown=appuser:appuser backend /app
 
 # Change to non-root user
 USER appuser
 
-# Start worker process with uv (ensures PYTHONPATH is correct)
-CMD ["uv", "run", "python", "-m", "worker.main"]
+# Start Celery worker using python -m worker
+CMD ["python", "-m", "worker"]

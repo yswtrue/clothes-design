@@ -37,7 +37,7 @@ in
     listen_addresses = "127.0.0.1";
     port = 5432;
     initialDatabases = [
-      { name = "clothes_design_dev"; user = "postgres"; pass = "postgres"; }
+      { name = "clothes_design"; user = "postgres"; pass = "postgres"; }
       { name = "clothes_design_test"; user = "postgres"; pass = "postgres"; }
     ];
   };

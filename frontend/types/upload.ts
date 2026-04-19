@@ -1,10 +1,12 @@
 export interface UploadResponse {
   id: number;
-  url: string;
+  uploaded_by: number | null;
   original_filename: string;
   stored_filename: string;
   file_size: number;
   mime_type: string;
+  storage_path: string;
+  meta: Record<string, unknown> | null;
   created_at: string;
 }
 

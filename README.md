@@ -21,7 +21,7 @@ This platform enables designers to create, iterate, and visualize clothing desig
 |-----------|------------|
 | **Backend** | Python 3.13, FastAPI, SQLAlchemy 2.0 (Async), PostgreSQL |
 | **Frontend** | Next.js 16.2 (App Router), React 19, TypeScript, Tailwind v4 |
-| **Worker** | Python 3.13, Redis Queue Consumer |
+| **Worker** | Python 3.13, Celery 5.3+, Redis |
 | **Dev Environment** | devenv (Nix), Bun 1.3.10, UV |
 | **AI Providers** | OpenAI, Stability AI, Vectorizer.ai, Dynamic Mockups, Replicate |
 
@@ -62,26 +62,16 @@ cp .env.example .env
 
 Start the backend, frontend, and worker in separate terminals:
 
-**Backend:**
+**Backend API:**
 ```bash
 cd backend
-uv sync
-alembic upgrade head
-uvicorn main:app --reload
+python -m api --reload
 ```
 
-**Frontend:**
+**Worker (Celery):**
 ```bash
-cd frontend
-bun install
-bun run dev
-```
-
-**Worker:**
-```bash
-cd worker
-# Uses backend dependencies
-python -m worker.main
+cd backend
+python -m worker
 ```
 
 ## 🔄 Workflow
@@ -95,7 +85,7 @@ python -m worker.main
 
 ## 🐳 Docker Deployment
 
-For production-like environments using Docker, refer to the [Deployment Guide](DEPLOYMENT.md).
+For production-like environments using Docker, refer to the [Deployment Guide](docs/DEPLOYMENT.md).
 
 ```bash
 docker-compose up -d
@@ -103,11 +93,12 @@ docker-compose up -d
 
 ## 📄 Documentation
 
-- [Backend Documentation](backend/README.md)
-- [Frontend Documentation](frontend/README.md)
-- [Worker Documentation](worker/README.md)
-- [Database Schema](SCHEMA_DOCUMENTATION.md)
-- [Deployment Details](DEPLOYMENT.md)
+- **Development**: [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) - Local development setup
+- **Deployment**: [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) - Docker deployment guide
+- **Database Schema**: [docs/SCHEMA_DOCUMENTATION.md](docs/SCHEMA_DOCUMENTATION.md) - Database design
+- **Backend**: [backend/README.md](backend/README.md) - FastAPI architecture
+- **Frontend**: [frontend/README.md](frontend/README.md) - Next.js structure
+- **Worker**: [backend/worker/README.md](backend/worker/README.md) - Celery tasks
 
 ## 🤝 Contributing
 

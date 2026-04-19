@@ -1,0 +1,133 @@
+"""Material management API endpoints."""
+
+from typing import Annotated
+
+from fastapi import APIRouter, Depends, HTTPException, Query, status
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from api.auth.dependencies import get_current_user
+from api.db.base import get_session
+from api.db.models import User
+from api.materials.schemas import (
+    MaterialDetailResponse,
+    MaterialUpdateRequest,
+    PaginatedMaterialsResponse,
+)
+from api.materials.service import MaterialService
+
+router = APIRouter(prefix="/api/materials", tags=["materials"])
+
+_session_dep = Annotated[AsyncSession, Depends(get_session)]
+_user_dep = Annotated[User, Depends(get_current_user)]
+
+
+@router.get("", response_model=PaginatedMaterialsResponse)
+async def list_materials(
+    session: _session_dep,
+    current_user: _user_dep,
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+    uploaded_by: int | None = Query(None),
+    mime_type: str | None = Query(None),
+    sort_by: str = Query("created_at", pattern="^(created_at|file_size)$"),
+    sort_order: str = Query("desc", pattern="^(asc|desc)$"),
+):
+    service = MaterialService(session)
+    return await service.list_materials(
+        page=page,
+        page_size=page_size,
+        uploaded_by=uploaded_by,
+        mime_type=mime_type,
+        sort_by=sort_by,
+        sort_order=sort_order,
+    )
+
+
+@router.get("/{material_id}", response_model=MaterialDetailResponse)
+async def get_material(
+    material_id: int,
+    session: _session_dep,
+    current_user: _user_dep,
+):
+    service = MaterialService(session)
+    material = await service.get_material_by_id(material_id)
+
+    if material is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Material not found",
+        )
+
+    return MaterialDetailResponse.model_validate(material)
+
+
+@router.patch("/{material_id}", response_model=MaterialDetailResponse)
+async def update_material(
+    material_id: int,
+    update_data: MaterialUpdateRequest,
+    session: _session_dep,
+    current_user: _user_dep,
+):
+    service = MaterialService(session)
+
+    try:
+        material = await service.update_material(
+            material_id=material_id,
+            user_id=int(current_user.id),
+            update_data=update_data,
+        )
+    except PermissionError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You do not have permission to update this material",
+        ) from exc
+
+    if material is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Material not found",
+        )
+
+    return MaterialDetailResponse.model_validate(material)
+
+
+@router.delete("/{material_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_material(
+    material_id: int,
+    session: _session_dep,
+    current_user: _user_dep,
+):
+    service = MaterialService(session)
+
+    try:
+        material = await service.delete_material(
+            material_id=material_id,
+            user_id=int(current_user.id),
+        )
+    except PermissionError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You do not have permission to delete this material",
+        ) from exc
+
+    if material is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Material not found",
+        )
+
+
+@router.get("/search/", response_model=PaginatedMaterialsResponse)
+async def search_materials(
+    session: _session_dep,
+    current_user: _user_dep,
+    q: str = Query(..., min_length=1),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+):
+    service = MaterialService(session)
+    return await service.search_materials(
+        query=q,
+        page=page,
+        page_size=page_size,
+    )

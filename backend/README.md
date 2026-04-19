@@ -1,154 +1,86 @@
-# Clothes Design API
+# Backend Structure
 
-The high-performance FastAPI backend for the Clothes Design platform. This service manages business logic, user roles (RBAC), database persistence, and task orchestration via Redis.
+重构后的后端结构，将所有 Python 模块统一到 `backend/` 目录下。
 
-## 🚀 Features
+## 📁 新结构
 
-- **FastAPI Framework**: High-performance, type-safe API with automatic OpenAPI documentation.
-- **SQLAlchemy 2.0 Async**: Fully asynchronous database interactions with PostgreSQL.
-- **Granular RBAC**: Permission-based access control using JSONB storage for roles and permissions.
-- **JWT Authentication**: Secure user sessions with access and refresh tokens.
-- **Task Orchestration**: Redis-backed producer logic for long-running AI jobs.
-- **Storage Abstraction**: Support for local filesystem and S3-compatible object storage.
-
-## 🛠 Tech Stack
-
-| Component | Technology |
-|-----------|------------|
-| **Language** | Python 3.13 |
-| **Framework** | FastAPI |
-| **ORM** | SQLAlchemy 2.0 (Async) |
-| **Migrations** | Alembic |
-| **DB** | PostgreSQL |
-| **Cache/Queue** | Redis |
-| **Dependencies** | uv |
-
-## 🏗 Directory Structure
-
-```text
+```
 backend/
-├── alembic/          # Database migration scripts (DDL)
-├── api/              # REST API route handlers
-├── auth/             # Authentication & Security logic
-├── db/               # SQLAlchemy models and session management
-├── middleware/       # Custom FastAPI middleware (CORS, Error handling)
-├── rbac/             # Role-Based Access Control logic
-├── storage/          # Storage abstraction (Local/S3)
-├── task_queue/       # Redis task producer
-└── tests/            # Pytest test suite
+├── api/              # FastAPI REST API (原 backend/)
+│   ├── api/         # API 路由
+│   ├── auth/        # 认证模块
+│   ├── db/          # 数据库模型
+│   ├── rbac/        # 权限控制
+│   ├── storage/     # 存储抽象
+│   ├── alembic/     # 数据库迁移
+│   └── main.py      # FastAPI 应用入口
+├── shared/          # 共享模块
+│   ├── ai/          # AI 相关工具
+│   ├── providers/   # 第三方 AI Provider
+│   └── task_queue/  # Celery 任务队列集成
+├── worker/          # Celery Worker
+│   ├── handlers/    # 异步任务处理器
+│   └── celery_tasks.py  # Celery 任务定义
+├── celery_app.py    # Celery 应用配置
+└── pyproject.toml   # 项目依赖
 ```
 
-## ⚡ Quick Start
+## 🚀 启动服务
 
-### 1. Prerequisites
+### API 服务
 
-Ensure you have `uv` installed. If using the project's `devenv`, simply enter the shell.
-
+**方式 1：使用 Python 模块（推荐）**
 ```bash
-devenv shell
 cd backend
+python -m api               # 生产模式
+python -m api --reload      # 开发模式（自动重载）
+python -m api --host 0.0.0.0 --port 8080  # 自定义配置
 ```
 
-### 2. Environment Configuration
-
-Copy `.env.example` from the root directory to `backend/.env` (or use the root `.env`) and configure:
-
+**方式 2：使用 Uvicorn 直接启动**
 ```bash
-cp ../.env.example .env
+cd backend
+uvicorn api.main:app --reload
 ```
 
-### 3. Dependency Installation
+### Celery Worker
+
+**方式 1：使用 Python 模块（推荐）**
+```bash
+cd backend
+python -m worker
+```
+
+**方式 2：使用 Celery 直接启动**
+```bash
+cd backend
+celery -A celery_app worker --loglevel=info
+
+# 指定队列
+celery -A celery_app worker --loglevel=info --queues=generate,upscale
+```
+
+## 🔧 依赖管理
+
+所有 Python 依赖统一在 `backend/pyproject.toml` 中管理：
 
 ```bash
+cd backend
 uv sync
 ```
 
-### 4. Database Migrations (CRITICAL)
+## 📝 关键变化
 
-This project uses Alembic for all schema changes. **Manual database modification is strictly prohibited.**
+1. **模块化**: API、Worker、Shared 模块解耦
+2. **无循环依赖**: Worker 不再依赖 API，通过 `shared/` 共享代码
+3. **统一包管理**: 所有依赖在一个 `pyproject.toml` 中
+4. **简化导入**: 
+   - `from shared.ai import ...`
+   - `from shared.providers import ...`
+   - `from shared.task_queue import ...`
 
-#### Important: Alembic Package Shadowing
+## 📚 相关文档
 
-The `backend/alembic/` directory may shadow the `alembic` package on some systems. **Always run alembic commands from the `backend/` directory.**
-
-#### Apply All Migrations
-```bash
-alembic upgrade head
-```
-
-#### Create a New Migration
-```bash
-alembic revision --autogenerate -m "description of changes"
-```
-
-#### Other Common Commands
-- **View migration history**: `alembic history`
-- **Rollback last migration**: `alembic downgrade -1`
-- **View current version**: `alembic current`
-
-### 5. Seeding Data
-
-Default roles (admin, designer, viewer) and test users are seeded automatically on first application startup via the `lifespan` event.
-
-To manually seed roles if needed:
-```bash
-python -c "from rbac.seed import seed_default_roles; import asyncio; from db.session import get_session; asyncio.run(seed_default_roles(next(get_session())))"
-```
-
-### 6. Run the Server
-
-```bash
-uvicorn main:app --reload
-```
-
-Access the API documentation at [http://localhost:8000/docs](http://localhost:8000/docs).
-
-## 🧪 Testing
-
-The backend uses `pytest` for all unit and integration tests.
-
-```bash
-# Run all tests
-pytest
-
-# Run tests with coverage
-pytest --cov=.
-```
-
-## 🔐 Authentication & RBAC
-
-- **JWT Secrets**: Configure `JWT_SECRET` in your `.env`.
-- **Default Roles**: Defined in `rbac/seed.py`.
-- **Permission Checks**: Use the `require_permission` dependency in routers.
-
-## 📄 Related Documentation
-
-- [Project Root README](../README.md)
-- [Database Schema](../SCHEMA_DOCUMENTATION.md)
-- [RBAC System Guide](rbac/README.md)
-
-
-## Running
-
-```bash
-uvicorn main:app --reload
-```
-
-## Testing
-
-```bash
-pytest
-```
-
-## Linting
-
-```bash
-ruff check .
-black --check .
-```
-
-## Health Check
-
-```bash
-curl http://localhost:8000/health
-```
+- [开发指南](../docs/DEVELOPMENT.md) - 本地开发设置
+- [部署指南](../docs/DEPLOYMENT.md) - Docker 部署
+- [数据库文档](../docs/SCHEMA_DOCUMENTATION.md) - 数据库设计

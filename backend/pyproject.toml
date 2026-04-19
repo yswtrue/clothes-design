@@ -2,10 +2,15 @@
 requires = ["setuptools>=65", "wheel"]
 build-backend = "setuptools.build_meta"
 
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["api*", "shared*", "worker*"]
+namespaces = false
+
 [project]
-name = "clothes-design-api"
+name = "clothes-design-backend"
 version = "0.1.0"
-description = "FastAPI backend for Clothes Design platform"
+description = "Backend services for Clothes Design platform"
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "MIT" }
@@ -32,6 +37,7 @@ dependencies = [
     "boto3>=1.42.85",
     "fastapi-cache2-fork[redis]>=2.3.0",
     "setuptools>=82.0.1",
+    "celery[redis]>=5.3.1",
 ]
 
 [project.optional-dependencies]
@@ -60,11 +66,11 @@ select = ["E", "F", "W", "I", "UP", "C90", "B", "A", "C4", "RUF"]
 ignore = ["E501", "W291", "W292", "B008"]
 
 [tool.ruff.lint.isort]
-known-first-party = ["clothes_design_api"]
+known-first-party = ["api", "shared", "worker"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
-testpaths = ["tests"]
+testpaths = ["api/tests"]
 
 [tool.mypy]
 ignore_missing_imports = true
