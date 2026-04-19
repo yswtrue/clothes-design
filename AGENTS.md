@@ -1,7 +1,8 @@
 # PROJECT KNOWLEDGE BASE
 
-**Generated:** 2026-04-05
-**Workspace:** clothes-design (Monorepo)
+**Generated:** 2026-04-19
+**Commit:** 52d2078
+**Branch:** main
 **Environment:** devenv (Nix) + direnv
 
 ## OVERVIEW
@@ -53,19 +54,28 @@ clothes-design/
 - **NO legacy Next.js**: Next.js 16.2 + React 19 has breaking changes. Avoid Pages router.
 
 ## COMMANDS
+**Environment:**
+- `devenv shell` - Enter development environment
+- `direnv allow` - Auto-activate environment
+
 **Backend:**
-- `uv sync` - Install dependencies
-- `uvicorn main:app --reload` - Start dev server
-- `pytest` - Run test suite
-- `alembic upgrade head` - Apply migrations
+- `cd backend && uv sync` - Install Python dependencies
+- `cd backend && python -m api --reload` - Start FastAPI dev server
+- `cd backend && python -m worker` - Start Celery worker
+- `cd backend && pytest` - Run test suite
+- `cd backend && alembic upgrade head` - Apply migrations
+- `cd backend && alembic revision --autogenerate -m "msg"` - Create migration
 
 **Frontend:**
-- `bun install` - Install dependencies
-- `bun run dev` - Start Next.js dev server
-- `bun run build` - Production build
+- `cd frontend && bun install` - Install dependencies
+- `cd frontend && bun run dev` - Start Next.js dev server (port 3000)
+- `cd frontend && bun run build` - Production build
+- `cd frontend && bun run test:e2e` - Run Playwright E2E tests
 
-**Worker:**
-- `python -m worker.main` - Start consumer
+**Docker:**
+- `docker-compose build` - Build images
+- `docker-compose up -d` - Start all services
+- `docker-compose exec backend alembic upgrade head` - Run migrations in container
 
 ## NOTES
 - **Auth Roles**: Default roles (admin, designer, viewer) seeded on backend startup.
