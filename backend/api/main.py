@@ -5,6 +5,8 @@ from fastapi import FastAPI
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.exceptions import HTTPException as StarletteHTTPException
+from starlette.middleware import Middleware
+from starlette.middleware.sessions import SessionMiddleware
 
 from .routes.auth import router as auth_router
 from .routes.designs import router as designs_router
@@ -17,13 +19,13 @@ from .routes.upload import router as upload_router
 from .routes.users import router as users_router
 from .db.base import get_session
 from .db.seed_users import seed_test_users
-from .db.seed_templates import seed_templates
 from .middleware.errors import (
     generic_exception_handler,
     http_exception_handler,
     validation_exception_handler,
 )
 from .rbac.seed import seed_default_roles
+from .admin import create_admin
 
 
 @asynccontextmanager
@@ -47,8 +49,9 @@ async def lifespan(app: FastAPI):
                 raise
             finally:
                 break
-        logger.info("Seeding templates...")
-        await seed_templates()
+        # Temporarily skip template seeding to avoid blocking startup
+        # logger.info("Seeding templates...")
+        # await seed_templates()
     except Exception as exc:
         logger.error("❌ Lifespan startup failed: %s", exc, exc_info=True)
         raise
@@ -100,6 +103,10 @@ app.include_router(templates_router)
 app.include_router(generate_router)
 app.include_router(designs_router)
 app.include_router(export_router)
+
+admin = create_admin()
+app.add_middleware(SessionMiddleware, secret_key="your-secret-key-change-in-production")
+admin.mount_to(app)
 
 
 if __name__ == "__main__":

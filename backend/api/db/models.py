@@ -1,109 +1,128 @@
-from sqlalchemy import JSON, Column, DateTime, ForeignKey, Integer, String, UniqueConstraint
-from sqlalchemy.orm import relationship
-from sqlalchemy.sql import func
+from datetime import datetime
+from typing import Optional
 
-from api.db.base import Base
+from sqlalchemy import JSON, Column, ForeignKey, UniqueConstraint
+from sqlmodel import Field, Relationship
+
+from api.db.base import SoftDeleteMixin
 
 
-class User(Base):
+class User(SoftDeleteMixin, table=True):
     __tablename__ = "users"
 
-    id = Column(Integer, primary_key=True)
-    username = Column(String(50), nullable=False, unique=True, index=True)
-    email = Column(String(255), nullable=True)
-    password_hash = Column(String(255), nullable=False)
-    created_at = Column(DateTime, server_default=func.now())
-    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
+    id: Optional[int] = Field(default=None, primary_key=True)
+    username: str = Field(max_length=50, unique=True, index=True)
+    email: Optional[str] = Field(default=None, max_length=255)
+    password_hash: str = Field(max_length=255)
+    created_at: Optional[datetime] = Field(
+        default=None, sa_column_kwargs={"server_default": "now()"}
+    )
+    updated_at: Optional[datetime] = Field(
+        default=None, sa_column_kwargs={"server_default": "now()", "onupdate": "now()"}
+    )
 
-    designs = relationship("Design", back_populates="user", cascade="all, delete-orphan")
-    user_roles = relationship("UserRole", back_populates="user", cascade="all, delete-orphan")
-    materials = relationship("Material", back_populates="user", cascade="all, delete-orphan")
+    designs: list["Design"] = Relationship(back_populates="user", cascade_delete=True)
+    user_roles: list["UserRole"] = Relationship(back_populates="user", cascade_delete=True)
+    materials: list["Material"] = Relationship(back_populates="user", cascade_delete=True)
 
 
-class Role(Base):
+class Role(SoftDeleteMixin, table=True):
     __tablename__ = "roles"
 
-    id = Column(Integer, primary_key=True)
-    name = Column(String(50), nullable=False, unique=True, index=True)
-    permissions = Column(JSON)
-    created_at = Column(DateTime, server_default=func.now())
+    id: Optional[int] = Field(default=None, primary_key=True)
+    name: str = Field(max_length=50, unique=True, index=True)
+    permissions: Optional[dict] = Field(default=None, sa_column=Column(JSON))
+    created_at: Optional[datetime] = Field(
+        default=None, sa_column_kwargs={"server_default": "now()"}
+    )
 
-    user_roles = relationship("UserRole", back_populates="role", cascade="all, delete-orphan")
+    user_roles: list["UserRole"] = Relationship(back_populates="role", cascade_delete=True)
 
 
-class UserRole(Base):
+class UserRole(SoftDeleteMixin, table=True):
     __tablename__ = "user_roles"
     __table_args__ = (UniqueConstraint("user_id", "role_id", name="uq_user_role"),)
 
-    id = Column(Integer, primary_key=True)
-    user_id = Column(
-        Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
+    id: Optional[int] = Field(default=None, primary_key=True)
+    user_id: int = Field(
+        sa_column=Column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
     )
-    role_id = Column(
-        Integer, ForeignKey("roles.id", ondelete="CASCADE"), nullable=False, index=True
+    role_id: int = Field(
+        sa_column=Column(ForeignKey("roles.id", ondelete="CASCADE"), nullable=False, index=True)
     )
-    created_at = Column(DateTime, server_default=func.now())
+    created_at: Optional[datetime] = Field(
+        default=None, sa_column_kwargs={"server_default": "now()"}
+    )
 
-    user = relationship("User", back_populates="user_roles")
-    role = relationship("Role", back_populates="user_roles")
+    user: Optional[User] = Relationship(back_populates="user_roles")
+    role: Optional[Role] = Relationship(back_populates="user_roles")
 
 
-class Design(Base):
+class Design(SoftDeleteMixin, table=True):
     __tablename__ = "designs"
 
-    id = Column(Integer, primary_key=True)
-    user_id = Column(
-        Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True
+    id: Optional[int] = Field(default=None, primary_key=True)
+    user_id: Optional[int] = Field(
+        default=None, sa_column=Column(ForeignKey("users.id", ondelete="SET NULL"), index=True)
     )
-    name = Column(String(255), nullable=False)
-    status = Column(String(50), nullable=False, default="draft", index=True)
-    created_at = Column(DateTime, server_default=func.now(), index=True)
-    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
+    name: str = Field(max_length=255)
+    status: str = Field(default="draft", max_length=50, index=True)
+    created_at: Optional[datetime] = Field(
+        default=None, sa_column_kwargs={"server_default": "now()"}, index=True
+    )
+    updated_at: Optional[datetime] = Field(
+        default=None, sa_column_kwargs={"server_default": "now()", "onupdate": "now()"}
+    )
 
-    user = relationship("User", back_populates="designs")
-    versions = relationship("DesignVersion", back_populates="design", cascade="all, delete-orphan")
+    user: Optional[User] = Relationship(back_populates="designs")
+    versions: list["DesignVersion"] = Relationship(back_populates="design", cascade_delete=True)
 
 
-class DesignVersion(Base):
+class DesignVersion(SoftDeleteMixin, table=True):
     __tablename__ = "design_versions"
-
-    id = Column(Integer, primary_key=True)
-    design_id = Column(
-        Integer, ForeignKey("designs.id", ondelete="CASCADE"), nullable=False, index=True
-    )
-    version = Column(Integer, nullable=False)
-    data = Column(JSON)
-    created_at = Column(DateTime, server_default=func.now())
-
-    design = relationship("Design", back_populates="versions")
-
     __table_args__ = (UniqueConstraint("design_id", "version", name="uq_design_version"),)
 
+    id: Optional[int] = Field(default=None, primary_key=True)
+    design_id: int = Field(
+        sa_column=Column(ForeignKey("designs.id", ondelete="CASCADE"), nullable=False, index=True)
+    )
+    version: int
+    data: Optional[dict] = Field(default=None, sa_column=Column(JSON))
+    created_at: Optional[datetime] = Field(
+        default=None, sa_column_kwargs={"server_default": "now()"}
+    )
 
-class Material(Base):
+    design: Optional[Design] = Relationship(back_populates="versions")
+
+
+class Material(SoftDeleteMixin, table=True):
     __tablename__ = "materials"
 
-    id = Column(Integer, primary_key=True)
-    uploaded_by = Column(
-        Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True
+    id: Optional[int] = Field(default=None, primary_key=True)
+    uploaded_by: Optional[int] = Field(
+        default=None, sa_column=Column(ForeignKey("users.id", ondelete="SET NULL"), index=True)
     )
-    original_filename = Column(String(255), nullable=False)
-    stored_filename = Column(String(255), nullable=False, unique=True)
-    file_size = Column(Integer, nullable=False)
-    mime_type = Column(String(100), nullable=False)
-    storage_path = Column(String(500), nullable=False)
-    meta = Column(JSON)
-    created_at = Column(DateTime, server_default=func.now(), index=True)
+    original_filename: Optional[str] = Field(default=None, max_length=255)
+    stored_filename: Optional[str] = Field(default=None, max_length=255, unique=True)
+    file_size: Optional[int] = Field(default=None)
+    mime_type: Optional[str] = Field(default=None, max_length=100)
+    storage_path: str = Field(max_length=500)
+    meta: Optional[dict] = Field(default=None, sa_column=Column(JSON))
+    created_at: Optional[datetime] = Field(
+        default=None, sa_column_kwargs={"server_default": "now()"}, index=True
+    )
 
-    user = relationship("User", back_populates="materials")
+    user: Optional[User] = Relationship(back_populates="materials")
 
 
-class Template(Base):
+class Template(SoftDeleteMixin, table=True):
     __tablename__ = "templates"
 
-    id = Column(Integer, primary_key=True)
-    name = Column(String(255), nullable=False)
-    category = Column(String(50), nullable=False)
-    image_path = Column(String(500), nullable=False)
-    is_builtin = Column(Integer, nullable=False, default=0)
-    created_at = Column(DateTime, server_default=func.now())
+    id: Optional[int] = Field(default=None, primary_key=True)
+    name: str = Field(max_length=255)
+    category: str = Field(max_length=50)
+    image_path: str = Field(max_length=500)
+    is_builtin: int = Field(default=0)
+    created_at: Optional[datetime] = Field(
+        default=None, sa_column_kwargs={"server_default": "now()"}
+    )

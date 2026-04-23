@@ -75,6 +75,7 @@ backend/
 - **Storage**: Abstracted to support S3-compatible (MinIO) or local filesystem. Configure via `STORAGE_TYPE` env var.
 - **Celery Config**: `celery_app.py` at backend root. Broker/backend use `REDIS_URL` env var.
 - **Test Location**: Tests expected at `api/tests/` per `pyproject.toml` testpaths config. Directory currently empty—add async test fixtures.
+- **Development Services**: PostgreSQL and Redis are already running on host. DO NOT use Docker Compose to start them.
 
 ## DIRECTORY-SPECIFIC AGENTS.MD
 - `api/AGENTS.md` - FastAPI REST API patterns

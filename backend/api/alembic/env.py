@@ -2,9 +2,10 @@ import os
 from logging.config import fileConfig
 
 from sqlalchemy import create_engine, pool
+from sqlmodel import SQLModel
+from sqlmodel.sql.sqltypes import AutoString
 
 from alembic import context
-from api.db.base import Base
 from api.db.models import Design, DesignVersion, Material, Role, Template, User, UserRole
 
 config = context.config
@@ -12,7 +13,17 @@ config = context.config
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
-target_metadata = Base.metadata
+target_metadata = SQLModel.metadata
+
+
+def render_item(type_, obj, autogen_context):
+    """Render SQLModel types as standard SQLAlchemy types."""
+    if isinstance(obj, AutoString):
+        # Render AutoString as sa.String with length
+        if obj.length:
+            return f"sa.String(length={obj.length})"
+        return "sa.String()"
+    return False
 
 
 def get_sqlalchemy_url() -> str:
@@ -30,6 +41,8 @@ def run_migrations_offline() -> None:
         target_metadata=target_metadata,
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
+        render_as_batch=True,
+        render_item=render_item,
     )
 
     with context.begin_transaction():
@@ -45,7 +58,12 @@ def run_migrations_online() -> None:
     )
 
     with connectable.connect() as connection:
-        context.configure(connection=connection, target_metadata=target_metadata)
+        context.configure(
+            connection=connection,
+            target_metadata=target_metadata,
+            render_as_batch=True,
+            render_item=render_item,
+        )
         with context.begin_transaction():
             context.run_migrations()
 

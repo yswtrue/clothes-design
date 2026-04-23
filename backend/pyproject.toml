@@ -38,6 +38,9 @@ dependencies = [
     "fastapi-cache2-fork[redis]>=2.3.0",
     "setuptools>=82.0.1",
     "celery[redis]>=5.3.1",
+    "sqlmodel>=0.0.38",
+    "starlette-admin[i18n]>=0.14.0",
+    "itsdangerous>=2.0.0",
 ]
 
 [project.optional-dependencies]

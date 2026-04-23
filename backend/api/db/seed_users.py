@@ -1,11 +1,10 @@
 import logging
 
-from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
-
 from api.auth.security import get_password_hash
 from api.db.models import Role, User
 from api.rbac.service import assign_role_to_user
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlmodel import select
 
 _TEST_USERS = [
     ("admin", "admin123", "admin"),
@@ -27,8 +26,12 @@ async def seed_test_users(session: AsyncSession) -> None:
         role_result = await session.execute(select(Role).where(Role.name == role_name))
         role = role_result.scalar_one_or_none()
         if role:
-            await assign_role_to_user(session, user_id=int(user.id), role_id=int(role.id))
+            await assign_role_to_user(
+                session, user_id=user.id or 0, role_id=role.id or 0
+            )
             logger.info("Assigned role %s to %s", role_name, username)
         else:
-            logger.warning("Role %s missing; user %s created without role", role_name, username)
+            logger.warning(
+                "Role %s missing; user %s created without role", role_name, username
+            )
     logger.info("✅ Test users seeding complete")
