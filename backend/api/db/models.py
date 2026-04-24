@@ -1,15 +1,13 @@
 from datetime import datetime
 from typing import Optional
 
-from sqlalchemy import JSON, Column, ForeignKey, UniqueConstraint
-from sqlmodel import Field, Relationship
-
 from api.db.base import SoftDeleteMixin
+from sqlalchemy import JSON, Column, ForeignKey, UniqueConstraint
+from sqlalchemy.orm import declared_attr
+from sqlmodel import Field, Relationship
 
 
 class User(SoftDeleteMixin, table=True):
-    __tablename__ = "users"
-
     id: Optional[int] = Field(default=None, primary_key=True)
     username: str = Field(max_length=50, unique=True, index=True)
     email: Optional[str] = Field(default=None, max_length=255)
@@ -22,12 +20,22 @@ class User(SoftDeleteMixin, table=True):
     )
 
     designs: list["Design"] = Relationship(back_populates="user", cascade_delete=True)
-    user_roles: list["UserRole"] = Relationship(back_populates="user", cascade_delete=True)
-    materials: list["Material"] = Relationship(back_populates="user", cascade_delete=True)
+    user_roles: list["UserRole"] = Relationship(
+        back_populates="user", cascade_delete=True
+    )
+    materials: list["Material"] = Relationship(
+        back_populates="user", cascade_delete=True
+    )
+
+    @declared_attr.directive
+    def __tablename__(cls) -> str:
+        return "users"
 
 
 class Role(SoftDeleteMixin, table=True):
-    __tablename__ = "roles"
+    @declared_attr.directive
+    def __tablename__(cls) -> str:
+        return "roles"
 
     id: Optional[int] = Field(default=None, primary_key=True)
     name: str = Field(max_length=50, unique=True, index=True)
@@ -36,19 +44,30 @@ class Role(SoftDeleteMixin, table=True):
         default=None, sa_column_kwargs={"server_default": "now()"}
     )
 
-    user_roles: list["UserRole"] = Relationship(back_populates="role", cascade_delete=True)
+    user_roles: list["UserRole"] = Relationship(
+        back_populates="role", cascade_delete=True
+    )
 
 
 class UserRole(SoftDeleteMixin, table=True):
-    __tablename__ = "user_roles"
-    __table_args__ = (UniqueConstraint("user_id", "role_id", name="uq_user_role"),)
+    @declared_attr.directive
+    def __tablename__(cls) -> str:
+        return "user_roles"
+
+    @declared_attr.directive
+    def __table_args__(cls):
+        return (UniqueConstraint("user_id", "role_id", name="uq_user_role"),)
 
     id: Optional[int] = Field(default=None, primary_key=True)
     user_id: int = Field(
-        sa_column=Column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+        sa_column=Column(
+            ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
+        )
     )
     role_id: int = Field(
-        sa_column=Column(ForeignKey("roles.id", ondelete="CASCADE"), nullable=False, index=True)
+        sa_column=Column(
+            ForeignKey("roles.id", ondelete="CASCADE"), nullable=False, index=True
+        )
     )
     created_at: Optional[datetime] = Field(
         default=None, sa_column_kwargs={"server_default": "now()"}
@@ -59,11 +78,14 @@ class UserRole(SoftDeleteMixin, table=True):
 
 
 class Design(SoftDeleteMixin, table=True):
-    __tablename__ = "designs"
+    @declared_attr.directive
+    def __tablename__(cls) -> str:
+        return "designs"
 
     id: Optional[int] = Field(default=None, primary_key=True)
     user_id: Optional[int] = Field(
-        default=None, sa_column=Column(ForeignKey("users.id", ondelete="SET NULL"), index=True)
+        default=None,
+        sa_column=Column(ForeignKey("users.id", ondelete="SET NULL"), index=True),
     )
     name: str = Field(max_length=255)
     status: str = Field(default="draft", max_length=50, index=True)
@@ -75,16 +97,25 @@ class Design(SoftDeleteMixin, table=True):
     )
 
     user: Optional[User] = Relationship(back_populates="designs")
-    versions: list["DesignVersion"] = Relationship(back_populates="design", cascade_delete=True)
+    versions: list["DesignVersion"] = Relationship(
+        back_populates="design", cascade_delete=True
+    )
 
 
 class DesignVersion(SoftDeleteMixin, table=True):
-    __tablename__ = "design_versions"
-    __table_args__ = (UniqueConstraint("design_id", "version", name="uq_design_version"),)
+    @declared_attr.directive
+    def __tablename__(cls) -> str:
+        return "design_versions"
+
+    @declared_attr.directive
+    def __table_args__(cls):
+        return (UniqueConstraint("design_id", "version", name="uq_design_version"),)
 
     id: Optional[int] = Field(default=None, primary_key=True)
     design_id: int = Field(
-        sa_column=Column(ForeignKey("designs.id", ondelete="CASCADE"), nullable=False, index=True)
+        sa_column=Column(
+            ForeignKey("designs.id", ondelete="CASCADE"), nullable=False, index=True
+        )
     )
     version: int
     data: Optional[dict] = Field(default=None, sa_column=Column(JSON))
@@ -96,11 +127,14 @@ class DesignVersion(SoftDeleteMixin, table=True):
 
 
 class Material(SoftDeleteMixin, table=True):
-    __tablename__ = "materials"
+    @declared_attr.directive
+    def __tablename__(cls) -> str:
+        return "materials"
 
     id: Optional[int] = Field(default=None, primary_key=True)
     uploaded_by: Optional[int] = Field(
-        default=None, sa_column=Column(ForeignKey("users.id", ondelete="SET NULL"), index=True)
+        default=None,
+        sa_column=Column(ForeignKey("users.id", ondelete="SET NULL"), index=True),
     )
     original_filename: Optional[str] = Field(default=None, max_length=255)
     stored_filename: Optional[str] = Field(default=None, max_length=255, unique=True)
@@ -116,7 +150,9 @@ class Material(SoftDeleteMixin, table=True):
 
 
 class Template(SoftDeleteMixin, table=True):
-    __tablename__ = "templates"
+    @declared_attr.directive
+    def __tablename__(cls) -> str:
+        return "templates"
 
     id: Optional[int] = Field(default=None, primary_key=True)
     name: str = Field(max_length=255)

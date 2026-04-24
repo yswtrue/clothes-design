@@ -1,7 +1,6 @@
-from sqlalchemy import delete, select
-from sqlalchemy.ext.asyncio import AsyncSession
-
 from api.db.models import Role, User, UserRole
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlmodel import delete, select
 
 
 async def get_role_by_id(session: AsyncSession, role_id: int) -> Role | None:
@@ -19,7 +18,9 @@ async def list_roles(session: AsyncSession) -> list[Role]:
     return list(result.scalars().all())
 
 
-async def create_role(session: AsyncSession, name: str, permissions: dict[str, bool]) -> Role:
+async def create_role(
+    session: AsyncSession, name: str, permissions: dict[str, bool]
+) -> Role:
     role = Role(name=name, permissions=permissions)
     session.add(role)
     await session.flush()
@@ -28,7 +29,10 @@ async def create_role(session: AsyncSession, name: str, permissions: dict[str, b
 
 
 async def update_role(
-    session: AsyncSession, role: Role, name: str | None, permissions: dict[str, bool] | None
+    session: AsyncSession,
+    role: Role,
+    name: str | None,
+    permissions: dict[str, bool] | None,
 ) -> Role:
     if name is not None:
         role.name = name  # type: ignore[assignment]
@@ -47,14 +51,16 @@ async def delete_role(session: AsyncSession, role: Role) -> None:
 async def get_user_roles(session: AsyncSession, user_id: int) -> list[Role]:
     result = await session.execute(
         select(Role)
-        .join(UserRole, UserRole.role_id == Role.id)
+        .join(UserRole)
         .where(UserRole.user_id == user_id)
         .order_by(Role.name)
     )
     return list(result.scalars().all())
 
 
-async def assign_role_to_user(session: AsyncSession, user_id: int, role_id: int) -> UserRole:
+async def assign_role_to_user(
+    session: AsyncSession, user_id: int, role_id: int
+) -> UserRole:
     user_role = UserRole(user_id=user_id, role_id=role_id)
     session.add(user_role)
     await session.flush()
@@ -62,7 +68,9 @@ async def assign_role_to_user(session: AsyncSession, user_id: int, role_id: int)
     return user_role
 
 
-async def remove_role_from_user(session: AsyncSession, user_id: int, role_id: int) -> None:
+async def remove_role_from_user(
+    session: AsyncSession, user_id: int, role_id: int
+) -> None:
     await session.execute(
         delete(UserRole).where(UserRole.user_id == user_id, UserRole.role_id == role_id)
     )
