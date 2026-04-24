@@ -52,7 +52,7 @@ export default function HistoryTab() {
       try {
         const response = await fetchDesigns(currentPage, DESIGNS_PER_PAGE);
         if (!cancelled) {
-          setDesigns(response.designs);
+          setDesigns(response.items);
           setTotalPages(response.pages);
           setState('idle');
         }
@@ -94,7 +94,7 @@ export default function HistoryTab() {
     setConfirmModal({
       isOpen: true,
       title: '删除设计',
-      message: `确定要删除"${design.name}"吗？这将同时删除全部 ${design.versions_count} 个版本。此操作无法撤销。`,
+      message: `确定要删除"${design.name}"吗？此操作无法撤销。`,
       confirmText: '删除',
       variant: 'danger',
       onConfirm: () => handleDelete(design.id),
@@ -153,12 +153,6 @@ export default function HistoryTab() {
       setSuccessMessage(`已回滚到版本 ${versionNumber}。新版本 ${response.version} 已创建。`);
       setState('idle');
       setRollingBackDesignId(null);
-
-      setDesigns((prev) =>
-        prev.map((d) =>
-          d.id === designId ? { ...d, versions_count: d.versions_count + 1 } : d
-        )
-      );
 
       setExpandedDesignIds((prev) => {
         const next = new Set(prev);

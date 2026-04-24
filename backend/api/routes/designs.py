@@ -3,7 +3,9 @@
 import uuid
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi_pagination import Page
+from fastapi_pagination.ext.sqlalchemy import paginate
 from pydantic import BaseModel, Field
 from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -87,16 +89,9 @@ class DesignListItem(BaseModel):
     status: str
     created_at: str
     updated_at: str
-    versions_count: int
 
-
-class PaginatedDesignsResponse(BaseModel):
-    """Paginated designs response."""
-
-    designs: list[DesignListItem]
-    total: int
-    page: int
-    pages: int
+    class Config:
+        from_attributes = True
 
 
 class DesignVersionResponse(BaseModel):
@@ -438,60 +433,27 @@ async def create_design(
     )
 
 
-@router.get("", response_model=PaginatedDesignsResponse)
+@router.get("", response_model=Page[DesignListItem])
 async def list_designs(
     session: _session_dep,
     current_user: _user_dep,
-    page: int = Query(1, ge=1),
-    limit: int = Query(20, ge=1, le=100),
-):
+) -> Page[DesignListItem]:
     """List all user's designs with pagination.
 
     Args:
         session: Database session
         current_user: Authenticated user
-        page: Page number (1-indexed)
-        limit: Items per page (max 100)
 
     Returns:
-        Paginated list of designs with version counts
+        Paginated list of designs
+
+    Query params (auto-injected by fastapi-pagination):
+        page: Page number (default: 1)
+        size: Items per page (default: 50, max: 100)
     """
-    offset = (page - 1) * limit
-
-    count_result = await session.execute(
-        select(func.count()).select_from(Design).where(Design.user_id == current_user.id)
-    )
-    total = count_result.scalar_one()
-
-    result = await session.execute(
-        select(Design, func.count(DesignVersion.id).label("versions_count"))
-        .outerjoin(DesignVersion, Design.id == DesignVersion.design_id)
-        .where(Design.user_id == current_user.id)
-        .group_by(Design.id)
-        .order_by(Design.updated_at.desc())
-        .offset(offset)
-        .limit(limit)
-    )
-    rows = result.all()
-
-    designs = [
-        DesignListItem(
-            id=design.id,
-            user_id=design.user_id,
-            name=design.name,
-            status=design.status,
-            created_at=design.created_at.isoformat(),
-            updated_at=design.updated_at.isoformat(),
-            versions_count=versions_count or 0,
-        )
-        for design, versions_count in rows
-    ]
-
-    return PaginatedDesignsResponse(
-        designs=designs,
-        total=total,
-        page=page,
-        pages=(total + limit - 1) // limit if total > 0 else 0,
+    return await paginate(
+        session,
+        select(Design).where(Design.user_id == current_user.id).order_by(Design.updated_at.desc()),
     )
 
 

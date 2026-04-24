@@ -30,7 +30,7 @@ export default function GenerateTab() {
     setState('loading_materials');
     setError(null);
     try {
-      const data = await apiRequest<{ items: Material[] }>('/api/materials?limit=100');
+      const data = await apiRequest<{ items: Material[] }>('/api/materials?size=100');
       setMaterials(data.items || []);
       setState('ready');
     } catch (err) {

@@ -34,8 +34,8 @@ export default function DashboardPage() {
     setIsLoading(true);
     try {
       const [designs, materials, templates] = await Promise.all([
-        apiRequest<{ total: number }>('/api/designs?limit=1').catch(() => ({ total: 0 })),
-        apiRequest<{ total: number }>('/api/materials?limit=1').catch(() => ({ total: 0 })),
+        apiRequest<{ total: number }>('/api/designs?size=1').catch(() => ({ total: 0 })),
+        apiRequest<{ total: number }>('/api/materials?size=1').catch(() => ({ total: 0 })),
         apiRequest<unknown[]>('/api/templates').catch(() => []),
       ]);
 

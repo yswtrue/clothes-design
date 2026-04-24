@@ -5,7 +5,6 @@ export interface Design {
   status: string;
   created_at: string;
   updated_at: string;
-  versions_count: number;
 }
 
 export interface DesignVersion {
@@ -32,9 +31,10 @@ export interface DesignVersion {
 }
 
 export interface PaginatedDesignsResponse {
-  designs: Design[];
+  items: Design[];
   total: number;
   page: number;
+  size: number;
   pages: number;
 }
 

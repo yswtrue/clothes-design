@@ -3,6 +3,7 @@
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi_pagination import Page
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.auth.dependencies import get_current_user
@@ -10,8 +11,8 @@ from api.db.base import get_session
 from api.db.models import User
 from api.materials.schemas import (
     MaterialDetailResponse,
+    MaterialListResponse,
     MaterialUpdateRequest,
-    PaginatedMaterialsResponse,
 )
 from api.materials.service import MaterialService
 
@@ -21,21 +22,34 @@ _session_dep = Annotated[AsyncSession, Depends(get_session)]
 _user_dep = Annotated[User, Depends(get_current_user)]
 
 
-@router.get("", response_model=PaginatedMaterialsResponse)
+@router.get("", response_model=Page[MaterialListResponse])
 async def list_materials(
     session: _session_dep,
     current_user: _user_dep,
-    page: int = Query(1, ge=1),
-    page_size: int = Query(20, ge=1, le=100),
     uploaded_by: int | None = Query(None),
     mime_type: str | None = Query(None),
     sort_by: str = Query("created_at", pattern="^(created_at|file_size)$"),
     sort_order: str = Query("desc", pattern="^(asc|desc)$"),
-):
+) -> Page[MaterialListResponse]:
+    """List all materials with pagination.
+
+    Args:
+        session: Database session
+        current_user: Authenticated user
+        uploaded_by: Filter by uploader user ID
+        mime_type: Filter by MIME type
+        sort_by: Sort field (created_at or file_size)
+        sort_order: Sort direction (asc or desc)
+
+    Returns:
+        Paginated list of materials with thumbnail URLs
+
+    Query params (auto-injected by fastapi-pagination):
+        page: Page number (default: 1)
+        size: Items per page (default: 50, max: 100)
+    """
     service = MaterialService(session)
     return await service.list_materials(
-        page=page,
-        page_size=page_size,
         uploaded_by=uploaded_by,
         mime_type=mime_type,
         sort_by=sort_by,
@@ -117,17 +131,25 @@ async def delete_material(
         )
 
 
-@router.get("/search/", response_model=PaginatedMaterialsResponse)
+@router.get("/search/", response_model=Page[MaterialListResponse])
 async def search_materials(
     session: _session_dep,
     current_user: _user_dep,
     q: str = Query(..., min_length=1),
-    page: int = Query(1, ge=1),
-    page_size: int = Query(20, ge=1, le=100),
-):
+) -> Page[MaterialListResponse]:
+    """Search materials by query string.
+
+    Args:
+        session: Database session
+        current_user: Authenticated user
+        q: Search query string
+
+    Returns:
+        Paginated search results
+
+    Query params (auto-injected by fastapi-pagination):
+        page: Page number (default: 1)
+        size: Items per page (default: 50, max: 100)
+    """
     service = MaterialService(session)
-    return await service.search_materials(
-        query=q,
-        page=page,
-        page_size=page_size,
-    )
+    return await service.search_materials(query=q)

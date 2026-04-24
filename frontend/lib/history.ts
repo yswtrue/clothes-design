@@ -8,10 +8,10 @@ import { apiRequest } from './api';
 
 export async function fetchDesigns(
   page: number = 1,
-  limit: number = 20
+  size: number = 20
 ): Promise<PaginatedDesignsResponse> {
   return apiRequest<PaginatedDesignsResponse>(
-    `/api/designs?page=${page}&limit=${limit}`
+    `/api/designs?page=${page}&size=${size}`
   );
 }
 

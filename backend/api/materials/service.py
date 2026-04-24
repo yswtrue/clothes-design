@@ -1,9 +1,10 @@
 """Material management service."""
 
-import math
 from typing import Any
 
-from sqlalchemy import func, or_, select, update
+from fastapi_pagination import Page
+from fastapi_pagination.ext.sqlalchemy import paginate
+from sqlalchemy import or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.db.models import Material
@@ -11,7 +12,6 @@ from api.materials.schemas import (
     MaterialListResponse,
     MaterialMeta,
     MaterialUpdateRequest,
-    PaginatedMaterialsResponse,
 )
 from api.storage.factory import get_storage_service
 
@@ -35,13 +35,11 @@ class MaterialService:
 
     async def list_materials(
         self,
-        page: int = 1,
-        page_size: int = 20,
         uploaded_by: int | None = None,
         mime_type: str | None = None,
         sort_by: str = "created_at",
         sort_order: str = "desc",
-    ) -> PaginatedMaterialsResponse:
+    ) -> Page[MaterialListResponse]:
         query = select(Material)
 
         if uploaded_by is not None:
@@ -61,30 +59,15 @@ class MaterialService:
         else:
             query = query.order_by(sort_col.desc())
 
-        count_result = await self.session.execute(
-            select(func.count()).select_from(query.subquery())
-        )
-        total = count_result.scalar_one()
+        page = await paginate(self.session, query)
 
-        offset = (page - 1) * page_size
-        query = query.offset(offset).limit(page_size)
+        items_with_thumbnails = []
+        for item in page.items:
+            item_with_url = await self._add_thumbnail_url(item)
+            items_with_thumbnails.append(item_with_url)
 
-        result = await self.session.execute(query)
-        materials = result.scalars().all()
-
-        total_pages = math.ceil(total / page_size) if page_size > 0 else 0
-
-        items = []
-        for m in materials:
-            items.append(await self._add_thumbnail_url(m))
-
-        return PaginatedMaterialsResponse(
-            items=items,
-            total=total,
-            page=page,
-            page_size=page_size,
-            total_pages=total_pages,
-        )
+        page.items = items_with_thumbnails
+        return page
 
     async def get_material_by_id(self, material_id: int) -> Material | None:
         query = select(Material).filter(Material.id == material_id)  # type: ignore[arg-type]
@@ -145,35 +128,20 @@ class MaterialService:
     async def search_materials(
         self,
         query: str,
-        page: int = 1,
-        page_size: int = 20,
-    ) -> PaginatedMaterialsResponse:
+    ) -> Page[MaterialListResponse]:
         search_filter = or_(  # type: ignore[arg-type]
             Material.meta["name"].as_string().ilike(f"%{query}%"),  # type: ignore[index]
             Material.meta["tags"].as_string().ilike(f"%{query}%"),  # type: ignore[index]
         )
 
-        stmt = select(Material).filter(search_filter)
+        stmt = select(Material).filter(search_filter).order_by(Material.created_at.desc())  # type: ignore[attr-defined]
 
-        count_result = await self.session.execute(select(func.count()).select_from(stmt.subquery()))
-        total = count_result.scalar_one()
+        page = await paginate(self.session, stmt)
 
-        offset = (page - 1) * page_size
-        stmt = stmt.order_by(Material.created_at.desc()).offset(offset).limit(page_size)  # type: ignore[attr-defined]
+        items_with_thumbnails = []
+        for item in page.items:
+            item_with_url = await self._add_thumbnail_url(item)
+            items_with_thumbnails.append(item_with_url)
 
-        result = await self.session.execute(stmt)
-        materials = result.scalars().all()
-
-        total_pages = math.ceil(total / page_size) if page_size > 0 else 0
-
-        items = []
-        for m in materials:
-            items.append(await self._add_thumbnail_url(m))
-
-        return PaginatedMaterialsResponse(
-            items=items,
-            total=total,
-            page=page,
-            page_size=page_size,
-            total_pages=total_pages,
-        )
+        page.items = items_with_thumbnails
+        return page

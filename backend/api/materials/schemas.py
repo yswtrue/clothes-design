@@ -10,21 +10,9 @@ from shared.ai.schemas import StyleAnalysis
 class MaterialMeta(BaseModel):
     """Material metadata structure stored in JSON field."""
 
-    model_config = ConfigDict(extra="allow")
-
-    # User-editable fields
-    name: str | None = Field(None, max_length=255, description="User-defined material name")
-    tags: list[str] = Field(default_factory=list, description="Searchable tags")
-    description: str | None = Field(None, max_length=1000, description="Material description")
-
-    # System-generated fields
-    thumbnail_path: str | None = Field(None, description="Relative path to thumbnail image")
-
-    # AI analysis results
-    style_analysis: StyleAnalysis | None = Field(None, description="AI-generated style analysis")
-
-    class Config:
-        json_schema_extra = {
+    model_config = ConfigDict(
+        extra="allow",
+        json_schema_extra={
             "example": {
                 "name": "Floral Pattern Base",
                 "tags": ["floral", "spring", "pastel"],
@@ -37,7 +25,16 @@ class MaterialMeta(BaseModel):
                     "suggested_params": {},
                 },
             }
-        }
+        },
+    )
+
+    name: str | None = Field(None, max_length=255, description="User-defined material name")
+    tags: list[str] = Field(default_factory=list, description="Searchable tags")
+    description: str | None = Field(None, max_length=1000, description="Material description")
+
+    thumbnail_path: str | None = Field(None, description="Relative path to thumbnail image")
+
+    style_analysis: StyleAnalysis | None = Field(None, description="AI-generated style analysis")
 
 
 class MaterialListResponse(BaseModel):
@@ -77,13 +74,3 @@ class MaterialUpdateRequest(BaseModel):
     name: str | None = Field(None, max_length=255)
     tags: list[str] | None = None
     description: str | None = Field(None, max_length=1000)
-
-
-class PaginatedMaterialsResponse(BaseModel):
-    """Response model for paginated material list."""
-
-    items: list[MaterialListResponse]
-    total: int
-    page: int
-    page_size: int
-    total_pages: int
