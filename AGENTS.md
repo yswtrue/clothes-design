@@ -6,9 +6,11 @@
 **Environment:** devenv (Nix) + direnv
 
 ## OVERVIEW
+
 Clothes design platform platform featuring a FastAPI backend, Next.js 16 frontend, and Redis-backed task worker. Optimized for async performance and strictly enforced schema migrations.
 
 ## STRUCTURE
+
 ```
 clothes-design/
 ├── backend/          # FastAPI REST API (Python 3.11+, UV)
@@ -28,17 +30,19 @@ clothes-design/
 ```
 
 ## WHERE TO LOOK
-| Task | Location | Notes |
-| :--- | :--- | :--- |
-| API Endpoints | `backend/api/` | FastAPI routers |
-| DB Models | `backend/db/models.py` | SQLAlchemy 2.0 Declarative |
-| UI Components | `frontend/components/` | React 19 / Tailwind 4 |
-| Auth Logic | `backend/auth/` | JWT + bcrypt < 5 |
-| Permissions | `backend/rbac/` | RBAC + JSONB logic |
-| Migrations | `backend/alembic/` | `alembic -c alembic.ini` |
-| Worker Jobs | `worker/handlers/` | Redis tasks |
+
+| Task          | Location               | Notes                      |
+| :------------ | :--------------------- | :------------------------- |
+| API Endpoints | `backend/api/`         | FastAPI routers            |
+| DB Models     | `backend/db/models.py` | SQLAlchemy 2.0 Declarative |
+| UI Components | `frontend/components/` | React 19 / Tailwind 4      |
+| Auth Logic    | `backend/auth/`        | JWT + bcrypt < 5           |
+| Permissions   | `backend/rbac/`        | RBAC + JSONB logic         |
+| Migrations    | `backend/alembic/`     | `alembic -c alembic.ini`   |
+| Worker Jobs   | `worker/handlers/`     | Redis tasks                |
 
 ## CONVENTIONS
+
 - **Async Everywhere**: All DB and I/O operations must be `async`.
 - **Dependency Injection**: Use `Depends(get_session)` for DB access in FastAPI.
 - **Monorepo Isolation**: Workspaces manage dependencies independently (UV for Python, Bun for JS).
@@ -46,6 +50,7 @@ clothes-design/
 - **Reproducible Env**: Use `devenv shell` or `direnv allow` for development.
 
 ## ANTI-PATTERNS (THIS PROJECT)
+
 - **NO Sync SQL**: Never use `session.execute()` or `session.commit()` synchronously.
 - **NO bcrypt >= 5**: Pinned to `< 5` for compatibility. Check `pyproject.toml`.
 - **NO manual schema.sql**: All DDL must go through Alembic migrations.
@@ -54,11 +59,14 @@ clothes-design/
 - **NO legacy Next.js**: Next.js 16.2 + React 19 has breaking changes. Avoid Pages router.
 
 ## COMMANDS
+
 **Environment:**
+
 - `devenv shell` - Enter development environment
 - `direnv allow` - Auto-activate environment
 
 **Backend:**
+
 - `cd backend && uv sync` - Install Python dependencies
 - `cd backend && python -m api --reload` - Start FastAPI dev server
 - `cd backend && python -m worker` - Start Celery worker
@@ -67,23 +75,27 @@ clothes-design/
 - `cd backend && alembic revision --autogenerate -m "msg"` - Create migration
 
 **Frontend:**
+
 - `cd frontend && bun install` - Install dependencies
 - `cd frontend && bun run dev` - Start Next.js dev server (port 3000)
 - `cd frontend && bun run build` - Production build
 - `cd frontend && bun run test:e2e` - Run Playwright E2E tests
 
 **Docker:**
+
 - `docker-compose build` - Build images
 - `docker-compose up -d` - Start all services
 - `docker-compose exec backend alembic upgrade head` - Run migrations in container
 
 ## NOTES
+
 - **Auth Roles**: Default roles (admin, designer, viewer) seeded on backend startup.
 - **Storage**: Abstracted to support S3-compatible or local filesystem storage.
 - **Data Integrity**: DB constraints handle design versioning logic; do not reimplement in app layer.
-- **Metadata**: Detailed schema info in `SCHEMA_DOCUMENTATION.md`.
+- **Metadata**: Detailed schema info in `docs/SCHEMA_DOCUMENTATION.md`.
 
 ## DIRECTORY-SPECIFIC AGENTS.MD
+
 - `backend/AGENTS.md` - Backend-specific patterns
 - `backend/api/AGENTS.md` - REST API routes
 - `backend/tests/AGENTS.md` - Testing conventions
