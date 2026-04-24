@@ -11,6 +11,7 @@ from shared.ai.schemas import GenerationParams, StyleAnalysis
 from api.auth.dependencies import get_current_user
 from api.db.base import get_session
 from api.db.models import Design, Material, User
+from api.materials.schemas import MaterialMeta
 from shared.task_queue.tasks import enqueue_task, get_task_status
 
 router = APIRouter(prefix="/api/generate", tags=["generate"])
@@ -78,11 +79,11 @@ async def generate_pattern(
             detail="Material not found or access denied",
         )
 
-    # Extract style analysis from material
     style_analysis = None
-    if material.meta and "style_analysis" in material.meta:
-        style_data = material.meta["style_analysis"]
-        style_analysis = StyleAnalysis(**style_data)
+    if material.meta:
+        meta = MaterialMeta(**material.meta)
+        if meta.style_analysis:
+            style_analysis = meta.style_analysis
 
     # Build prompt from request or style analysis
     prompt = request.prompt

@@ -1,15 +1,15 @@
 """Material management service."""
 
 import math
-from datetime import UTC, datetime
-from typing import Any, cast
+from typing import Any
 
-from sqlalchemy import String, and_, cast as sa_cast, func, or_, select, update
+from sqlalchemy import func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.db.models import Material
 from api.materials.schemas import (
     MaterialListResponse,
+    MaterialMeta,
     MaterialUpdateRequest,
     PaginatedMaterialsResponse,
 )
@@ -23,13 +23,13 @@ class MaterialService:
 
     async def _add_thumbnail_url(self, material: Material) -> MaterialListResponse:
         response = MaterialListResponse.model_validate(material)
-        if material.meta and isinstance(material.meta, dict):
-            thumbnail_path = material.meta.get("thumbnail_path")
-            if thumbnail_path:
+        if material.meta:
+            meta = MaterialMeta(**material.meta)
+            if meta.thumbnail_path:
                 response.thumbnail_url = await self.storage.get_url(
-                    thumbnail_path.replace("thumbnails/", "")
-                    if thumbnail_path.startswith("thumbnails/")
-                    else thumbnail_path
+                    meta.thumbnail_path.replace("thumbnails/", "")
+                    if meta.thumbnail_path.startswith("thumbnails/")
+                    else meta.thumbnail_path
                 )
         return response
 
@@ -42,19 +42,13 @@ class MaterialService:
         sort_by: str = "created_at",
         sort_order: str = "desc",
     ) -> PaginatedMaterialsResponse:
-        query = select(Material).filter(
-            or_(
-                sa_cast(Material.meta["is_deleted"], String) != "true",
-                Material.meta["is_deleted"].is_(None),
-                Material.meta.is_(None),
-            )
-        )
+        query = select(Material)
 
         if uploaded_by is not None:
-            query = query.filter(Material.uploaded_by == uploaded_by)
+            query = query.filter(Material.uploaded_by == uploaded_by)  # type: ignore[arg-type]
 
         if mime_type:
-            query = query.filter(Material.mime_type == mime_type)
+            query = query.filter(Material.mime_type == mime_type)  # type: ignore[arg-type]
 
         sort_col: Any
         if sort_by == "file_size":
@@ -93,16 +87,7 @@ class MaterialService:
         )
 
     async def get_material_by_id(self, material_id: int) -> Material | None:
-        query = select(Material).filter(
-            and_(
-                Material.id == material_id,
-                or_(
-                    sa_cast(Material.meta["is_deleted"], String) != "true",
-                    Material.meta["is_deleted"].is_(None),
-                    Material.meta.is_(None),
-                ),
-            )
-        )
+        query = select(Material).filter(Material.id == material_id)  # type: ignore[arg-type]
         result = await self.session.execute(query)
         return result.scalar_one_or_none()
 
@@ -120,19 +105,22 @@ class MaterialService:
         if material.uploaded_by != user_id:
             raise PermissionError("User does not own this material")
 
-        meta: dict = cast(dict, material.meta) or {}
+        meta = MaterialMeta(**material.meta) if material.meta else MaterialMeta()  # type: ignore[arg-type]
 
         if update_data.name is not None:
-            meta["name"] = update_data.name
+            meta.name = update_data.name
 
         if update_data.tags is not None:
-            meta["tags"] = update_data.tags
+            meta.tags = update_data.tags
 
         if update_data.description is not None:
-            meta["description"] = update_data.description
+            meta.description = update_data.description
 
         stmt = (
-            update(Material).where(Material.id == material_id).values(meta=meta).returning(Material)
+            update(Material)
+            .where(Material.id == material_id)  # type: ignore[arg-type]
+            .values(meta=meta.model_dump(exclude_none=True))
+            .returning(Material)
         )
 
         result = await self.session.execute(stmt)
@@ -149,18 +137,10 @@ class MaterialService:
         if material.uploaded_by != user_id:
             raise PermissionError("User does not own this material")
 
-        meta: dict = cast(dict, material.meta) or {}
-        meta["is_deleted"] = True
-        meta["deleted_at"] = datetime.now(UTC).isoformat()
-
-        stmt = (
-            update(Material).where(Material.id == material_id).values(meta=meta).returning(Material)
-        )
-
-        result = await self.session.execute(stmt)
+        material.soft_delete()
         await self.session.commit()
 
-        return result.scalar_one()
+        return material
 
     async def search_materials(
         self,
@@ -168,27 +148,18 @@ class MaterialService:
         page: int = 1,
         page_size: int = 20,
     ) -> PaginatedMaterialsResponse:
-        search_filter = or_(
-            Material.meta["name"].as_string().ilike(f"%{query}%"),
-            Material.meta["tags"].as_string().ilike(f"%{query}%"),
+        search_filter = or_(  # type: ignore[arg-type]
+            Material.meta["name"].as_string().ilike(f"%{query}%"),  # type: ignore[index]
+            Material.meta["tags"].as_string().ilike(f"%{query}%"),  # type: ignore[index]
         )
 
-        stmt = select(Material).filter(
-            and_(
-                or_(
-                    sa_cast(Material.meta["is_deleted"], String) != "true",
-                    Material.meta["is_deleted"].is_(None),
-                    Material.meta.is_(None),
-                ),
-                search_filter,
-            )
-        )
+        stmt = select(Material).filter(search_filter)
 
         count_result = await self.session.execute(select(func.count()).select_from(stmt.subquery()))
         total = count_result.scalar_one()
 
         offset = (page - 1) * page_size
-        stmt = stmt.order_by(Material.created_at.desc()).offset(offset).limit(page_size)
+        stmt = stmt.order_by(Material.created_at.desc()).offset(offset).limit(page_size)  # type: ignore[attr-defined]
 
         result = await self.session.execute(stmt)
         materials = result.scalars().all()
