@@ -1,7 +1,6 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import Image from 'next/image';
 import { apiRequest } from '@/lib/api';
 
 interface PaginatedResponse<T> {
@@ -97,15 +96,12 @@ export default function TemplatesTab() {
                 key={template.id} 
                 className="border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 rounded-lg p-4 hover:shadow-lg dark:hover:shadow-zinc-800/50 transition-shadow"
               >
-                <div className="relative w-full h-64 bg-zinc-50 dark:bg-zinc-800 rounded mb-3">
+                <div className="relative w-full h-64 bg-zinc-50 dark:bg-zinc-800 rounded mb-3 overflow-hidden">
                   {template.preview_url ? (
-                    <Image
+                    <img
                       src={template.preview_url}
                       alt={template.name}
-                      fill
-                      unoptimized
-                      className="object-contain"
-                      sizes="(max-width: 768px) 100vw, (max-width: 1200px) 50vw, 33vw"
+                      className="absolute inset-0 w-full h-full object-contain"
                     />
                   ) : (
                     <div className="flex items-center justify-center h-full text-zinc-400">
