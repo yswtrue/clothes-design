@@ -10,8 +10,9 @@ from config import get_settings
 
 class LocalStorageMixin:
     def get_url(self, name: str) -> str:
+        settings = get_settings().storage
         path = self.get_path(name)
-        return f"/api/files/{path}"
+        return f"{settings.api_base_url}/api/files/{path}"
 
     async def download(self, name: str) -> bytes:
         with self.open(name, "rb") as f:

@@ -10,6 +10,7 @@ class StorageSettings(BaseSettings):
 
     storage_type: Literal["local", "s3"] = Field(default="local", alias="STORAGE_TYPE")
     local_storage_path: str = Field(default="./uploads", alias="LOCAL_STORAGE_PATH")
+    api_base_url: str = Field(default="http://localhost:8000", alias="API_BASE_URL")
 
     aws_access_key_id: str = Field(default="", alias="AWS_ACCESS_KEY_ID")
     aws_secret_access_key: str = Field(default="", alias="AWS_SECRET_ACCESS_KEY")
