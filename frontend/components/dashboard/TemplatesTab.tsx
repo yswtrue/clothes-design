@@ -4,15 +4,20 @@ import { useState, useEffect } from 'react';
 import Image from 'next/image';
 import { apiRequest } from '@/lib/api';
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+interface PaginatedResponse<T> {
+  items: T[];
+  total: number;
+  page: number;
+  size: number;
+  pages: number;
+}
 
 interface Template {
   id: number;
   name: string;
-  image_path: string;
+  preview_url: string | null;
   category: string;
-  is_builtin: number;
-  created_at: string;
+  is_builtin: boolean;
 }
 
 type PageState = 'loading' | 'idle' | 'error';
@@ -28,8 +33,8 @@ export default function TemplatesTab() {
       setError(null);
 
       try {
-        const data = await apiRequest<Template[]>(`${API_URL}/api/prj-templates`);
-        setTemplates(data);
+        const data = await apiRequest<PaginatedResponse<Template>>('/api/prj-templates');
+        setTemplates(data.items);
         setState('idle');
       } catch (err) {
         console.error('获取模板时出错:', err);
@@ -93,17 +98,23 @@ export default function TemplatesTab() {
                 className="border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 rounded-lg p-4 hover:shadow-lg dark:hover:shadow-zinc-800/50 transition-shadow"
               >
                 <div className="relative w-full h-64 bg-zinc-50 dark:bg-zinc-800 rounded mb-3">
-                  <Image
-                    src={`${API_URL}${template.image_path}`}
-                    alt={template.name}
-                    fill
-                    className="object-contain"
-                    sizes="(max-width: 768px) 100vw, (max-width: 1200px) 50vw, 33vw"
-                  />
+                  {template.preview_url ? (
+                    <Image
+                      src={template.preview_url}
+                      alt={template.name}
+                      fill
+                      className="object-contain"
+                      sizes="(max-width: 768px) 100vw, (max-width: 1200px) 50vw, 33vw"
+                    />
+                  ) : (
+                    <div className="flex items-center justify-center h-full text-zinc-400">
+                      无预览图
+                    </div>
+                  )}
                 </div>
                 <h3 className="mt-3 font-medium text-lg text-zinc-950 dark:text-zinc-50">{template.name}</h3>
                 <p className="text-sm text-zinc-600 dark:text-zinc-400 capitalize">{template.category}</p>
-                {template.is_builtin === 1 && (
+                {template.is_builtin && (
                   <span className="inline-block mt-2 px-2 py-1 text-xs bg-blue-100 dark:bg-blue-900/30 text-blue-800 dark:text-blue-200 rounded">
                     内置模板
                   </span>
