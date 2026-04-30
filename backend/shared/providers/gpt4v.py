@@ -142,6 +142,7 @@ Extract 3-5 dominant colors as hex codes. Suggest optimal tiling mode and scale.
         raise GPT4VProviderError(f"Failed after {self.max_retries} attempts")
 
     def _parse_response(self, content: str) -> StyleAnalysis:
+        original_content = content
         content = content.strip()
 
         if content.startswith("```json"):
@@ -152,10 +153,13 @@ Extract 3-5 dominant colors as hex codes. Suggest optimal tiling mode and scale.
             content = content[:-3]
         content = content.strip()
 
+        if not content:
+            raise GPT4VProviderError(f"Empty content after parsing. Original: '{original_content[:200]}'")
+
         try:
             parsed = json.loads(content)
         except json.JSONDecodeError as e:
-            raise GPT4VProviderError(f"Invalid JSON in response: {e}") from e
+            raise GPT4VProviderError(f"Invalid JSON: {e}. Content: '{content[:300]}'") from e
 
         try:
             return StyleAnalysis(**parsed)
