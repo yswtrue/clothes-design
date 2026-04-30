@@ -2,7 +2,7 @@ import base64
 from typing import Any
 
 from sqlalchemy import update
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from config import get_settings
 from shared.ai.exceptions import (
@@ -22,15 +22,6 @@ class AnalyzeHandler(TaskHandler):
     def __init__(self) -> None:
         super().__init__()
         self.provider: GPT4VProvider | None = None
-        self.db_session: AsyncSession | None = None
-
-    async def _get_db_session(self) -> AsyncSession:
-        if self.db_session is None:
-            settings = get_settings()
-            engine = create_async_engine(settings.database.async_url, echo=False)
-            async_session_factory = async_sessionmaker(engine, expire_on_commit=False)
-            self.db_session = async_session_factory()
-        return self.db_session
 
     async def _get_provider(self) -> GPT4VProvider:
         if self.provider is not None:
@@ -71,6 +62,7 @@ class AnalyzeHandler(TaskHandler):
             except Exception as e:
                 raise WorkerError(f"Invalid base64 image_data: {e}") from e
 
+        engine = None
         try:
             provider = await self._get_provider()
 
@@ -84,26 +76,29 @@ class AnalyzeHandler(TaskHandler):
                 "suggested_params": analysis.suggested_params,
             }
 
-            session = await self._get_db_session()
+            settings = get_settings()
+            engine = create_async_engine(settings.database.async_url, echo=False)
+            session_factory = async_sessionmaker(engine, expire_on_commit=False)
 
             from api.db.models import Material
 
-            stmt = (
-                update(Material)
-                .where(Material.id == material_id)
-                .values(
-                    meta={
-                        "style_analysis": {
-                            "style_description": analysis.style_description,
-                            "color_palette": analysis.color_palette,
-                            "pattern_type": analysis.pattern_type,
-                            "suggested_params": analysis.suggested_params,
+            async with session_factory() as session:
+                stmt = (
+                    update(Material)
+                    .where(Material.id == material_id)
+                    .values(
+                        meta={
+                            "style_analysis": {
+                                "style_description": analysis.style_description,
+                                "color_palette": analysis.color_palette,
+                                "pattern_type": analysis.pattern_type,
+                                "suggested_params": analysis.suggested_params,
+                            }
                         }
-                    }
+                    )
                 )
-            )
-            await session.execute(stmt)
-            await session.commit()
+                await session.execute(stmt)
+                await session.commit()
 
             return result
 
@@ -128,5 +123,5 @@ class AnalyzeHandler(TaskHandler):
             raise WorkerError(f"Unexpected error: {e}") from e
 
         finally:
-            if self.db_session:
-                await self.db_session.close()
+            if engine:
+                await engine.dispose()
