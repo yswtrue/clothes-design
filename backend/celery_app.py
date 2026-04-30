@@ -1,15 +1,13 @@
-"""Celery application configuration."""
-
-import os
-
 from celery import Celery
 
-redis_url = os.getenv("REDIS_QUEUE_URL") or os.getenv("REDIS_URL", "redis://localhost:6379/0")
+from config import get_settings
+
+_settings = get_settings()
 
 celery_app = Celery(
     "clothes_design",
-    broker=redis_url,
-    backend=redis_url,
+    broker=_settings.redis.broker_url,
+    backend=_settings.redis.broker_url,
     include=[
         "worker.celery_tasks",
     ],

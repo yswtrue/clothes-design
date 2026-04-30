@@ -4,6 +4,12 @@ class AIProviderError(Exception):
     pass
 
 
+class ProviderError(AIProviderError):
+    """General provider error."""
+
+    pass
+
+
 class UnsupportedProviderError(AIProviderError):
     """Raised when requested provider is not supported."""
 

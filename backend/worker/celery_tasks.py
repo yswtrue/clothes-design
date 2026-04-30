@@ -124,6 +124,36 @@ def export_pattern_task(self, task_data: dict[str, Any]) -> dict[str, Any]:
         self.retry(exc=exc)
 
 
+@celery_app.task(
+    name="worker.tasks.generate_variants",
+    bind=True,
+    max_retries=3,
+    default_retry_delay=120,
+)
+def generate_variants_task(self, task_data: dict[str, Any]) -> dict[str, Any]:
+    from worker.handlers.generate_variants import GenerateVariantsHandler
+
+    try:
+        return run_async_handler(GenerateVariantsHandler, task_data)
+    except Exception as exc:
+        self.retry(exc=exc)
+
+
+@celery_app.task(
+    name="worker.tasks.compose_tif",
+    bind=True,
+    max_retries=3,
+    default_retry_delay=60,
+)
+def compose_tif_task(self, task_data: dict[str, Any]) -> dict[str, Any]:
+    from worker.handlers.compose_tif import ComposeTifHandler
+
+    try:
+        return run_async_handler(ComposeTifHandler, task_data)
+    except Exception as exc:
+        self.retry(exc=exc)
+
+
 __all__ = [
     "analyze_task",
     "generate_task",
@@ -131,4 +161,6 @@ __all__ = [
     "vectorize_task",
     "mockup_task",
     "export_pattern_task",
+    "generate_variants_task",
+    "compose_tif_task",
 ]

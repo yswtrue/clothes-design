@@ -52,8 +52,6 @@ class MaterialListResponse(BaseModel):
 
 
 class MaterialDetailResponse(BaseModel):
-    """Response model for material detail with full metadata."""
-
     model_config = ConfigDict(from_attributes=True)
 
     id: int
@@ -62,10 +60,31 @@ class MaterialDetailResponse(BaseModel):
     stored_filename: str
     file_size: int
     mime_type: str
-    storage_path: str
+    file_url: str | None = None
     meta: MaterialMeta | None
     created_at: datetime
     thumbnail_url: str | None = None
+
+    @classmethod
+    def from_material(cls, material, file_url: str | None = None) -> "MaterialDetailResponse":
+        file_path = None
+        if material.file:
+            if hasattr(material.file, "path"):
+                file_path = material.file.path
+            elif isinstance(material.file, str):
+                file_path = material.file
+        
+        return cls(
+            id=material.id,
+            uploaded_by=material.uploaded_by,
+            original_filename=material.original_filename or "",
+            stored_filename=material.stored_filename or "",
+            file_size=material.file_size or 0,
+            mime_type=material.mime_type or "",
+            file_url=file_url or file_path,
+            meta=material.meta,
+            created_at=material.created_at,
+        )
 
 
 class MaterialUpdateRequest(BaseModel):

@@ -1,10 +1,9 @@
+from enum import Enum
 from typing import Any, Optional
-import uuid
 
 from api.auth.security import verify_password
 from api.db.base import AsyncSessionLocal, engine
-from api.db.models import Design, Material, Role, Template, User, UserRole
-from api.storage.factory import get_storage_service
+from api.db.models import AIProviderConfig, Design, Material, PrjTemplate, Role, User, UserRole
 from sqlalchemy import select
 from starlette.requests import Request
 from starlette.responses import Response
@@ -12,7 +11,31 @@ from starlette_admin import I18nConfig
 from starlette_admin.auth import AdminConfig, AdminUser, AuthProvider
 from starlette_admin.contrib.sqlmodel import Admin, ModelView
 from starlette_admin.exceptions import FormValidationError, LoginFailed
-from starlette_admin.fields import FileField, StringField
+from starlette_admin.fields import (
+    BooleanField,
+    EnumField,
+    FileField,
+    ImageField,
+    IntegerField,
+    JSONField,
+    PasswordField,
+    StringField,
+)
+
+
+class ProviderType(str, Enum):
+    OPENAI = "openai"
+    REPLICATE = "replicate"
+    VECTORIZER = "vectorizer"
+    ESRGAN = "esrgan"
+
+
+DEFAULT_BASE_URLS = {
+    "openai": "https://api.openai.com/v1",
+    "replicate": "https://api.replicate.com/v1",
+    "vectorizer": "https://api.vectorizer.ai/api/v1",
+    "esrgan": "https://api.replicate.com/v1",
+}
 
 
 class JWTAuthProvider(AuthProvider):
@@ -85,37 +108,84 @@ class JWTAuthProvider(AuthProvider):
         return response
 
 
-class TemplateView(ModelView):
+class AIProviderConfigView(ModelView):
+    name = "AI Provider"
+    label = "AI Providers"
+
     fields = [
-        StringField("id", exclude_from_create=True, exclude_from_edit=True),
-        StringField("name", required=True),
-        StringField("category", required=True),
-        FileField("image_file", label="Template Image", exclude_from_list=True),
-        StringField("image_path", exclude_from_create=True, exclude_from_edit=True),
+        IntegerField("id", exclude_from_create=True, exclude_from_edit=True),
+        EnumField("provider_type", enum=ProviderType, required=True),
+        StringField("name", required=True, help_text="Display name"),
+        StringField(
+            "base_url",
+            required=False,
+            help_text="留空使用默认: openai=api.openai.com, replicate=api.replicate.com, vectorizer=api.vectorizer.ai",
+        ),
+        PasswordField("api_key", required=True, help_text="API key"),
+        StringField("model_name", required=True, help_text="Model identifier"),
+        BooleanField("is_active", help_text="Enable/disable this provider"),
+        IntegerField("priority", help_text="Lower number = higher priority"),
+        IntegerField("rate_limit", help_text="Requests per minute (optional)"),
+        JSONField("config", help_text="Extra configuration (JSON)"),
+        StringField("created_at", exclude_from_create=True, exclude_from_edit=True),
+        StringField("updated_at", exclude_from_create=True, exclude_from_edit=True),
+    ]
+
+    exclude_fields_from_list = ["api_key", "config", "created_at", "updated_at", "deleted_at"]
+    searchable_fields = ["name", "provider_type", "model_name"]
+    sortable_fields = ["id", "provider_type", "name", "priority", "is_active"]
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+
+    async def before_create(self, request: Request, data: dict[str, Any], obj: Any) -> None:
+        if "is_active" not in data or data["is_active"] is None:
+            data["is_active"] = 1
+            obj.is_active = 1
+        else:
+            data["is_active"] = 1 if data["is_active"] else 0
+            obj.is_active = data["is_active"]
+
+        if "priority" not in data or data["priority"] is None:
+            data["priority"] = 0
+            obj.priority = 0
+
+    async def before_edit(self, request: Request, data: dict[str, Any], obj: Any) -> None:
+        if "is_active" in data:
+            data["is_active"] = 1 if data["is_active"] else 0
+            obj.is_active = data["is_active"]
+
+
+class PrjTemplateView(ModelView):
+    name = "PRJ Template"
+    label = "PRJ Templates"
+
+    fields = [
+        IntegerField("id", exclude_from_create=True, exclude_from_edit=True),
+        StringField("name", required=True, help_text="模板名称"),
+        StringField("category", required=True, help_text="分类: T恤, 卫衣, 裤子 等"),
+        FileField("prj_file", label="PRJ 文件", exclude_from_list=True),
+        ImageField("preview_image", label="预览图", exclude_from_list=True),
+        BooleanField("is_builtin", help_text="内置模板"),
         StringField("created_at", exclude_from_create=True, exclude_from_edit=True),
     ]
 
+    exclude_fields_from_list = ["created_at", "deleted_at", "regions"]
+    searchable_fields = ["name", "category"]
+    sortable_fields = ["id", "name", "category", "is_builtin"]
+
     async def before_create(self, request: Request, data: dict[str, Any], obj: Any) -> None:
-        image_file = data.get("image_file")
+        if "is_builtin" not in data or data["is_builtin"] is None:
+            data["is_builtin"] = 1
+            obj.is_builtin = 1
+        else:
+            data["is_builtin"] = 1 if data["is_builtin"] else 0
+            obj.is_builtin = data["is_builtin"]
 
-        if image_file and hasattr(image_file, "read"):
-            content = await image_file.read()
-            filename = getattr(image_file, "filename", "template.png")
-
-            file_id = str(uuid.uuid4())
-            storage_key = f"templates/{file_id}_{filename}"
-
-            storage = get_storage_service()
-            image_path = await storage.upload(content, storage_key)
-
-            data["image_path"] = image_path
-            obj.image_path = image_path
-
-        if "image_file" in data:
-            del data["image_file"]
-
-        data["is_builtin"] = 1
-        obj.is_builtin = 1
+    async def before_edit(self, request: Request, data: dict[str, Any], obj: Any) -> None:
+        if "is_builtin" in data:
+            data["is_builtin"] = 1 if data["is_builtin"] else 0
+            obj.is_builtin = data["is_builtin"]
 
 
 def create_admin() -> Admin:
@@ -132,6 +202,7 @@ def create_admin() -> Admin:
     admin.add_view(ModelView(UserRole, icon="fa fa-user-tag"))
     admin.add_view(ModelView(Design, icon="fa fa-palette"))
     admin.add_view(ModelView(Material, icon="fa fa-image"))
-    admin.add_view(TemplateView(Template, icon="fa fa-shapes"))
+    admin.add_view(PrjTemplateView(PrjTemplate, icon="fa fa-file-code"))
+    admin.add_view(AIProviderConfigView(AIProviderConfig, icon="fa fa-key"))
 
     return admin

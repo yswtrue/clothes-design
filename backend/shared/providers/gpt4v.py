@@ -11,6 +11,7 @@ from shared.ai.exceptions import (
     ProviderTimeoutError,
 )
 from shared.ai.schemas import GenerationParams, Position, StyleAnalysis
+from shared.providers.config_loader import ProviderConfig
 
 
 class GPT4VProviderError(Exception):
@@ -21,6 +22,7 @@ class GPT4VProvider(AIProvider):
     def __init__(
         self,
         api_key: str | None = None,
+        base_url: str | None = None,
         model: str = "gpt-4o",
         timeout: int = 30,
         max_retries: int = 3,
@@ -32,7 +34,15 @@ class GPT4VProvider(AIProvider):
         self.model = model
         self.timeout = timeout
         self.max_retries = max_retries
-        self.base_url = "https://api.openai.com/v1"
+        self.base_url = base_url or os.getenv("OPENAI_BASE_URL") or "https://api.openai.com/v1"
+
+    @classmethod
+    def from_config(cls, config: ProviderConfig) -> "GPT4VProvider":
+        return cls(
+            api_key=config.api_key,
+            base_url=config.base_url,
+            model=config.model_name,
+        )
 
     async def analyze_style(self, image: bytes) -> StyleAnalysis:
         image_b64 = base64.b64encode(image).decode("utf-8")

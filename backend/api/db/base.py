@@ -1,27 +1,24 @@
-import os
 from collections.abc import AsyncGenerator
 from datetime import datetime
-from typing import Optional, Any
+from typing import Any, Optional
 
 from sqlalchemy import event, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase, Session
 from sqlmodel import Field, SQLModel
 
-DATABASE_URL = os.getenv(
-    "DATABASE_URL", "postgresql://postgres:postgres@127.0.0.1:5432/clothes_design_dev"
-)
+from config import get_settings
 
-if DATABASE_URL.startswith("sqlite"):
-    ASYNC_DATABASE_URL = DATABASE_URL.replace("sqlite://", "sqlite+aiosqlite://")
-else:
-    ASYNC_DATABASE_URL = DATABASE_URL.replace("postgresql://", "postgresql+asyncpg://")
+_settings = get_settings()
 
 engine = create_async_engine(
-    ASYNC_DATABASE_URL,
+    _settings.database.async_url,
     echo=False,
     future=True,
     pool_pre_ping=True,
+    pool_size=_settings.database.pool_size,
+    max_overflow=_settings.database.max_overflow,
+    pool_recycle=_settings.database.pool_recycle,
 )
 
 AsyncSessionLocal = async_sessionmaker(

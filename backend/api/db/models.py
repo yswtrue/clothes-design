@@ -1,7 +1,16 @@
 from datetime import datetime
-from typing import Optional
+from typing import Any, Optional
 
 from api.db.base import SoftDeleteMixin
+from api.storage.storages import (
+    generated_image_storage,
+    material_storage,
+    output_tif_storage,
+    preview_storage,
+    prj_storage,
+    thumbnail_storage,
+)
+from fastapi_storages.integrations.sqlalchemy import FileType
 from sqlalchemy import JSON, Column, ForeignKey, UniqueConstraint
 from sqlalchemy.orm import declared_attr
 from sqlmodel import Field, Relationship
@@ -87,8 +96,21 @@ class Design(SoftDeleteMixin, table=True):
         default=None,
         sa_column=Column(ForeignKey("users.id", ondelete="SET NULL"), index=True),
     )
+    generated_design_id: Optional[int] = Field(
+        default=None,
+        sa_column=Column(
+            ForeignKey("generated_designs.id", ondelete="SET NULL"), index=True
+        ),
+    )
+    prj_template_id: Optional[int] = Field(
+        default=None,
+        sa_column=Column(
+            ForeignKey("prj_templates.id", ondelete="SET NULL"), index=True
+        ),
+    )
     name: str = Field(max_length=255)
     status: str = Field(default="draft", max_length=50, index=True)
+    output_tif: Any = Field(default=None, sa_column=Column("output_tif_path", FileType(storage=output_tif_storage), nullable=True))
     created_at: Optional[datetime] = Field(
         default=None, sa_column_kwargs={"server_default": "now()"}, index=True
     )
@@ -97,6 +119,10 @@ class Design(SoftDeleteMixin, table=True):
     )
 
     user: Optional[User] = Relationship(back_populates="designs")
+    generated_design: Optional["GeneratedDesign"] = Relationship(
+        back_populates="designs"
+    )
+    prj_template: Optional["PrjTemplate"] = Relationship(back_populates="designs")
     versions: list["DesignVersion"] = Relationship(
         back_populates="design", cascade_delete=True
     )
@@ -140,25 +166,81 @@ class Material(SoftDeleteMixin, table=True):
     stored_filename: Optional[str] = Field(default=None, max_length=255, unique=True)
     file_size: Optional[int] = Field(default=None)
     mime_type: Optional[str] = Field(default=None, max_length=100)
-    storage_path: str = Field(max_length=500)
+    file: Any = Field(default=None, sa_column=Column("storage_path", FileType(storage=material_storage), nullable=False))
     meta: Optional[dict] = Field(default=None, sa_column=Column(JSON))
     created_at: Optional[datetime] = Field(
         default=None, sa_column_kwargs={"server_default": "now()"}, index=True
     )
 
     user: Optional[User] = Relationship(back_populates="materials")
+    generated_designs: list["GeneratedDesign"] = Relationship(
+        back_populates="material", cascade_delete=True
+    )
 
 
-class Template(SoftDeleteMixin, table=True):
+class PrjTemplate(SoftDeleteMixin, table=True):
     @declared_attr.directive
     def __tablename__(cls) -> str:
-        return "templates"
+        return "prj_templates"
 
     id: Optional[int] = Field(default=None, primary_key=True)
-    name: str = Field(max_length=255)
-    category: str = Field(max_length=50)
-    image_path: str = Field(max_length=500)
-    is_builtin: int = Field(default=0)
+    name: str = Field(max_length=255, index=True)
+    category: str = Field(max_length=50, index=True)
+    prj_file: Any = Field(default=None, sa_column=Column("prj_path", FileType(storage=prj_storage), nullable=True))
+    preview_image: Any = Field(default=None, sa_column=Column(FileType(storage=preview_storage), nullable=True))
+    regions: Optional[dict] = Field(default=None, sa_column=Column(JSON))
+    is_builtin: int = Field(default=1)
     created_at: Optional[datetime] = Field(
         default=None, sa_column_kwargs={"server_default": "now()"}
+    )
+
+    designs: list["Design"] = Relationship(back_populates="prj_template")
+
+
+class GeneratedDesign(SoftDeleteMixin, table=True):
+    @declared_attr.directive
+    def __tablename__(cls) -> str:
+        return "generated_designs"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    material_id: int = Field(
+        sa_column=Column(
+            ForeignKey("materials.id", ondelete="CASCADE"), nullable=False, index=True
+        )
+    )
+    image: Any = Field(default=None, sa_column=Column("image_path", FileType(storage=generated_image_storage), nullable=False))
+    thumbnail: Any = Field(default=None, sa_column=Column("thumbnail_path", FileType(storage=thumbnail_storage), nullable=True))
+    prompt_used: Optional[str] = Field(default=None)
+    seed: Optional[int] = Field(default=None)
+    variant_index: int = Field(default=0)
+    generation_params: Optional[dict] = Field(default=None, sa_column=Column(JSON))
+    is_selected: int = Field(default=0, index=True)
+    created_at: Optional[datetime] = Field(
+        default=None, sa_column_kwargs={"server_default": "now()"}, index=True
+    )
+
+    material: Optional["Material"] = Relationship(back_populates="generated_designs")
+    designs: list["Design"] = Relationship(back_populates="generated_design")
+
+
+class AIProviderConfig(SoftDeleteMixin, table=True):
+    @declared_attr.directive
+    def __tablename__(cls) -> str:
+        return "ai_provider_configs"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    provider_type: str = Field(max_length=50, index=True)
+    name: str = Field(max_length=100)
+    base_url: Optional[str] = Field(default=None, max_length=500)
+    api_key: str = Field(max_length=500)
+    model_name: str = Field(max_length=100)
+    is_active: int = Field(default=1, index=True)
+    priority: int = Field(default=0, index=True)
+    rate_limit: Optional[int] = Field(default=None)
+    config: Optional[dict] = Field(default=None, sa_column=Column(JSON))
+    created_at: Optional[datetime] = Field(
+        default=None, sa_column_kwargs={"server_default": "now()"}
+    )
+    updated_at: Optional[datetime] = Field(
+        default=None, sa_column_kwargs={"server_default": "now()", "onupdate": "now()"}
     )

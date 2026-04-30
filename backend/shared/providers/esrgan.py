@@ -13,6 +13,7 @@ from shared.ai.exceptions import (
     ProviderTimeoutError,
 )
 from shared.ai.schemas import GenerationParams, Position, StyleAnalysis
+from shared.providers.config_loader import ProviderConfig
 
 
 class ESRGANProviderError(Exception):
@@ -35,14 +36,6 @@ class ESRGANProvider(AIProvider):
         timeout: int = 120,
         max_retries: int = 3,
     ) -> None:
-        """Initialize ESRGAN provider.
-
-        Args:
-            api_key: API key for Real-ESRGAN service (or from env)
-            api_url: Base URL for Real-ESRGAN API (or from env)
-            timeout: Request timeout in seconds (default: 120s for large images)
-            max_retries: Maximum retry attempts for transient failures
-        """
         self.api_key = api_key or os.getenv("ESRGAN_API_KEY") or os.getenv("REALESRGAN_API_KEY")
         if not self.api_key:
             raise ProviderConfigurationError(
@@ -52,6 +45,13 @@ class ESRGANProvider(AIProvider):
         self.api_url = api_url or os.getenv("ESRGAN_API_URL", "https://api.replicate.com/v1")
         self.timeout = timeout
         self.max_retries = max_retries
+
+    @classmethod
+    def from_config(cls, config: ProviderConfig) -> "ESRGANProvider":
+        return cls(
+            api_key=config.api_key,
+            api_url=config.base_url,
+        )
 
     async def upscale_image(self, image: bytes, target_size: int) -> bytes:  # noqa: C901
         """Upscale image to target size using Real-ESRGAN.

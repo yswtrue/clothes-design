@@ -72,7 +72,7 @@ async def get_material(
             detail="Material not found",
         )
 
-    return MaterialDetailResponse.model_validate(material)
+    return MaterialDetailResponse.from_material(material)
 
 
 @router.patch("/{material_id}", response_model=MaterialDetailResponse)
@@ -102,7 +102,7 @@ async def update_material(
             detail="Material not found",
         )
 
-    return MaterialDetailResponse.model_validate(material)
+    return MaterialDetailResponse.from_material(material)
 
 
 @router.delete("/{material_id}", status_code=status.HTTP_204_NO_CONTENT)

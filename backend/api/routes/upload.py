@@ -1,6 +1,7 @@
 """Upload API endpoints."""
 
 import base64
+import io
 import uuid
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
@@ -10,7 +11,6 @@ from api.auth.dependencies import get_current_user
 from api.db.base import get_session
 from api.db.models import Material, User
 from api.materials.schemas import MaterialDetailResponse
-from api.storage.factory import get_storage_service
 from shared.task_queue.celery_integration import enqueue_task
 
 router = APIRouter(prefix="/api/upload", tags=["upload"])
@@ -21,12 +21,14 @@ _session_dep = Depends(get_session)
 _user_dep = Depends(get_current_user)
 
 
-def generate_storage_key(user_id: int, filename: str) -> tuple[str, str]:
-    """Generate unique storage key for uploaded file."""
-    file_id = str(uuid.uuid4())
-    stored_filename = f"{file_id}_{filename}"
-    storage_key = f"uploads/{user_id}/{stored_filename}"
-    return stored_filename, storage_key
+def get_file_path(file_obj) -> str | None:
+    if file_obj is None:
+        return None
+    if hasattr(file_obj, "path"):
+        return file_obj.path
+    if isinstance(file_obj, str):
+        return file_obj
+    return None
 
 
 @router.post("", response_model=MaterialDetailResponse, status_code=status.HTTP_201_CREATED)
@@ -35,7 +37,6 @@ async def upload_file(
     session: AsyncSession = _session_dep,
     user: User = _user_dep,
 ) -> MaterialDetailResponse:
-    """Upload a material file and create database record."""
     if not file.filename:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -45,21 +46,24 @@ async def upload_file(
     try:
         content = await file.read()
         user_id: int = user.id  # type: ignore[assignment]
-        stored_filename, storage_key = generate_storage_key(user_id, file.filename)
+        
+        file_id = str(uuid.uuid4())
+        stored_filename = f"{file_id}_{file.filename}"
 
-        storage = get_storage_service()
-        await storage.upload(content, storage_key)
+        file_wrapper = UploadFile(
+            file=io.BytesIO(content),
+            filename=stored_filename,
+        )
 
-        # Create Material database record
         material = Material(
             uploaded_by=user_id,
             original_filename=file.filename,
             stored_filename=stored_filename,
             file_size=len(content),
             mime_type=file.content_type or "application/octet-stream",
-            storage_path=storage_key,
             meta={},
         )
+        material.file = file_wrapper
 
         session.add(material)
         await session.commit()
@@ -92,7 +96,7 @@ async def upload_file(
             logger = logging.getLogger(__name__)
             logger.error(f"Failed to enqueue analyze task: {e}", exc_info=True)
 
-        return MaterialDetailResponse.model_validate(material)
+        return MaterialDetailResponse.from_material(material)
 
     except ValueError as e:
         error_msg = str(e)

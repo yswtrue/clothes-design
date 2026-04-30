@@ -7,8 +7,18 @@ export async function fetchDesign(id: number): Promise<Design> {
   return apiRequest<Design>(`${API_BASE}/api/designs/${id}`);
 }
 
+interface PaginatedResponse<T> {
+  items: T[];
+  total: number;
+  page: number;
+  size: number;
+}
+
 export async function fetchTemplates(): Promise<Template[]> {
-  return apiRequest<Template[]>(`${API_BASE}/api/templates`);
+  const response = await apiRequest<PaginatedResponse<Template>>(
+    `${API_BASE}/api/prj-templates?size=100`
+  );
+  return response.items;
 }
 
 export async function updateDesign(

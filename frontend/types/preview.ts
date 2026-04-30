@@ -32,10 +32,9 @@ export interface Design {
 export interface Template {
   id: number;
   name: string;
-  image_path: string;
+  preview_url: string | null;
   category: string;
-  is_builtin: number;
-  created_at: string;
+  is_builtin: boolean;
 }
 
 export interface UpdateDesignRequest {

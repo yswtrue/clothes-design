@@ -13,7 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from shared.ai.schemas import Position
 from api.auth.dependencies import get_current_user
 from api.db.base import get_session
-from api.db.models import Design, DesignVersion, Template, User
+from api.db.models import Design, DesignVersion, PrjTemplate, User
 from api.rbac.permissions import require_permission
 from shared.providers.mockups import (
     MockupsProvider,
@@ -28,6 +28,16 @@ from api.storage.factory import get_storage_service
 router = APIRouter(prefix="/api/designs", tags=["designs"])
 
 _session_dep = Annotated[AsyncSession, Depends(get_session)]
+
+
+def get_file_path(file_obj) -> str | None:
+    if file_obj is None:
+        return None
+    if hasattr(file_obj, "path"):
+        return file_obj.path
+    if isinstance(file_obj, str):
+        return file_obj
+    return None
 _user_dep = Annotated[User, Depends(get_current_user)]
 
 
@@ -325,7 +335,7 @@ async def generate_preview(
         )
 
     template_result = await session.execute(
-        select(Template).where(Template.id == preview_state.template_id)
+        select(PrjTemplate).where(PrjTemplate.id == preview_state.template_id)  # type: ignore[arg-type]
     )
     template = template_result.scalar_one_or_none()
     if not template:
@@ -334,11 +344,18 @@ async def generate_preview(
             detail=f"Template {preview_state.template_id} not found",
         )
 
+    preview_image_path = get_file_path(template.preview_image)
+    if not preview_image_path:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Template has no preview image for mockup",
+        )
+
     storage = get_storage_service()
 
     try:
         pattern_bytes = await storage.download(preview_state.pattern_url)
-        template_bytes = await storage.download(template.image_path)
+        template_bytes = await storage.download(preview_image_path)
 
         mockups_provider = MockupsProvider()
 

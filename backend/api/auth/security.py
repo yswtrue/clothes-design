@@ -7,13 +7,7 @@ from uuid import uuid4
 from jose import JWTError, jwt
 from passlib.context import CryptContext
 
-try:
-    import redis.asyncio as redis
-except Exception:
-    redis = None
-
-_redis_available = redis is not None
-
+from api.redis import get_redis
 
 _pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 _revoked_tokens: dict[str, int] = {}
@@ -89,27 +83,16 @@ def verify_token(token: str, expected_type: str | None = None) -> dict[str, Any]
     return payload
 
 
-async def _get_redis_client():
-    if not _redis_available:
-        return None
-    redis_url = os.getenv("REDIS_URL")
-    if not redis_url:
-        return None
-    if redis is None:
-        return None
-    return redis.from_url(redis_url, decode_responses=True)
-
-
 async def revoke_token(jti: str, expires_at: int) -> None:
     if not jti:
         return
     now = int(datetime.now(UTC).timestamp())
     ttl = max(expires_at - now, 0)
-    client = await _get_redis_client()
-    if client:
+    try:
+        client = get_redis()
         await client.setex(f"revoked:{jti}", ttl, "1")
-        return
-    _revoked_tokens[jti] = expires_at
+    except Exception:
+        _revoked_tokens[jti] = expires_at
 
 
 async def is_token_revoked(jti: str) -> bool:
@@ -119,7 +102,8 @@ async def is_token_revoked(jti: str) -> bool:
     expired = [key for key, exp in _revoked_tokens.items() if exp <= now]
     for key in expired:
         _revoked_tokens.pop(key, None)
-    client = await _get_redis_client()
-    if client:
+    try:
+        client = get_redis()
         return bool(await client.exists(f"revoked:{jti}"))
-    return jti in _revoked_tokens
+    except Exception:
+        return jti in _revoked_tokens

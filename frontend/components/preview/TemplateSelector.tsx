@@ -32,7 +32,7 @@ export default function TemplateSelector({
             `}
           >
             <img
-              src={template.image_path}
+              src={template.preview_url || '/placeholder-template.svg'}
               alt={template.name}
               className="w-full h-full object-cover"
             />

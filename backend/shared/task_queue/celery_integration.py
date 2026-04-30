@@ -25,8 +25,10 @@ class QueueError(Exception):
 try:
     from worker.celery_tasks import (
         analyze_task,
+        compose_tif_task,
         export_pattern_task,
         generate_task,
+        generate_variants_task,
         mockup_task,
         upscale_task,
         vectorize_task,
@@ -41,10 +43,12 @@ except ImportError:
 TASK_MAP = {
     "analyze": analyze_task,
     "generate": generate_task,
+    "generate_variants": generate_variants_task,
     "upscale": upscale_task,
     "vectorize": vectorize_task,
     "mockup": mockup_task,
     "export_pattern": export_pattern_task,
+    "compose_tif": compose_tif_task,
 }
 
 

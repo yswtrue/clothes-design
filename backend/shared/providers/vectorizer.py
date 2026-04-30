@@ -11,6 +11,7 @@ from shared.ai.exceptions import (
     ProviderTimeoutError,
 )
 from shared.ai.schemas import GenerationParams, Position, StyleAnalysis
+from shared.providers.config_loader import ProviderConfig
 
 
 class VectorizerError(Exception):
@@ -25,14 +26,9 @@ class VectorizerProvider(AIProvider):
     def __init__(
         self,
         api_key: str | None = None,
+        base_url: str | None = None,
         timeout: int = 90,
     ) -> None:
-        """Initialize Vectorizer provider.
-
-        Args:
-            api_key: API key (from env if not provided)
-            timeout: Request timeout in seconds (default 90s for slow vectorization)
-        """
         self.api_key = api_key or os.getenv("VECTORIZER_API_KEY") or os.getenv("VECTORIZER_KEY")
         if not self.api_key:
             raise ProviderConfigurationError(
@@ -40,7 +36,14 @@ class VectorizerProvider(AIProvider):
             )
 
         self.timeout = timeout
-        self.base_url = "https://api.vectorizer.ai/api/v1"
+        self.base_url = base_url or os.getenv("VECTORIZER_BASE_URL") or "https://api.vectorizer.ai/api/v1"
+
+    @classmethod
+    def from_config(cls, config: ProviderConfig) -> "VectorizerProvider":
+        return cls(
+            api_key=config.api_key,
+            base_url=config.base_url,
+        )
 
     async def vectorize(self, image: bytes, color_space: str = "CMYK") -> bytes:
         """Convert raster image to CMYK TIF format using Vectorizer.ai.

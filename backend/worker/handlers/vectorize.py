@@ -1,13 +1,10 @@
 """Worker handler for vectorization tasks."""
 
 import logging
-import sys
-from pathlib import Path
 from typing import Any
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent / "backend"))
-
-from shared.providers.vectorizer import VectorizerProvider  # type: ignore[import-not-found]
+from shared.providers.config_loader import get_provider_config
+from shared.providers.vectorizer import VectorizerProvider
 
 from .base import TaskHandler, WorkerError
 
@@ -15,24 +12,22 @@ logger = logging.getLogger(__name__)
 
 
 class VectorizeHandler(TaskHandler):
-    """Handler for vectorization tasks using Vectorizer.ai."""
-
     handler_name = "vectorize"
 
     def __init__(self) -> None:
-        """Initialize vectorize handler."""
         super().__init__()
-        self.provider = VectorizerProvider()
+        self.provider: VectorizerProvider | None = None
+
+    async def _get_provider(self) -> VectorizerProvider:
+        if self.provider is None:
+            config = await get_provider_config("vectorizer")
+            if config:
+                self.provider = VectorizerProvider.from_config(config)
+            else:
+                self.provider = VectorizerProvider()
+        return self.provider
 
     async def validate_input(self, task_data: dict[str, Any]) -> None:
-        """Validate vectorization task input.
-
-        Args:
-            task_data: Task parameters
-
-        Raises:
-            WorkerError: If required fields are missing or invalid
-        """
         if "image" not in task_data:
             raise WorkerError("Missing required field: image")
 
@@ -46,22 +41,6 @@ class VectorizeHandler(TaskHandler):
             )
 
     async def handle(self, task_data: dict[str, Any]) -> dict[str, Any]:
-        """Process vectorization task.
-
-        Args:
-            task_data: Task parameters containing:
-                - image: bytes - raster image to vectorize
-                - color_space: str - "CMYK" or "RGB" (default "CMYK")
-
-        Returns:
-            Result dict containing:
-                - vectorized_image: bytes - TIF format output
-                - color_space: str - color space used
-                - format: str - output format ("tif")
-
-        Raises:
-            Exception: Any error during vectorization
-        """
         await self.validate_input(task_data)
 
         image = task_data["image"]
@@ -72,7 +51,8 @@ class VectorizeHandler(TaskHandler):
         )
 
         try:
-            vectorized = await self.provider.vectorize(image, color_space)
+            provider = await self._get_provider()
+            vectorized = await provider.vectorize(image, color_space)
             self.logger.info(f"Vectorization complete: {len(vectorized)} bytes")
 
             return {

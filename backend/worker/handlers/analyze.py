@@ -1,18 +1,17 @@
 import base64
-import os
-import sys
-from pathlib import Path
 from typing import Any
 
 from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
-from shared.ai.exceptions import (  # type: ignore[import-not-found]
+from config import get_settings
+from shared.ai.exceptions import (
     ProviderConfigurationError,
     ProviderRateLimitError,
     ProviderTimeoutError,
 )
-from shared.providers.gpt4v import GPT4VProvider, GPT4VProviderError  # type: ignore[import-not-found]
+from shared.providers.config_loader import get_provider_config
+from shared.providers.gpt4v import GPT4VProvider, GPT4VProviderError
 
 from .base import TaskHandler, WorkerError
 
@@ -27,14 +26,25 @@ class AnalyzeHandler(TaskHandler):
 
     async def _get_db_session(self) -> AsyncSession:
         if self.db_session is None:
-            database_url = os.getenv("DATABASE_URL", "")
-            if database_url.startswith("postgresql://"):
-                database_url = database_url.replace("postgresql://", "postgresql+asyncpg://", 1)
-
-            engine = create_async_engine(database_url, echo=False)
+            settings = get_settings()
+            engine = create_async_engine(settings.database.async_url, echo=False)
             async_session_factory = async_sessionmaker(engine, expire_on_commit=False)
             self.db_session = async_session_factory()
         return self.db_session
+
+    async def _get_provider(self) -> GPT4VProvider:
+        if self.provider is not None:
+            return self.provider
+
+        config = await get_provider_config("openai")
+        if config:
+            self.provider = GPT4VProvider.from_config(config)
+            self.logger.info(f"Using DB config: {config.base_url}, model={config.model_name}")
+        else:
+            self.provider = GPT4VProvider()
+            self.logger.info("Using env config for OpenAI")
+
+        return self.provider
 
     async def validate_input(self, task_data: dict[str, Any]) -> None:
         if "image_data" not in task_data:
@@ -62,10 +72,9 @@ class AnalyzeHandler(TaskHandler):
                 raise WorkerError(f"Invalid base64 image_data: {e}") from e
 
         try:
-            if self.provider is None:
-                self.provider = GPT4VProvider()
+            provider = await self._get_provider()
 
-            analysis = await self.provider.analyze_style(image_data)
+            analysis = await provider.analyze_style(image_data)
 
             result = {
                 "status": "success",

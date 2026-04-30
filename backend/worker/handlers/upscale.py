@@ -1,13 +1,10 @@
 """Upscale task handler for image super-resolution."""
 
 import logging
-import sys
-from pathlib import Path
 from typing import Any
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent / "backend"))
-
-from shared.providers.esrgan import ESRGANProvider  # type: ignore[import-not-found]
+from shared.providers.config_loader import get_provider_config
+from shared.providers.esrgan import ESRGANProvider
 
 from .base import TaskHandler, WorkerError
 
@@ -15,24 +12,22 @@ logger = logging.getLogger(__name__)
 
 
 class UpscaleHandler(TaskHandler):
-    """Handler for upscale tasks using Real-ESRGAN."""
-
     handler_name = "upscale"
 
     def __init__(self) -> None:
-        """Initialize upscale handler."""
         super().__init__()
-        self.provider = ESRGANProvider()
+        self.provider: ESRGANProvider | None = None
+
+    async def _get_provider(self) -> ESRGANProvider:
+        if self.provider is None:
+            config = await get_provider_config("esrgan")
+            if config:
+                self.provider = ESRGANProvider.from_config(config)
+            else:
+                self.provider = ESRGANProvider()
+        return self.provider
 
     async def validate_input(self, task_data: dict[str, Any]) -> None:
-        """Validate upscale task input.
-
-        Args:
-            task_data: Must contain 'image' (bytes) and 'target_size' (int)
-
-        Raises:
-            WorkerError: If validation fails
-        """
         if "image" not in task_data:
             raise WorkerError("Missing required field: image")
 
@@ -50,17 +45,6 @@ class UpscaleHandler(TaskHandler):
             raise WorkerError(f"target_size must be 1024-16384, got {target_size}")
 
     async def handle(self, task_data: dict[str, Any]) -> dict[str, Any]:
-        """Process upscale task.
-
-        Args:
-            task_data: Task parameters with 'image' and 'target_size'
-
-        Returns:
-            Result dict with 'upscaled_image' (bytes)
-
-        Raises:
-            WorkerError: If processing fails
-        """
         await self.validate_input(task_data)
 
         image = task_data["image"]
@@ -69,7 +53,8 @@ class UpscaleHandler(TaskHandler):
         self.logger.info(f"Starting upscale to target_size={target_size}")
 
         try:
-            upscaled = await self.provider.upscale_image(image, target_size)
+            provider = await self._get_provider()
+            upscaled = await provider.upscale_image(image, target_size)
 
             self.logger.info(
                 f"Upscale completed: input={len(image)} bytes, output={len(upscaled)} bytes"

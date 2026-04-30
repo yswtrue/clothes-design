@@ -10,14 +10,17 @@ from starlette.middleware import Middleware
 from starlette.middleware.sessions import SessionMiddleware
 
 from .routes.auth import router as auth_router
+from .routes.ai_providers import router as ai_providers_router
+from .routes.compose import router as compose_router
 from .routes.designs import router as designs_router
 from .routes.export import router as export_router
 from .routes.generate import router as generate_router
 from .routes.materials import router as materials_router
+from .routes.prj_templates import router as prj_templates_router
 from .routes.roles import router as roles_router
-from .routes.templates import router as templates_router
 from .routes.upload import router as upload_router
 from .routes.users import router as users_router
+from .routes.variants import router as variants_router
 from .db.base import get_session
 from .db.seed_users import seed_test_users
 from .middleware.errors import (
@@ -102,10 +105,13 @@ app.include_router(users_router)
 app.include_router(roles_router)
 app.include_router(upload_router)
 app.include_router(materials_router)
-app.include_router(templates_router)
+app.include_router(prj_templates_router)
 app.include_router(generate_router)
+app.include_router(variants_router)
 app.include_router(designs_router)
+app.include_router(compose_router)
 app.include_router(export_router)
+app.include_router(ai_providers_router)
 
 admin = create_admin()
 app.add_middleware(SessionMiddleware, secret_key="your-secret-key-change-in-production")

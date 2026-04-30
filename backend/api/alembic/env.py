@@ -1,4 +1,3 @@
-import os
 from logging.config import fileConfig
 
 from sqlalchemy import create_engine, pool
@@ -6,7 +5,8 @@ from sqlmodel import SQLModel
 from sqlmodel.sql.sqltypes import AutoString
 
 from alembic import context
-from api.db.models import Design, DesignVersion, Material, Role, Template, User, UserRole
+from config import get_settings
+from api.db.models import Design, DesignVersion, Material, PrjTemplate, Role, User, UserRole
 
 config = context.config
 
@@ -17,9 +17,7 @@ target_metadata = SQLModel.metadata
 
 
 def render_item(type_, obj, autogen_context):
-    """Render SQLModel types as standard SQLAlchemy types."""
     if isinstance(obj, AutoString):
-        # Render AutoString as sa.String with length
         if obj.length:
             return f"sa.String(length={obj.length})"
         return "sa.String()"
@@ -27,10 +25,8 @@ def render_item(type_, obj, autogen_context):
 
 
 def get_sqlalchemy_url() -> str:
-    database_url = os.getenv(
-        "DATABASE_URL", "postgresql://postgres:postgres@127.0.0.1:5432/clothes_design_dev"
-    )
-    return database_url.replace("postgresql+asyncpg://", "postgresql://")
+    settings = get_settings()
+    return settings.database.url.replace("postgresql+asyncpg://", "postgresql://")
 
 
 def run_migrations_offline() -> None:
