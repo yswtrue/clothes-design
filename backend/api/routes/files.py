@@ -15,7 +15,14 @@ async def serve_file(file_path: str):
     if settings.storage_type != "local":
         raise HTTPException(status_code=404, detail="File serving only available for local storage")
 
-    full_path = Path(file_path)
+    base_path = Path(settings.local_storage_path)
+    full_path = base_path / file_path
+
+    # Security: ensure path doesn't escape base directory
+    try:
+        full_path.resolve().relative_to(base_path.resolve())
+    except ValueError:
+        raise HTTPException(status_code=403, detail="Access denied")
 
     if not full_path.exists():
         raise HTTPException(status_code=404, detail="File not found")
