@@ -5,7 +5,7 @@ from typing import Any
 
 from PIL import Image
 
-from api.storage.factory import get_storage_service
+from api.storage.storages import generated_image_storage, output_tif_storage, prj_storage
 
 from .base import TaskHandler, WorkerError
 
@@ -115,10 +115,8 @@ class ComposeTifHandler(TaskHandler):
         prj_path = task_data["prj_path"]
         regions = task_data.get("regions")
 
-        storage = get_storage_service()
-
         self.logger.info(f"Loading fabric image from {fabric_image_path}")
-        fabric_bytes = await storage.download(fabric_image_path)
+        fabric_bytes = await generated_image_storage.download(fabric_image_path)
         fabric_image = Image.open(io.BytesIO(fabric_bytes))
 
         if fabric_image.mode != 'RGB':
@@ -126,7 +124,7 @@ class ComposeTifHandler(TaskHandler):
 
         self.logger.info(f"Loading PRJ template from {prj_path}")
         try:
-            prj_bytes = await storage.download(prj_path)
+            prj_bytes = await prj_storage.download(prj_path)
         except Exception as e:
             self.logger.warning(f"Could not load PRJ from storage: {e}")
             try:
@@ -170,8 +168,8 @@ class ComposeTifHandler(TaskHandler):
         )
         output_buffer.seek(0)
 
-        output_filename = f"exports/design-{design_id}-composed.tif"
-        download_url = await storage.upload(output_buffer.getvalue(), output_filename)
+        output_filename = f"design-{design_id}-composed.tif"
+        download_url = await output_tif_storage.upload(output_buffer.getvalue(), output_filename)
 
         self.logger.info(f"TIF export complete: {download_url}")
 

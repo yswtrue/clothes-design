@@ -1,15 +1,11 @@
 """Export pattern handler for high-resolution CMYK TIF workflow."""
 
 import logging
-import sys
-from pathlib import Path
 from typing import Any
-
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent / "backend"))
 
 from shared.providers.esrgan import ESRGANProvider
 from shared.providers.vectorizer import VectorizerProvider
-from storage.factory import get_storage_service
+from api.storage.storages import generated_image_storage, output_tif_storage
 
 from .base import TaskHandler, WorkerError
 
@@ -52,11 +48,9 @@ class ExportPatternHandler(TaskHandler):
         target_resolution = task_data.get("target_resolution", 12000)
         color_space = task_data.get("color_space", "CMYK")
 
-        storage = get_storage_service()
-
         try:
             self.logger.info(f"Downloading pattern from {pattern_url}")
-            pattern_bytes = await storage.download(pattern_url)
+            pattern_bytes = await generated_image_storage.download(pattern_url)
 
             self.logger.info(f"Upscaling pattern to {target_resolution}px")
             upscaled_bytes = await self.esrgan.upscale_image(
@@ -72,8 +66,8 @@ class ExportPatternHandler(TaskHandler):
 
             self.logger.info(f"Vectorized: {len(tif_bytes)} bytes")
 
-            export_filename = f"exports/design-{design_id}-12K-{color_space}.tif"
-            download_url = await storage.upload(tif_bytes, export_filename)
+            export_filename = f"design-{design_id}-12K-{color_space}.tif"
+            download_url = await output_tif_storage.upload(tif_bytes, export_filename)
 
             self.logger.info(f"Export complete: {download_url}")
 

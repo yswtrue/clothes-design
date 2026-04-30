@@ -23,21 +23,11 @@ from shared.providers.mockups import (
     ProviderRateLimitError,
     ProviderTimeoutError,
 )
-from api.storage.factory import get_storage_service
+from api.storage.storages import generated_image_storage, preview_storage
 
 router = APIRouter(prefix="/api/designs", tags=["designs"])
 
 _session_dep = Annotated[AsyncSession, Depends(get_session)]
-
-
-def get_file_path(file_obj) -> str | None:
-    if file_obj is None:
-        return None
-    if hasattr(file_obj, "path"):
-        return file_obj.path
-    if isinstance(file_obj, str):
-        return file_obj
-    return None
 _user_dep = Annotated[User, Depends(get_current_user)]
 
 
@@ -344,18 +334,15 @@ async def generate_preview(
             detail=f"Template {preview_state.template_id} not found",
         )
 
-    preview_image_path = get_file_path(template.preview_image)
-    if not preview_image_path:
+    if not template.preview_image:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Template has no preview image for mockup",
         )
 
-    storage = get_storage_service()
-
     try:
-        pattern_bytes = await storage.download(preview_state.pattern_url)
-        template_bytes = await storage.download(preview_image_path)
+        pattern_bytes = await generated_image_storage.download(preview_state.pattern_url)
+        template_bytes = await preview_storage.download(str(template.preview_image))
 
         mockups_provider = MockupsProvider()
 
@@ -366,8 +353,8 @@ async def generate_preview(
             template_id=None,
         )
 
-        preview_filename = f"previews/{design_id}/{uuid.uuid4()}.png"
-        preview_url = await storage.upload(composite_result, preview_filename)
+        preview_filename = f"{uuid.uuid4()}.png"
+        preview_url = await generated_image_storage.upload(composite_result, preview_filename)
 
         return PreviewResponse(preview_url=preview_url)
 

@@ -9,23 +9,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from api.auth.dependencies import get_current_user
 from api.db.base import get_session
 from api.db.models import Design, GeneratedDesign, PrjTemplate, User
-from api.storage.factory import get_storage_service
+from api.storage.storages import generated_image_storage, output_tif_storage, prj_storage
 from shared.task_queue.celery_integration import enqueue_task, get_task_status
 
 router = APIRouter(prefix="/api/designs", tags=["compose"])
 
 _session_dep = Annotated[AsyncSession, Depends(get_session)]
 _user_dep = Annotated[User, Depends(get_current_user)]
-
-
-def get_file_path(file_obj) -> str | None:
-    if file_obj is None:
-        return None
-    if hasattr(file_obj, "path"):
-        return file_obj.path
-    if isinstance(file_obj, str):
-        return file_obj
-    return None
 
 
 class ComposeRequest(BaseModel):
@@ -115,8 +105,8 @@ async def compose_design(
         "design_id": design.id,
         "generated_design_id": request.generated_design_id,
         "prj_template_id": request.prj_template_id,
-        "fabric_image_path": get_file_path(generated_design.image),
-        "prj_path": get_file_path(prj_template.prj_file),
+        "fabric_image_path": str(generated_design.image) if generated_design.image else None,
+        "prj_path": str(prj_template.prj_file) if prj_template.prj_file else None,
         "regions": prj_template.regions,
     }
 
@@ -214,11 +204,7 @@ async def get_design(
             detail="Design not found or access denied",
         )
 
-    output_tif_url = None
-    output_tif_path = get_file_path(design.output_tif)
-    if output_tif_path:
-        storage = get_storage_service()
-        output_tif_url = await storage.get_url(output_tif_path)
+    output_tif_url = output_tif_storage.get_url(str(design.output_tif)) if design.output_tif else None
 
     return DesignDetailResponse(
         id=design.id,

@@ -9,23 +9,13 @@ from api.auth.dependencies import get_current_user
 from api.db.base import get_session
 from api.db.models import GeneratedDesign, Material, User
 from api.materials.schemas import MaterialMeta
-from api.storage.factory import get_storage_service
+from api.storage.storages import generated_image_storage, thumbnail_storage
 from shared.task_queue.celery_integration import enqueue_task, get_task_status
 
 router = APIRouter(prefix="/api/generate", tags=["variants"])
 
 _session_dep = Annotated[AsyncSession, Depends(get_session)]
 _user_dep = Annotated[User, Depends(get_current_user)]
-
-
-def get_file_path(file_obj) -> str | None:
-    if file_obj is None:
-        return None
-    if hasattr(file_obj, "path"):
-        return file_obj.path
-    if isinstance(file_obj, str):
-        return file_obj
-    return None
 
 
 class GenerateVariantsRequest(BaseModel):
@@ -154,13 +144,10 @@ async def get_variants(
     )
     variants = variants_result.scalars().all()
 
-    storage = get_storage_service()
     variant_responses = []
     for v in variants:
-        image_path = get_file_path(v.image)
-        thumbnail_path = get_file_path(v.thumbnail)
-        image_url = await storage.get_url(image_path) if image_path else None
-        thumbnail_url = await storage.get_url(thumbnail_path) if thumbnail_path else None
+        image_url = generated_image_storage.get_url(str(v.image)) if v.image else None
+        thumbnail_url = thumbnail_storage.get_url(str(v.thumbnail)) if v.thumbnail else None
         variant_responses.append(VariantResponse(
             id=v.id,
             material_id=v.material_id,
@@ -227,11 +214,8 @@ async def select_variant(
     await session.commit()
     await session.refresh(variant)
 
-    storage = get_storage_service()
-    image_path = get_file_path(variant.image)
-    thumbnail_path = get_file_path(variant.thumbnail)
-    image_url = await storage.get_url(image_path) if image_path else None
-    thumbnail_url = await storage.get_url(thumbnail_path) if thumbnail_path else None
+    image_url = generated_image_storage.get_url(str(variant.image)) if variant.image else None
+    thumbnail_url = thumbnail_storage.get_url(str(variant.thumbnail)) if variant.thumbnail else None
 
     return VariantResponse(
         id=variant.id,

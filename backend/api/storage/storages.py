@@ -1,5 +1,6 @@
 import os
 from pathlib import Path
+from typing import BinaryIO
 
 from fastapi_storages import FileSystemStorage, S3Storage
 from fastapi_storages.utils import secure_filename
@@ -7,7 +8,46 @@ from fastapi_storages.utils import secure_filename
 from config import get_settings
 
 
-class PrefixedS3Storage(S3Storage):
+class LocalStorageMixin:
+    def get_url(self, name: str) -> str:
+        path = self.get_path(name)
+        return f"/api/files/{path}"
+
+    async def download(self, name: str) -> bytes:
+        with self.open(name, "rb") as f:
+            return f.read()
+
+    async def upload(self, data: bytes | BinaryIO, name: str) -> str:
+        self.write(data, name)
+        return self.get_url(name)
+
+
+class S3StorageMixin:
+    def get_url(self, name: str) -> str:
+        return self.get_path(name)
+
+    async def download(self, name: str) -> bytes:
+        with self.open(name, "rb") as f:
+            return f.read()
+
+    async def upload(self, data: bytes | BinaryIO, name: str) -> str:
+        self.write(data, name)
+        return self.get_url(name)
+
+
+class PrefixedLocalStorage(LocalStorageMixin, FileSystemStorage):
+    def __init__(self, path: str, prefix: str = ""):
+        self.prefix = prefix
+        super().__init__(path=path)
+
+    def get_name(self, name: str) -> str:
+        filename = secure_filename(Path(name).name)
+        if self.prefix:
+            return f"{self.prefix}/{filename}"
+        return filename
+
+
+class PrefixedS3Storage(S3StorageMixin, S3Storage):
     prefix: str = ""
 
     def __init__(self, prefix: str = ""):
@@ -35,7 +75,10 @@ def _create_storage(prefix: str):
     if settings.storage_type == "s3":
         return PrefixedS3Storage(prefix=prefix)
 
-    return FileSystemStorage(path=os.path.join(settings.local_storage_path, prefix))
+    base_path = settings.local_storage_path
+    full_path = os.path.join(base_path, prefix)
+    os.makedirs(full_path, exist_ok=True)
+    return PrefixedLocalStorage(path=base_path, prefix=prefix)
 
 
 prj_storage = _create_storage("prj_templates")

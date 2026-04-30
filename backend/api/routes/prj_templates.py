@@ -12,23 +12,13 @@ from api.auth.dependencies import get_current_user
 from api.db.base import get_session
 from api.db.models import PrjTemplate, User
 from api.rbac import require_permission
-from api.storage.factory import get_storage_service
+from api.storage.storages import preview_storage, prj_storage
 
 router = APIRouter(prefix="/api/prj-templates", tags=["prj-templates"])
 
 _session_dep = Annotated[AsyncSession, Depends(get_session)]
 _user_dep = Annotated[User, Depends(get_current_user)]
 _admin_dep = Annotated[User, Depends(require_permission("admin:manage"))]
-
-
-def get_file_path(file_obj) -> str | None:
-    if file_obj is None:
-        return None
-    if hasattr(file_obj, "path"):
-        return file_obj.path
-    if isinstance(file_obj, str):
-        return file_obj
-    return None
 
 
 class PrjTemplateResponse(BaseModel):
@@ -62,13 +52,9 @@ async def list_prj_templates(
 
     page = await paginate(session, query)
 
-    storage = get_storage_service()
     items_with_urls = []
     for item in page.items:
-        preview_url = None
-        preview_path = get_file_path(item.preview_image)
-        if preview_path:
-            preview_url = await storage.get_url(preview_path)
+        preview_url = preview_storage.get_url(str(item.preview_image)) if item.preview_image else None
         items_with_urls.append(PrjTemplateResponse(
             id=item.id,
             name=item.name,
@@ -109,17 +95,14 @@ async def get_prj_template(
             detail="Template not found",
         )
 
-    storage = get_storage_service()
-    preview_url = None
-    preview_path = get_file_path(template.preview_image)
-    if preview_path:
-        preview_url = await storage.get_url(preview_path)
+    preview_url = preview_storage.get_url(str(template.preview_image)) if template.preview_image else None
+    prj_path = prj_storage.get_url(str(template.prj_file)) if template.prj_file else None
 
     return PrjTemplateDetailResponse(
         id=template.id,  # type: ignore[arg-type]
         name=template.name,
         category=template.category,
-        prj_path=get_file_path(template.prj_file),
+        prj_path=prj_path,
         preview_url=preview_url,
         regions=template.regions,
         is_builtin=bool(template.is_builtin),
@@ -160,17 +143,14 @@ async def create_prj_template(
     await session.commit()
     await session.refresh(template)
 
-    storage = get_storage_service()
-    preview_url = None
-    preview_path = get_file_path(template.preview_image)
-    if preview_path:
-        preview_url = await storage.get_url(preview_path)
+    preview_url = preview_storage.get_url(str(template.preview_image)) if template.preview_image else None
+    prj_path = prj_storage.get_url(str(template.prj_file)) if template.prj_file else None
 
     return PrjTemplateDetailResponse(
         id=template.id,  # type: ignore[arg-type]
         name=template.name,
         category=template.category,
-        prj_path=get_file_path(template.prj_file),
+        prj_path=prj_path,
         preview_url=preview_url,
         regions=template.regions,
         is_builtin=bool(template.is_builtin),

@@ -13,24 +13,19 @@ from api.materials.schemas import (
     MaterialMeta,
     MaterialUpdateRequest,
 )
-from api.storage.factory import get_storage_service
+from api.storage.storages import thumbnail_storage
 
 
 class MaterialService:
     def __init__(self, session: AsyncSession):
         self.session = session
-        self.storage = get_storage_service()
 
-    async def _add_thumbnail_url(self, material: Material) -> MaterialListResponse:
+    def _add_thumbnail_url(self, material: Material) -> MaterialListResponse:
         response = MaterialListResponse.model_validate(material)
         if material.meta:
             meta = MaterialMeta(**material.meta)
             if meta.thumbnail_path:
-                response.thumbnail_url = await self.storage.get_url(
-                    meta.thumbnail_path.replace("thumbnails/", "")
-                    if meta.thumbnail_path.startswith("thumbnails/")
-                    else meta.thumbnail_path
-                )
+                response.thumbnail_url = thumbnail_storage.get_url(meta.thumbnail_path)
         return response
 
     async def list_materials(
@@ -63,7 +58,7 @@ class MaterialService:
 
         items_with_thumbnails = []
         for item in page.items:
-            item_with_url = await self._add_thumbnail_url(item)
+            item_with_url = self._add_thumbnail_url(item)
             items_with_thumbnails.append(item_with_url)
 
         page.items = items_with_thumbnails
@@ -140,7 +135,7 @@ class MaterialService:
 
         items_with_thumbnails = []
         for item in page.items:
-            item_with_url = await self._add_thumbnail_url(item)
+            item_with_url = self._add_thumbnail_url(item)
             items_with_thumbnails.append(item_with_url)
 
         page.items = items_with_thumbnails

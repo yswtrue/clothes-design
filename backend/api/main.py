@@ -14,6 +14,7 @@ from .routes.ai_providers import router as ai_providers_router
 from .routes.compose import router as compose_router
 from .routes.designs import router as designs_router
 from .routes.export import router as export_router
+from .routes.files import router as files_router
 from .routes.generate import router as generate_router
 from .routes.materials import router as materials_router
 from .routes.prj_templates import router as prj_templates_router
@@ -112,6 +113,7 @@ app.include_router(designs_router)
 app.include_router(compose_router)
 app.include_router(export_router)
 app.include_router(ai_providers_router)
+app.include_router(files_router)
 
 admin = create_admin()
 app.add_middleware(SessionMiddleware, secret_key="your-secret-key-change-in-production")
