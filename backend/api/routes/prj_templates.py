@@ -42,7 +42,7 @@ async def list_prj_templates(
     session: _session_dep,
     current_user: _user_dep,
     category: str | None = Query(None),
-) -> Page[PrjTemplateResponse]:
+):
     query = select(PrjTemplate)
 
     if category:
@@ -63,8 +63,13 @@ async def list_prj_templates(
             is_builtin=bool(item.is_builtin),
         ))
 
-    page.items = items_with_urls
-    return page
+    return Page(
+        items=items_with_urls,  # type: ignore[call-arg]
+        total=page.total,
+        page=page.page,
+        size=page.size,
+        pages=page.pages,
+    )
 
 
 @router.get("/categories")

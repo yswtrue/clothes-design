@@ -61,8 +61,13 @@ class MaterialService:
             item_with_url = self._add_thumbnail_url(item)
             items_with_thumbnails.append(item_with_url)
 
-        page.items = items_with_thumbnails
-        return page
+        return Page(
+            items=items_with_thumbnails,  # type: ignore[call-arg]
+            total=page.total,
+            page=page.page,
+            size=page.size,
+            pages=page.pages,
+        )
 
     async def get_material_by_id(self, material_id: int) -> Material | None:
         query = select(Material).filter(Material.id == material_id)  # type: ignore[arg-type]
@@ -138,5 +143,10 @@ class MaterialService:
             item_with_url = self._add_thumbnail_url(item)
             items_with_thumbnails.append(item_with_url)
 
-        page.items = items_with_thumbnails
-        return page
+        return Page(
+            items=items_with_thumbnails,  # type: ignore[call-arg]
+            total=page.total,
+            page=page.page,
+            size=page.size,
+            pages=page.pages,
+        )
