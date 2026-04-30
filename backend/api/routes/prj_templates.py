@@ -47,7 +47,7 @@ class PrjTemplateDetailResponse(PrjTemplateResponse):
     regions: dict | None = None
 
 
-@router.get("", response_model=Page[PrjTemplateResponse])
+@router.get("")
 async def list_prj_templates(
     session: _session_dep,
     current_user: _user_dep,
