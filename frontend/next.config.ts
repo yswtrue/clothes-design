@@ -1,9 +1,5 @@
 import type { NextConfig } from "next";
 
-const API_HOST = process.env.NEXT_PUBLIC_API_URL 
-  ? new URL(process.env.NEXT_PUBLIC_API_URL).hostname 
-  : 'localhost';
-
 const nextConfig: NextConfig = {
   images: {
     remotePatterns: [
@@ -11,19 +7,14 @@ const nextConfig: NextConfig = {
         protocol: 'http',
         hostname: 'localhost',
         port: '8000',
-        pathname: '/api/files/**',
+        pathname: '/**',
       },
       {
-        protocol: 'https',
-        hostname: 'localhost',
+        protocol: 'http',
+        hostname: '127.0.0.1',
         port: '8000',
-        pathname: '/api/files/**',
+        pathname: '/**',
       },
-      ...(API_HOST !== 'localhost' ? [{
-        protocol: 'https' as const,
-        hostname: API_HOST,
-        pathname: '/api/files/**',
-      }] : []),
     ],
   },
 };
