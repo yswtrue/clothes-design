@@ -11,7 +11,7 @@ from api.storage.storages import (
     thumbnail_storage,
 )
 from fastapi_storages.integrations.sqlalchemy import FileType
-from sqlalchemy import JSON, Column, ForeignKey, UniqueConstraint
+from sqlalchemy import JSON, Column, ForeignKey, UniqueConstraint, func
 from sqlalchemy.orm import declared_attr
 from sqlmodel import Field, Relationship
 
@@ -22,10 +22,10 @@ class User(SoftDeleteMixin, table=True):
     email: Optional[str] = Field(default=None, max_length=255)
     password_hash: str = Field(max_length=255)
     created_at: Optional[datetime] = Field(
-        default=None, sa_column_kwargs={"server_default": "now()"}
+        default=None, sa_column_kwargs={"server_default": func.now()}
     )
     updated_at: Optional[datetime] = Field(
-        default=None, sa_column_kwargs={"server_default": "now()", "onupdate": "now()"}
+        default_factory=datetime.utcnow, sa_column_kwargs={"server_default": func.now(), "onupdate": datetime.utcnow}
     )
 
     designs: list["Design"] = Relationship(back_populates="user", cascade_delete=True)
@@ -50,7 +50,7 @@ class Role(SoftDeleteMixin, table=True):
     name: str = Field(max_length=50, unique=True, index=True)
     permissions: Optional[dict] = Field(default=None, sa_column=Column(JSON))
     created_at: Optional[datetime] = Field(
-        default=None, sa_column_kwargs={"server_default": "now()"}
+        default=None, sa_column_kwargs={"server_default": func.now()}
     )
 
     user_roles: list["UserRole"] = Relationship(
@@ -79,7 +79,7 @@ class UserRole(SoftDeleteMixin, table=True):
         )
     )
     created_at: Optional[datetime] = Field(
-        default=None, sa_column_kwargs={"server_default": "now()"}
+        default=None, sa_column_kwargs={"server_default": func.now()}
     )
 
     user: Optional[User] = Relationship(back_populates="user_roles")
@@ -112,10 +112,10 @@ class Design(SoftDeleteMixin, table=True):
     status: str = Field(default="draft", max_length=50, index=True)
     output_tif: Any = Field(default=None, sa_column=Column("output_tif_path", FileType(storage=output_tif_storage), nullable=True))
     created_at: Optional[datetime] = Field(
-        default=None, sa_column_kwargs={"server_default": "now()"}, index=True
+        default=None, sa_column_kwargs={"server_default": func.now()}, index=True
     )
     updated_at: Optional[datetime] = Field(
-        default=None, sa_column_kwargs={"server_default": "now()", "onupdate": "now()"}
+        default=None, sa_column_kwargs={"server_default": func.now(), "onupdate": datetime.utcnow}
     )
 
     user: Optional[User] = Relationship(back_populates="designs")
@@ -146,7 +146,7 @@ class DesignVersion(SoftDeleteMixin, table=True):
     version: int
     data: Optional[dict] = Field(default=None, sa_column=Column(JSON))
     created_at: Optional[datetime] = Field(
-        default=None, sa_column_kwargs={"server_default": "now()"}
+        default=None, sa_column_kwargs={"server_default": func.now()}
     )
 
     design: Optional[Design] = Relationship(back_populates="versions")
@@ -169,7 +169,7 @@ class Material(SoftDeleteMixin, table=True):
     file: Any = Field(default=None, sa_column=Column("storage_path", FileType(storage=material_storage), nullable=False))
     meta: Optional[dict] = Field(default=None, sa_column=Column(JSON))
     created_at: Optional[datetime] = Field(
-        default=None, sa_column_kwargs={"server_default": "now()"}, index=True
+        default=None, sa_column_kwargs={"server_default": func.now()}, index=True
     )
 
     user: Optional[User] = Relationship(back_populates="materials")
@@ -191,7 +191,7 @@ class PrjTemplate(SoftDeleteMixin, table=True):
     regions: Optional[dict] = Field(default=None, sa_column=Column(JSON))
     is_builtin: int = Field(default=1)
     created_at: Optional[datetime] = Field(
-        default=None, sa_column_kwargs={"server_default": "now()"}
+        default=None, sa_column_kwargs={"server_default": func.now()}
     )
 
     designs: list["Design"] = Relationship(back_populates="prj_template")
@@ -216,7 +216,7 @@ class GeneratedDesign(SoftDeleteMixin, table=True):
     generation_params: Optional[dict] = Field(default=None, sa_column=Column(JSON))
     is_selected: int = Field(default=0, index=True)
     created_at: Optional[datetime] = Field(
-        default=None, sa_column_kwargs={"server_default": "now()"}, index=True
+        default=None, sa_column_kwargs={"server_default": func.now()}, index=True
     )
 
     material: Optional["Material"] = Relationship(back_populates="generated_designs")
@@ -239,8 +239,8 @@ class AIProviderConfig(SoftDeleteMixin, table=True):
     rate_limit: Optional[int] = Field(default=None)
     config: Optional[dict] = Field(default=None, sa_column=Column(JSON))
     created_at: Optional[datetime] = Field(
-        default=None, sa_column_kwargs={"server_default": "now()"}
+        default=None, sa_column_kwargs={"server_default": func.now()}
     )
     updated_at: Optional[datetime] = Field(
-        default=None, sa_column_kwargs={"server_default": "now()", "onupdate": "now()"}
+        default=None, sa_column_kwargs={"server_default": func.now(), "onupdate": datetime.utcnow}
     )
