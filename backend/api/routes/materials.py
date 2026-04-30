@@ -3,7 +3,7 @@
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from fastapi_pagination import Page
+from fastapi_pagination import Page, Params
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.auth.dependencies import get_current_user
@@ -22,15 +22,16 @@ _session_dep = Annotated[AsyncSession, Depends(get_session)]
 _user_dep = Annotated[User, Depends(get_current_user)]
 
 
-@router.get("", response_model=Page[MaterialListResponse])
+@router.get("")
 async def list_materials(
     session: _session_dep,
     current_user: _user_dep,
+    params: Params = Depends(),
     uploaded_by: int | None = Query(None),
     mime_type: str | None = Query(None),
     sort_by: str = Query("created_at", pattern="^(created_at|file_size)$"),
     sort_order: str = Query("desc", pattern="^(asc|desc)$"),
-) -> Page[MaterialListResponse]:
+):
     """List all materials with pagination.
 
     Args:
@@ -50,6 +51,7 @@ async def list_materials(
     """
     service = MaterialService(session)
     return await service.list_materials(
+        params=params,
         uploaded_by=uploaded_by,
         mime_type=mime_type,
         sort_by=sort_by,
@@ -131,12 +133,13 @@ async def delete_material(
         )
 
 
-@router.get("/search/", response_model=Page[MaterialListResponse])
+@router.get("/search/")
 async def search_materials(
     session: _session_dep,
     current_user: _user_dep,
+    params: Params = Depends(),
     q: str = Query(..., min_length=1),
-) -> Page[MaterialListResponse]:
+):
     """Search materials by query string.
 
     Args:
@@ -152,4 +155,4 @@ async def search_materials(
         size: Items per page (default: 50, max: 100)
     """
     service = MaterialService(session)
-    return await service.search_materials(query=q)
+    return await service.search_materials(params=params, query=q)

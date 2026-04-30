@@ -2,7 +2,7 @@
 
 from typing import Any
 
-from fastapi_pagination import Page
+from fastapi_pagination import Page, Params
 from fastapi_pagination.ext.sqlalchemy import paginate
 from sqlalchemy import or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -30,6 +30,7 @@ class MaterialService:
 
     async def list_materials(
         self,
+        params: Params,
         uploaded_by: int | None = None,
         mime_type: str | None = None,
         sort_by: str = "created_at",
@@ -54,7 +55,7 @@ class MaterialService:
         else:
             query = query.order_by(sort_col.desc())
 
-        page = await paginate(self.session, query)
+        page = await paginate(self.session, query, params)
 
         items_with_thumbnails = []
         for item in page.items:
@@ -127,6 +128,7 @@ class MaterialService:
 
     async def search_materials(
         self,
+        params: Params,
         query: str,
     ) -> Page[MaterialListResponse]:
         search_filter = or_(  # type: ignore[arg-type]
@@ -136,7 +138,7 @@ class MaterialService:
 
         stmt = select(Material).filter(search_filter).order_by(Material.created_at.desc())  # type: ignore[attr-defined]
 
-        page = await paginate(self.session, stmt)
+        page = await paginate(self.session, stmt, params)
 
         items_with_thumbnails = []
         for item in page.items:

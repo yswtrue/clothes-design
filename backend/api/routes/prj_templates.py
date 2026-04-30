@@ -2,7 +2,7 @@ import uuid
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
-from fastapi_pagination import Page
+from fastapi_pagination import Page, Params
 from fastapi_pagination.ext.sqlalchemy import paginate
 from pydantic import BaseModel
 from sqlalchemy import select
@@ -41,6 +41,7 @@ class PrjTemplateDetailResponse(PrjTemplateResponse):
 async def list_prj_templates(
     session: _session_dep,
     current_user: _user_dep,
+    params: Params = Depends(),
     category: str | None = Query(None),
 ):
     query = select(PrjTemplate)
@@ -50,7 +51,7 @@ async def list_prj_templates(
 
     query = query.order_by(PrjTemplate.name)
 
-    page = await paginate(session, query)
+    page = await paginate(session, query, params)
 
     items_with_urls = []
     for item in page.items:
