@@ -28,7 +28,7 @@ export default function TemplatesTab() {
       setError(null);
 
       try {
-        const data = await apiRequest<Template[]>(`${API_URL}/api/templates`);
+        const data = await apiRequest<Template[]>(`${API_URL}/api/prj-templates`);
         setTemplates(data);
         setState('idle');
       } catch (err) {

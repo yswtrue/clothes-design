@@ -37,7 +37,7 @@ export default function DashboardPage() {
       const [designs, materials, templates] = await Promise.all([
         apiRequest<{ total: number }>('/api/designs?size=1').catch(() => ({ total: 0 })),
         apiRequest<{ total: number }>('/api/materials?size=1').catch(() => ({ total: 0 })),
-        apiRequest<unknown[]>('/api/templates').catch(() => []),
+        apiRequest<unknown[]>('/api/prj-templates').catch(() => []),
       ]);
 
       setStats({
