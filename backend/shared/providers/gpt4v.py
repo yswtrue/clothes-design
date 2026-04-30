@@ -97,6 +97,8 @@ Extract 3-5 dominant colors as hex codes. Suggest optimal tiling mode and scale.
                         json=payload,
                         timeout=aiohttp.ClientTimeout(total=self.timeout),
                     ) as response:
+                        response_text = await response.text()
+                        
                         if response.status == 429:
                             retry_after = int(response.headers.get("Retry-After", 2**attempt))
                             raise ProviderRateLimitError(
@@ -105,17 +107,22 @@ Extract 3-5 dominant colors as hex codes. Suggest optimal tiling mode and scale.
                             )
 
                         if response.status == 401:
-                            raise ProviderConfigurationError("Invalid API key")
+                            raise ProviderConfigurationError(f"Invalid API key. Response: {response_text[:200]}")
 
-                        if response.status >= 500:
-                            raise GPT4VProviderError(f"Server error: {response.status}")
+                        if response.status >= 400:
+                            raise GPT4VProviderError(f"API error {response.status}: {response_text[:500]}")
 
-                        response.raise_for_status()
-                        data = await response.json()
+                        try:
+                            data = json.loads(response_text)
+                        except json.JSONDecodeError as e:
+                            raise GPT4VProviderError(f"Invalid JSON from API: {response_text[:500]}") from e
+
+                        if "error" in data:
+                            raise GPT4VProviderError(f"API error: {data['error']}")
 
                         content = data.get("choices", [{}])[0].get("message", {}).get("content", "")
                         if not content:
-                            raise GPT4VProviderError("Empty response from API")
+                            raise GPT4VProviderError(f"Empty response from API. Full response: {response_text[:500]}")
 
                         return self._parse_response(content)
 
