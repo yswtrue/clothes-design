@@ -24,7 +24,7 @@ class GPT4VProvider(AIProvider):
         api_key: str | None = None,
         base_url: str | None = None,
         model: str = "gpt-4o",
-        timeout: int = 30,
+        timeout: int = 120,
         max_retries: int = 3,
     ) -> None:
         self.api_key = api_key or os.getenv("OPENAI_API_KEY") or os.getenv("GPT4V_API_KEY")
@@ -118,6 +118,9 @@ Extract 3-5 dominant colors as hex codes. Suggest optimal tiling mode and scale.
                             raise GPT4VProviderError("Empty response from API")
 
                         return self._parse_response(content)
+
+            except TimeoutError as e:
+                raise ProviderTimeoutError(f"Request timed out after {self.timeout}s") from e
 
             except aiohttp.ServerTimeoutError as e:
                 raise ProviderTimeoutError(f"Request timed out after {self.timeout}s") from e
