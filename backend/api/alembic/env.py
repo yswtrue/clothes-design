@@ -26,7 +26,7 @@ def render_item(type_, obj, autogen_context):
 
 def get_sqlalchemy_url() -> str:
     settings = get_settings()
-    return settings.database.url.replace("postgresql+asyncpg://", "postgresql://")
+    return settings.database.connection_url.replace("postgresql+asyncpg://", "postgresql://")
 
 
 def run_migrations_offline() -> None:

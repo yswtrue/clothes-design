@@ -13,7 +13,7 @@ def _get_pool() -> ConnectionPool:
     if _pool is None:
         settings = get_settings().redis
         _pool = ConnectionPool.from_url(
-            settings.url,
+            settings.connection_url,
             max_connections=settings.max_connections,
             decode_responses=True,
         )
