@@ -46,3 +46,32 @@ export async function deleteDesign(designId: number): Promise<void> {
     }
   );
 }
+
+export interface ExportResponse {
+  task_id: string;
+  design_id: number;
+  status: string;
+}
+
+export interface ExportStatusResponse {
+  task_id: string;
+  design_id: number | null;
+  status: string;
+  progress: number;
+  current_step: string | null;
+  download_url: string | null;
+  error: string | null;
+}
+
+export async function triggerExport(designId: number): Promise<ExportResponse> {
+  return apiRequest<ExportResponse>(
+    `/api/export/designs/${designId}`,
+    {
+      method: 'POST',
+    }
+  );
+}
+
+export async function getExportStatus(taskId: string): Promise<ExportStatusResponse> {
+  return apiRequest<ExportStatusResponse>(`/api/export/tasks/${taskId}`);
+}

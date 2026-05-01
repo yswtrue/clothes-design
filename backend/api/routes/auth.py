@@ -14,7 +14,9 @@ from api.auth.security import (
     create_access_token,
     create_refresh_token,
     get_password_hash,
+    get_user_id_from_login_token,
     is_token_revoked,
+    revoke_login_session,
     revoke_token,
     verify_password,
     verify_token,
@@ -78,8 +80,8 @@ async def login_user(
         )
     user_id = int(user.id) if isinstance(user.id, int) else 0
     return TokenResponse(
-        access_token=create_access_token(user_id),
-        refresh_token=create_refresh_token(user_id),
+        access_token=await create_access_token(user_id),
+        refresh_token=await create_refresh_token(user_id),
     )
 
 
@@ -94,7 +96,8 @@ async def refresh_token(payload: RefreshRequest) -> TokenResponse:
         ) from exc
     jti = refresh_payload.get("jti")
     exp = refresh_payload.get("exp")
-    if not isinstance(jti, str) or exp is None:
+    login_token = refresh_payload.get("sub")
+    if not isinstance(jti, str) or exp is None or not login_token:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid or expired token",
@@ -104,12 +107,22 @@ async def refresh_token(payload: RefreshRequest) -> TokenResponse:
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid or expired token",
         )
+    
+    user_id = await get_user_id_from_login_token(login_token)
+    if user_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Session expired",
+        )
+    
     await revoke_token(jti, int(exp))
-    access_token = create_access_token(str(refresh_payload["sub"]))
-    refresh_token = create_refresh_token(str(refresh_payload["sub"]))
+    await revoke_login_session(login_token)
+    
+    access_token = await create_access_token(user_id)
+    new_refresh_token = await create_refresh_token(user_id)
     return TokenResponse(
         access_token=access_token,
-        refresh_token=refresh_token,
+        refresh_token=new_refresh_token,
     )
 
 
@@ -124,9 +137,12 @@ async def logout_user(payload: LogoutRequest) -> None:
         ) from exc
     jti = refresh_payload.get("jti")
     exp = refresh_payload.get("exp")
+    login_token = refresh_payload.get("sub")
     if not isinstance(jti, str) or exp is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid or expired token",
         )
     await revoke_token(jti, int(exp))
+    if login_token:
+        await revoke_login_session(login_token)

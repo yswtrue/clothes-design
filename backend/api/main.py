@@ -6,7 +6,6 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi_pagination import add_pagination
 from starlette.exceptions import HTTPException as StarletteHTTPException
-from starlette.middleware import Middleware
 from starlette.middleware.sessions import SessionMiddleware
 
 from .routes.auth import router as auth_router
@@ -29,13 +28,14 @@ from .middleware.errors import (
     http_exception_handler,
     validation_exception_handler,
 )
+from .middleware.logging import RequestLoggingMiddleware, configure_logging
 from .rbac.seed import seed_default_roles
 from .admin import create_admin
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    logging.basicConfig(level=logging.INFO)
+    configure_logging(level=logging.DEBUG)
     logger = logging.getLogger(__name__)
     logger.info("Starting Clothes Design API...")
     try:
@@ -47,18 +47,15 @@ async def lifespan(app: FastAPI):
                 await seed_test_users(session)
                 logger.info("Committing seeds...")
                 await session.commit()
-                logger.info("✅ Database seeding complete")
+                logger.info("Database seeding complete")
             except Exception as exc:
-                logger.error("❌ Seeding failed: %s", exc, exc_info=True)
+                logger.error("Seeding failed: %s", exc, exc_info=True)
                 await session.rollback()
                 raise
             finally:
                 break
-        # Temporarily skip template seeding to avoid blocking startup
-        # logger.info("Seeding templates...")
-        # await seed_templates()
     except Exception as exc:
-        logger.error("❌ Lifespan startup failed: %s", exc, exc_info=True)
+        logger.error("Lifespan startup failed: %s", exc, exc_info=True)
         raise
     yield
     logger.info("Shutting down Clothes Design API...")
@@ -80,6 +77,8 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+app.add_middleware(RequestLoggingMiddleware)
 
 app.add_exception_handler(RequestValidationError, validation_exception_handler)
 app.add_exception_handler(StarletteHTTPException, http_exception_handler)

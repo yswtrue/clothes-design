@@ -85,6 +85,7 @@ async def upload_file(
                 data={
                     "material_id": material_id,
                     "image_data": image_base64,
+                    "original_filename": file.filename,
                 },
             )
 

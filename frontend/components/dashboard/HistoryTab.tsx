@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { fetchDesigns, deleteDesign, rollbackVersion } from '@/lib/history';
+import { fetchDesigns, deleteDesign, rollbackVersion, triggerExport, getExportStatus } from '@/lib/history';
 import type { Design } from '@/types/history';
 import DesignCard from '@/components/history/DesignCard';
 import { LazyVersionList } from '@/components/LazyComponents';
@@ -28,7 +28,10 @@ export default function HistoryTab() {
   const [error, setError] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const [rollingBackDesignId, setRollingBackDesignId] = useState<number | null>(null);
+  const [exportingDesignId, setExportingDesignId] = useState<number | null>(null);
   const [retryTrigger, setRetryTrigger] = useState(0);
+  const [selectionMode, setSelectionMode] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
 
   const [confirmModal, setConfirmModal] = useState<ConfirmModalState>({
     isOpen: false,
@@ -131,6 +134,59 @@ export default function HistoryTab() {
     }
   }
 
+  function toggleSelectionMode() {
+    setSelectionMode(!selectionMode);
+    setSelectedIds(new Set());
+  }
+
+  function toggleSelectAll() {
+    if (selectedIds.size === designs.length) {
+      setSelectedIds(new Set());
+    } else {
+      setSelectedIds(new Set(designs.map(d => d.id)));
+    }
+  }
+
+  function toggleSelectDesign(id: number) {
+    setSelectedIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  function confirmBatchDelete() {
+    if (selectedIds.size === 0) return;
+    setConfirmModal({
+      isOpen: true,
+      title: '批量删除设计',
+      message: `确定要删除选中的 ${selectedIds.size} 个设计吗？此操作无法撤销。`,
+      confirmText: '删除',
+      variant: 'danger',
+      onConfirm: () => handleBatchDelete(),
+    });
+  }
+
+  async function handleBatchDelete() {
+    setConfirmModal((prev) => ({ ...prev, isOpen: false }));
+    setState('deleting');
+    setError(null);
+
+    try {
+      await Promise.all(Array.from(selectedIds).map(id => deleteDesign(id)));
+
+      setSuccessMessage(`成功删除了 ${selectedIds.size} 个设计`);
+      setState('idle');
+      setSelectionMode(false);
+      setSelectedIds(new Set());
+      setRetryTrigger(prev => prev + 1);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '批量删除设计失败');
+      setState('error');
+    }
+  }
+
   function confirmRollback(designId: number, designName: string, versionNumber: number) {
     setConfirmModal({
       isOpen: true,
@@ -176,6 +232,49 @@ export default function HistoryTab() {
   function handlePageChange(page: number) {
     setCurrentPage(page);
     window.scrollTo({ top: 0, behavior: 'smooth' });
+  }
+
+  async function handleExport(designId: number) {
+    setExportingDesignId(designId);
+    setError(null);
+
+    try {
+      const { task_id } = await triggerExport(designId);
+      
+      // Poll for export status
+      const maxAttempts = 60;
+      let attempts = 0;
+      
+      while (attempts < maxAttempts) {
+        await new Promise(resolve => setTimeout(resolve, 2000));
+        const status = await getExportStatus(task_id);
+        
+        if (status.status === 'complete' && status.download_url) {
+          // Trigger download
+          const link = document.createElement('a');
+          link.href = status.download_url;
+          link.download = `design-${designId}-export.tif`;
+          document.body.appendChild(link);
+          link.click();
+          document.body.removeChild(link);
+          
+          setSuccessMessage('导出完成，文件已开始下载');
+          setExportingDesignId(null);
+          return;
+        }
+        
+        if (status.status === 'failed') {
+          throw new Error(status.error || '导出失败');
+        }
+        
+        attempts++;
+      }
+      
+      throw new Error('导出超时，请重试');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '导出失败');
+      setExportingDesignId(null);
+    }
   }
 
   return (
@@ -229,26 +328,77 @@ export default function HistoryTab() {
         )}
 
         {state !== 'loading' && designs.length > 0 && (
+          <div className="mb-4 flex items-center justify-between">
+            <h2 className="text-xl font-semibold text-gray-900 dark:text-white">设计历史</h2>
+            <button 
+              onClick={toggleSelectionMode}
+              className="px-3 py-1 text-sm bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-300 rounded hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors"
+            >
+              {selectionMode ? '取消选择' : '选择'}
+            </button>
+          </div>
+        )}
+
+        {selectionMode && designs.length > 0 && (
+          <div className="mb-4 flex items-center justify-between p-4 bg-gray-50 dark:bg-gray-800/50 rounded-lg">
+            <div className="flex items-center space-x-2">
+              <input 
+                type="checkbox"
+                checked={selectedIds.size === designs.length}
+                onChange={toggleSelectAll}
+                className="w-4 h-4 rounded border-zinc-300 text-zinc-600 focus:ring-zinc-500 bg-white dark:bg-zinc-700 dark:border-zinc-600 cursor-pointer"
+              />
+              <span className="text-sm font-medium text-gray-700 dark:text-gray-300">全选</span>
+            </div>
+            <button
+              onClick={confirmBatchDelete}
+              disabled={selectedIds.size === 0}
+              className={`px-3 py-1 text-sm rounded transition-colors ${
+                selectedIds.size > 0 
+                  ? 'bg-red-100 text-red-700 hover:bg-red-200 dark:bg-red-900/30 dark:text-red-400 dark:hover:bg-red-900/50' 
+                  : 'bg-gray-100 text-gray-400 cursor-not-allowed dark:bg-gray-800 dark:text-gray-600'
+              }`}
+            >
+              删除选中 ({selectedIds.size})
+            </button>
+          </div>
+        )}
+
+        {state !== 'loading' && designs.length > 0 && (
           <div className="space-y-4">
             {designs.map((design) => (
-              <div key={design.id}>
-                <DesignCard
-                  design={design}
-                  isExpanded={expandedDesignIds.has(design.id)}
-                  onToggleExpand={() => toggleExpand(design.id)}
-                  onDelete={() => confirmDelete(design)}
-                />
-                {expandedDesignIds.has(design.id) && (
-                  <div className="bg-gray-50 dark:bg-gray-800 border-x border-b border-gray-200 dark:border-gray-700 rounded-b-lg p-4">
-                    <LazyVersionList
-                      designId={design.id}
-                      onRollback={(versionNumber) =>
-                        confirmRollback(design.id, design.name, versionNumber)
-                      }
-                      isRollingBack={rollingBackDesignId === design.id}
+              <div key={design.id} className="flex gap-4">
+                {selectionMode && (
+                  <div className="flex-none flex items-start pt-6">
+                    <input
+                      type="checkbox"
+                      checked={selectedIds.has(design.id)}
+                      onChange={() => toggleSelectDesign(design.id)}
+                      className="w-5 h-5 rounded border-zinc-300 text-zinc-600 focus:ring-zinc-500 bg-white dark:bg-zinc-700 dark:border-zinc-600 cursor-pointer"
                     />
                   </div>
                 )}
+                <div className="flex-1 min-w-0">
+                  <DesignCard
+                    design={design}
+                    isExpanded={expandedDesignIds.has(design.id)}
+                    onToggleExpand={() => toggleExpand(design.id)}
+                    onDelete={() => confirmDelete(design)}
+                    onExport={() => handleExport(design.id)}
+                    isExporting={exportingDesignId === design.id}
+                  />
+                  {expandedDesignIds.has(design.id) && (
+                    <div className="bg-gray-50 dark:bg-gray-800 border-x border-b border-gray-200 dark:border-gray-700 rounded-b-lg p-4">
+                      <LazyVersionList
+                        designId={design.id}
+                        onRollback={(versionNumber) =>
+                          confirmRollback(design.id, design.name, versionNumber)
+                        }
+                        isRollingBack={rollingBackDesignId === design.id}
+                      />
+                    </div>
+                  )}
+                </div>
               </div>
             ))}
           </div>

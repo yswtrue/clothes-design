@@ -3,6 +3,7 @@ export interface Design {
   user_id: number | null;
   name: string;
   status: string;
+  versions_count?: number;
   created_at: string;
   updated_at: string;
 }

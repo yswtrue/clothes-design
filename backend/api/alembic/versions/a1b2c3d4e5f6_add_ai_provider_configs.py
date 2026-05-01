@@ -30,8 +30,8 @@ def upgrade() -> None:
         sa.Column('priority', sa.Integer(), nullable=False, server_default='0'),
         sa.Column('rate_limit', sa.Integer(), nullable=True),
         sa.Column('config', sa.JSON(), nullable=True),
-        sa.Column('created_at', sa.DateTime(), server_default='now()', nullable=True),
-        sa.Column('updated_at', sa.DateTime(), server_default='now()', nullable=True),
+        sa.Column('created_at', sa.DateTime(), server_default=sa.text('now()'), nullable=True),
+        sa.Column('updated_at', sa.DateTime(), server_default=sa.text('now()'), nullable=True),
         sa.PrimaryKeyConstraint('id')
     )
     with op.batch_alter_table('ai_provider_configs', schema=None) as batch_op:

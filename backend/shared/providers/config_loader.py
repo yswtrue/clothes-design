@@ -8,6 +8,7 @@ from config import get_settings
 
 DEFAULT_BASE_URLS = {
     "openai": "https://api.openai.com/v1",
+    "openai_image": "https://api.openai.com/v1",
     "replicate": "https://api.replicate.com/v1",
     "vectorizer": "https://api.vectorizer.ai/api/v1",
     "esrgan": "https://api.replicate.com/v1",

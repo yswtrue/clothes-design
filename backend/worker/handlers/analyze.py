@@ -1,4 +1,5 @@
 import base64
+import uuid
 from typing import Any
 
 from sqlalchemy import update
@@ -12,6 +13,8 @@ from shared.ai.exceptions import (
 )
 from shared.providers.config_loader import get_provider_config
 from shared.providers.gpt4v import GPT4VProvider, GPT4VProviderError
+from api.storage.thumbnail import ThumbnailGenerator
+from api.storage.storages import thumbnail_storage
 
 from .base import TaskHandler, WorkerError
 
@@ -55,6 +58,7 @@ class AnalyzeHandler(TaskHandler):
 
         material_id = task_data["material_id"]
         image_data = task_data["image_data"]
+        original_filename = task_data.get("original_filename", f"material_{material_id}")
 
         if isinstance(image_data, str):
             try:
@@ -64,8 +68,15 @@ class AnalyzeHandler(TaskHandler):
 
         engine = None
         try:
-            provider = await self._get_provider()
+            thumbnail_bytes, thumbnail_filename = await ThumbnailGenerator.generate(
+                image_data, original_filename
+            )
+            unique_thumbnail_name = f"{uuid.uuid4().hex}_{thumbnail_filename}"
+            await thumbnail_storage.upload(thumbnail_bytes, unique_thumbnail_name)
+            thumbnail_relative = unique_thumbnail_name
+            self.logger.info(f"Generated thumbnail: {thumbnail_relative}")
 
+            provider = await self._get_provider()
             analysis = await provider.analyze_style(image_data)
 
             result = {
@@ -74,6 +85,7 @@ class AnalyzeHandler(TaskHandler):
                 "color_palette": analysis.color_palette,
                 "pattern_type": analysis.pattern_type,
                 "suggested_params": analysis.suggested_params,
+                "thumbnail_path": thumbnail_relative,
             }
 
             settings = get_settings()
@@ -88,12 +100,13 @@ class AnalyzeHandler(TaskHandler):
                     .where(Material.id == material_id)
                     .values(
                         meta={
+                            "thumbnail_path": thumbnail_relative,
                             "style_analysis": {
                                 "style_description": analysis.style_description,
                                 "color_palette": analysis.color_palette,
                                 "pattern_type": analysis.pattern_type,
                                 "suggested_params": analysis.suggested_params,
-                            }
+                            },
                         }
                     )
                 )

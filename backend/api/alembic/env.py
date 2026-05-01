@@ -6,7 +6,18 @@ from sqlmodel.sql.sqltypes import AutoString
 
 from alembic import context
 from config import get_settings
-from api.db.models import Design, DesignVersion, Material, PrjTemplate, Role, User, UserRole
+from api.db.models import (
+    AIProviderConfig,
+    Design,
+    DesignVersion,
+    GeneratedDesign,
+    LoginSession,
+    Material,
+    PrjTemplate,
+    Role,
+    User,
+    UserRole,
+)
 
 config = context.config
 

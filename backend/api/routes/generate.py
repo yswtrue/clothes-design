@@ -10,9 +10,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from shared.ai.schemas import GenerationParams, StyleAnalysis
 from api.auth.dependencies import get_current_user
 from api.db.base import get_session
-from api.db.models import Design, Material, User
+from api.db.models import Design, DesignVersion, Material, User
 from api.materials.schemas import MaterialMeta
-from shared.task_queue.tasks import enqueue_task, get_task_status
+from shared.task_queue.celery_integration import enqueue_task, get_task_status
 
 router = APIRouter(prefix="/api/generate", tags=["generate"])
 
@@ -107,7 +107,14 @@ async def generate_pattern(
     design_name = f"Design-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
     design = Design(user_id=current_user.id, name=design_name, status="generating")
     session.add(design)
-    await session.flush()  # Get design.id without committing
+    await session.flush()
+
+    initial_version = DesignVersion(
+        design_id=design.id,
+        version=1,
+        data={"material_id": request.material_id, "pattern_type": request.pattern_type},
+    )
+    session.add(initial_version)
 
     # Build generation parameters
     gen_params = GenerationParams(

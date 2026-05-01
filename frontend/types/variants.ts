@@ -24,6 +24,7 @@ export interface PrjTemplate {
 export interface GenerateVariantsRequest {
   material_id: number;
   count?: number;
+  start_index?: number;
 }
 
 export interface GenerateVariantsResponse {

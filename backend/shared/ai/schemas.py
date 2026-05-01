@@ -41,6 +41,8 @@ class GenerationParams(BaseModel):
     width: int = Field(default=512, ge=64, le=2048, description="Pattern width")
     height: int = Field(default=512, ge=64, le=2048, description="Pattern height")
     seed: int = Field(default=42, ge=0, description="Random seed for reproducibility")
+    init_image_b64: str | None = Field(default=None, description="Base64 encoded source image for img2img")
+    strength: float = Field(default=0.75, ge=0.0, le=1.0, description="img2img strength (0=keep original, 1=ignore original)")
 
     class Config:
         json_schema_extra = {

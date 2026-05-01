@@ -39,6 +39,14 @@ export default function GenerateTab() {
     }
   };
 
+  const handleDeleteMaterial = async (materialId: number) => {
+    await apiRequest(`/api/materials/${materialId}`, { method: 'DELETE' });
+    setMaterials((prev) => prev.filter((m) => m.id !== materialId));
+    if (selectedMaterial?.id === materialId) {
+      setSelectedMaterial(null);
+    }
+  };
+
   const handleGenerate = async () => {
     if (!selectedMaterial) return;
 
@@ -137,6 +145,7 @@ export default function GenerateTab() {
               materials={materials}
               selectedMaterial={selectedMaterial}
               onSelectMaterial={setSelectedMaterial}
+              onDeleteMaterial={handleDeleteMaterial}
             />
 
             {selectedMaterial && (

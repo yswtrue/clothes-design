@@ -8,6 +8,7 @@ import {
   submitVariantsGeneration,
   pollVariantsTask,
   selectVariant,
+  getVariantsByMaterial,
   getPrjTemplates,
   submitCompose,
   pollComposeTask,
@@ -67,29 +68,58 @@ export default function VariantsWorkflowTab() {
     }
   };
 
-  const handleSelectMaterial = (material: Material) => {
-    setState((s) => ({ ...s, material, error: null }));
+  const handleDeleteMaterial = async (materialId: number) => {
+    await apiRequest(`/api/materials/${materialId}`, { method: 'DELETE' });
+    setMaterials((prev) => prev.filter((m) => m.id !== materialId));
+    if (state.material?.id === materialId) {
+      setState((s) => ({ ...s, material: null, variants: [] }));
+    }
   };
 
-  const handleGenerateVariants = async () => {
+  const handleSelectMaterial = async (material: Material) => {
+    setState((s) => ({ ...s, material, error: null }));
+    
+    try {
+      const existingVariants = await getVariantsByMaterial(material.id);
+      if (existingVariants.length > 0) {
+        setState((s) => ({ ...s, variants: existingVariants }));
+      }
+    } catch {
+    }
+  };
+
+  const handleViewHistory = async () => {
+    if (!state.material || state.variants.length === 0) return;
+    const templates = await getPrjTemplates();
+    setState((s) => ({ ...s, step: 'select_variant', templates }));
+  };
+
+  const handleGenerateVariants = async (startIndex: number = 0) => {
     if (!state.material) return;
 
     setState((s) => ({ ...s, step: 'generating_variants', error: null, variantsTask: null }));
 
     try {
-      const response = await submitVariantsGeneration({ material_id: state.material.id, count: 4 });
+      const response = await submitVariantsGeneration({
+        material_id: state.material.id,
+        count: 4,
+        start_index: startIndex,
+      });
       setState((s) => ({ ...s, variantsTask: { task_id: response.task_id, status: 'pending' } }));
 
       const completedTask = await pollVariantsTask(response.task_id, (task) => {
         setState((s) => ({ ...s, variantsTask: task }));
       });
 
-      if (completedTask.status === 'completed' && completedTask.result) {
-        const templates = await getPrjTemplates();
+      if (completedTask.status === 'completed') {
+        const [variants, templates] = await Promise.all([
+          getVariantsByMaterial(state.material!.id),
+          getPrjTemplates(),
+        ]);
         setState((s) => ({
           ...s,
           step: 'select_variant',
-          variants: completedTask.result!.variants,
+          variants,
           templates,
         }));
       } else {
@@ -104,9 +134,16 @@ export default function VariantsWorkflowTab() {
     }
   };
 
+  const handleGenerateMore = async () => {
+    if (!state.material) return;
+    const maxIndex = Math.max(...state.variants.map((v) => v.variant_index), -1);
+    await handleGenerateVariants(maxIndex + 1);
+  };
+
   const handleSelectVariant = async (variant: GeneratedVariant) => {
+    if (!state.material) return;
     try {
-      const updated = await selectVariant(variant.id);
+      const updated = await selectVariant(state.material.id, variant.id);
       setState((s) => ({
         ...s,
         selectedVariant: updated,
@@ -304,14 +341,25 @@ export default function VariantsWorkflowTab() {
                 materials={materials}
                 selectedMaterial={state.material}
                 onSelectMaterial={handleSelectMaterial}
+                onDeleteMaterial={handleDeleteMaterial}
               />
               {state.material && (
-                <button
-                  onClick={handleGenerateVariants}
-                  className="w-full rounded-md bg-zinc-950 dark:bg-zinc-50 px-4 py-3 text-sm font-medium text-white dark:text-zinc-950 hover:bg-zinc-800 dark:hover:bg-zinc-200 transition-colors"
-                >
-                  生成 4 个布料设计变体
-                </button>
+                <div className="space-y-2">
+                  <button
+                    onClick={() => handleGenerateVariants(0)}
+                    className="w-full rounded-md bg-zinc-950 dark:bg-zinc-50 px-4 py-3 text-sm font-medium text-white dark:text-zinc-950 hover:bg-zinc-800 dark:hover:bg-zinc-200 transition-colors"
+                  >
+                    生成 4 个布料设计变体
+                  </button>
+                  {state.variants.length > 0 && (
+                    <button
+                      onClick={handleViewHistory}
+                      className="w-full rounded-md border border-zinc-300 dark:border-zinc-700 px-4 py-3 text-sm font-medium text-zinc-700 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-800 transition-colors"
+                    >
+                      查看历史变种 ({state.variants.length})
+                    </button>
+                  )}
+                </div>
               )}
             </>
           )}
@@ -322,11 +370,19 @@ export default function VariantsWorkflowTab() {
 
       {state.step === 'select_variant' && (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-          <VariantsGallery
-            variants={state.variants}
-            selectedVariantId={state.selectedVariant?.id ?? null}
-            onSelectVariant={handleSelectVariant}
-          />
+          <div className="space-y-4">
+            <VariantsGallery
+              variants={state.variants}
+              selectedVariantId={state.selectedVariant?.id ?? null}
+              onSelectVariant={handleSelectVariant}
+            />
+            <button
+              onClick={handleGenerateMore}
+              className="w-full rounded-md border border-zinc-300 dark:border-zinc-700 px-4 py-2 text-sm font-medium text-zinc-700 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-800 transition-colors"
+            >
+              生成更多变体
+            </button>
+          </div>
           <div className="space-y-4">
             <div className="p-4 bg-zinc-50 dark:bg-zinc-900 rounded-lg">
               <h4 className="text-sm font-medium text-zinc-900 dark:text-zinc-100 mb-2">已选择的设计</h4>

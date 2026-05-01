@@ -25,6 +25,7 @@ from starlette_admin.fields import (
 
 class ProviderType(str, Enum):
     OPENAI = "openai"
+    OPENAI_IMAGE = "openai_image"
     REPLICATE = "replicate"
     VECTORIZER = "vectorizer"
     ESRGAN = "esrgan"
@@ -32,6 +33,7 @@ class ProviderType(str, Enum):
 
 DEFAULT_BASE_URLS = {
     "openai": "https://api.openai.com/v1",
+    "openai_image": "https://api.openai.com/v1",
     "replicate": "https://api.replicate.com/v1",
     "vectorizer": "https://api.vectorizer.ai/api/v1",
     "esrgan": "https://api.replicate.com/v1",
@@ -119,7 +121,7 @@ class AIProviderConfigView(ModelView):
         StringField(
             "base_url",
             required=False,
-            help_text="留空使用默认: openai=api.openai.com, replicate=api.replicate.com, vectorizer=api.vectorizer.ai",
+            help_text="留空使用默认: openai/openai_image=api.openai.com, replicate=api.replicate.com",
         ),
         PasswordField("api_key", required=True, help_text="API key"),
         StringField("model_name", required=True, help_text="Model identifier"),

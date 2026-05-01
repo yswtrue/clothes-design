@@ -18,9 +18,20 @@ _session_dep = Annotated[AsyncSession, Depends(get_session)]
 _user_dep = Annotated[User, Depends(get_current_user)]
 
 
+def _get_file_path(file_obj) -> str | None:
+    if file_obj is None:
+        return None
+    if hasattr(file_obj, "path"):
+        return file_obj.path
+    if isinstance(file_obj, str):
+        return file_obj
+    return str(file_obj) if file_obj else None
+
+
 class GenerateVariantsRequest(BaseModel):
     material_id: int
     count: int = 4
+    start_index: int = 0
     prompt_override: str | None = None
 
 
@@ -100,6 +111,7 @@ async def generate_variants(
         "material_id": request.material_id,
         "user_id": current_user.id,
         "count": min(request.count, 8),
+        "start_index": request.start_index,
         "prompt": prompt,
         "style_analysis": style_analysis.model_dump() if style_analysis else None,
     }
@@ -146,8 +158,10 @@ async def get_variants(
 
     variant_responses = []
     for v in variants:
-        image_url = generated_image_storage.get_url(str(v.image)) if v.image else None
-        thumbnail_url = thumbnail_storage.get_url(str(v.thumbnail)) if v.thumbnail else None
+        image_path = _get_file_path(v.image)
+        thumb_path = _get_file_path(v.thumbnail)
+        image_url = generated_image_storage.get_url(image_path) if image_path else None
+        thumbnail_url = thumbnail_storage.get_url(thumb_path) if thumb_path else None
         variant_responses.append(VariantResponse(
             id=v.id,
             material_id=v.material_id,
@@ -214,8 +228,10 @@ async def select_variant(
     await session.commit()
     await session.refresh(variant)
 
-    image_url = generated_image_storage.get_url(str(variant.image)) if variant.image else None
-    thumbnail_url = thumbnail_storage.get_url(str(variant.thumbnail)) if variant.thumbnail else None
+    image_path = _get_file_path(variant.image)
+    thumb_path = _get_file_path(variant.thumbnail)
+    image_url = generated_image_storage.get_url(image_path) if image_path else None
+    thumbnail_url = thumbnail_storage.get_url(thumb_path) if thumb_path else None
 
     return VariantResponse(
         id=variant.id,

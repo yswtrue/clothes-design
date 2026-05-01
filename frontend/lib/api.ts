@@ -74,6 +74,10 @@ export async function fetchWithRetry<T = unknown>(
         );
       }
 
+      if (response.status === 204) {
+        return undefined as T;
+      }
+
       return (await response.json()) as T;
     } catch (error) {
       lastError = error instanceof Error ? error : new Error(String(error));

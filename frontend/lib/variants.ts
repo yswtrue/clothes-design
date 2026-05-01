@@ -23,8 +23,8 @@ export async function submitVariantsGeneration(
 export async function pollVariantsTask(
   taskId: string,
   onProgress?: (task: VariantsTaskStatusResponse) => void,
-  maxAttempts: number = 60,
-  intervalMs: number = 2000
+  maxAttempts: number = 120,
+  intervalMs: number = 3000
 ): Promise<VariantsTaskStatusResponse> {
   let attempts = 0;
 
@@ -55,15 +55,20 @@ export async function pollVariantsTask(
 export async function getVariantsByMaterial(
   materialId: number
 ): Promise<GeneratedVariant[]> {
-  const response = await apiRequest<{ items: GeneratedVariant[] }>(
-    `/api/generate/variants?material_id=${materialId}`
+  const response = await apiRequest<{ variants: GeneratedVariant[]; total: number }>(
+    `/api/generate/variants/${materialId}`
   );
-  return response.items;
+  return response.variants;
 }
 
-export async function selectVariant(variantId: number): Promise<GeneratedVariant> {
-  return apiRequest<GeneratedVariant>(`/api/generate/variants/${variantId}/select`, {
+export async function selectVariant(
+  materialId: number,
+  variantId: number
+): Promise<GeneratedVariant> {
+  return apiRequest<GeneratedVariant>(`/api/generate/variants/${materialId}/select`, {
     method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ variant_id: variantId }),
   });
 }
 

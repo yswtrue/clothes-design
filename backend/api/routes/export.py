@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from api.auth.dependencies import get_current_user
 from api.db.base import get_session
 from api.db.models import Design, DesignVersion, User
-from shared.task_queue.tasks import enqueue_task, get_task_status
+from shared.task_queue.celery_integration import enqueue_task, get_task_status
 
 router = APIRouter(prefix="/api/export", tags=["export"])
 

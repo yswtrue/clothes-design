@@ -25,6 +25,7 @@ export interface Material {
   file_size: number;
   mime_type: string;
   storage_path: string;
+  thumbnail_url: string | null;
   meta: {
     style_analysis?: StyleAnalysis;
   } | null;

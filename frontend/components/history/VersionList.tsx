@@ -1,6 +1,9 @@
+'use client';
+
 import { useState, useEffect } from 'react';
 import type { DesignVersion } from '@/types/history';
 import { fetchVersions } from '@/lib/history';
+import ImagePreviewModal from './ImagePreviewModal';
 
 interface VersionListProps {
   designId: number;
@@ -16,6 +19,7 @@ export default function VersionList({
   const [versions, setVersions] = useState<DesignVersion[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [previewState, setPreviewState] = useState<{ url: string; version: number } | null>(null);
 
   useEffect(() => {
     loadVersions();
@@ -83,7 +87,11 @@ export default function VersionList({
               className="flex items-center gap-4 p-3 rounded-md border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-800/50"
             >
               {thumbnailUrl ? (
-                <div className="h-12 w-12 rounded bg-zinc-100 dark:bg-zinc-700 overflow-hidden flex-shrink-0">
+                <div 
+                  className="h-12 w-12 rounded bg-zinc-100 dark:bg-zinc-700 overflow-hidden flex-shrink-0 cursor-pointer hover:ring-2 ring-zinc-400 dark:ring-zinc-500 transition-all"
+                  onClick={() => setPreviewState({ url: thumbnailUrl, version: version.version })}
+                  title="点击预览大图"
+                >
                   <img
                     src={thumbnailUrl}
                     alt={`Version ${version.version}`}
@@ -91,20 +99,8 @@ export default function VersionList({
                   />
                 </div>
               ) : (
-                <div className="h-12 w-12 rounded bg-zinc-200 dark:bg-zinc-700 flex items-center justify-center flex-shrink-0">
-                  <svg
-                    className="h-6 w-6 text-zinc-400 dark:text-zinc-500"
-                    fill="none"
-                    viewBox="0 0 24 24"
-                    stroke="currentColor"
-                  >
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      strokeWidth={2}
-                      d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"
-                    />
-                  </svg>
+                <div className="h-12 w-12 rounded bg-zinc-200 dark:bg-zinc-700 flex items-center justify-center flex-shrink-0" title="暂无图片">
+                  <span className="text-[10px] text-zinc-400 dark:text-zinc-500">暂无</span>
                 </div>
               )}
               <div className="flex-1 min-w-0">
@@ -133,6 +129,12 @@ export default function VersionList({
           );
         })}
       </div>
+      <ImagePreviewModal
+        isOpen={!!previewState}
+        imageUrl={previewState?.url || ''}
+        version={previewState?.version || 0}
+        onClose={() => setPreviewState(null)}
+      />
     </div>
   );
 }

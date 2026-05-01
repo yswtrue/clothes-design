@@ -25,6 +25,7 @@ logger = logging.getLogger(__name__)
 SDXL_MODEL = "stability-ai/sdxl:7762fd07cf82c948538e41f63f77d685e02b063e37e496e96eefd46c929f9bdc"
 FLUX_MODEL = "black-forest-labs/flux-schnell"
 ESRGAN_MODEL = "nightmareai/real-esrgan:f121d640bd286e1fdc67f9799164c1d5be36ff74576ee11c803ae5b665dd46aa"
+SDXL_IMG2IMG_MODEL = "stability-ai/sdxl:7762fd07cf82c948538e41f63f77d685e02b063e37e496e96eefd46c929f9bdc"
 
 
 class ReplicateProvider(AIProvider):
@@ -140,6 +141,9 @@ class ReplicateProvider(AIProvider):
 
     async def generate_pattern(self, style: StyleAnalysis, params: GenerationParams) -> bytes:
         """Generate pattern using SDXL or Flux on Replicate."""
+        if params.init_image_b64:
+            return await self._generate_img2img(style, params)
+        
         prompt = self._build_prompt(style, params)
         
         if "flux" in self.generation_model.lower():
@@ -262,6 +266,70 @@ class ReplicateProvider(AIProvider):
         prompt_parts.append("high quality, detailed, professional textile design")
 
         return ". ".join(prompt_parts)
+
+    def _build_fabric_prompt(self, style: StyleAnalysis, params: GenerationParams) -> str:
+        """Build prompt specifically for fabric img2img generation."""
+        base_prompt = self._build_prompt(style, params)
+        fabric_context = (
+            "Based on this fabric photo, create a new fabric pattern design that captures "
+            "the essence, texture, and style of the original material. "
+            "Generate a clean, production-ready textile pattern."
+        )
+        return f"{fabric_context} Style requirements: {base_prompt}"
+
+    async def _generate_img2img(
+        self, style: StyleAnalysis, params: GenerationParams
+    ) -> bytes:
+        """Generate pattern using SDXL img2img on Replicate."""
+        prompt = self._build_fabric_prompt(style, params)
+        
+        init_image_uri = f"data:image/jpeg;base64,{params.init_image_b64}"
+        
+        input_data = {
+            "image": init_image_uri,
+            "prompt": prompt,
+            "negative_prompt": "blurry, low quality, distorted, watermark, text, unrealistic",
+            "prompt_strength": params.strength,
+            "num_outputs": 1,
+            "scheduler": "K_EULER",
+            "num_inference_steps": 30,
+            "guidance_scale": 7.5,
+            "seed": params.seed,
+        }
+
+        for attempt in range(self.max_retries):
+            try:
+                result = await self._run_prediction(SDXL_IMG2IMG_MODEL, input_data)
+                output = result.get("output")
+                
+                if isinstance(output, list) and output:
+                    image_url = output[0]
+                elif isinstance(output, str):
+                    image_url = output
+                else:
+                    raise ProviderError(f"Unexpected output format: {output}")
+                
+                image_bytes = await self._download_image(image_url)
+                
+                logger.info(
+                    f"img2img generated: model={SDXL_IMG2IMG_MODEL}, "
+                    f"strength={params.strength}, seed={params.seed}"
+                )
+                return image_bytes
+
+            except (ProviderTimeoutError, ProviderRateLimitError):
+                if attempt == self.max_retries - 1:
+                    raise
+                await asyncio.sleep(2 ** attempt)
+            except Exception as e:
+                logger.error(f"img2img attempt {attempt + 1} failed: {e}")
+                if attempt == self.max_retries - 1:
+                    raise ProviderError(
+                        f"img2img failed after {self.max_retries} attempts: {e}"
+                    ) from e
+                await asyncio.sleep(2 ** attempt)
+
+        raise ProviderError("img2img generation failed")
 
     async def analyze_style(self, image: bytes) -> StyleAnalysis:
         """Not supported - use GPT4VProvider for style analysis."""

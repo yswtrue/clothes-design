@@ -1,6 +1,7 @@
 """Design management API endpoints."""
 
 import uuid
+from datetime import datetime
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -87,8 +88,8 @@ class DesignListItem(BaseModel):
     user_id: int | None
     name: str
     status: str
-    created_at: str
-    updated_at: str
+    created_at: datetime
+    updated_at: datetime
 
     class Config:
         from_attributes = True
@@ -101,7 +102,7 @@ class DesignVersionResponse(BaseModel):
     design_id: int
     version: int
     data: dict | None
-    created_at: str
+    created_at: datetime
 
 
 class VersionsListResponse(BaseModel):
@@ -505,7 +506,7 @@ async def list_versions(
                 design_id=v.design_id,
                 version=v.version,
                 data=v.data,
-                created_at=v.created_at.isoformat(),
+                created_at=v.created_at,
             )
             for v in versions
         ]

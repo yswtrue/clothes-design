@@ -27,7 +27,7 @@ def upgrade() -> None:
         sa.Column('preview_image', sa.String(length=500), nullable=True),
         sa.Column('regions', sa.JSON(), nullable=True),
         sa.Column('is_builtin', sa.Integer(), nullable=False),
-        sa.Column('created_at', sa.DateTime(), server_default='now()', nullable=True),
+        sa.Column('created_at', sa.DateTime(), server_default=sa.text('now()'), nullable=True),
         sa.PrimaryKeyConstraint('id')
     )
     with op.batch_alter_table('prj_templates', schema=None) as batch_op:
@@ -46,7 +46,7 @@ def upgrade() -> None:
         sa.Column('variant_index', sa.Integer(), nullable=False),
         sa.Column('generation_params', sa.JSON(), nullable=True),
         sa.Column('is_selected', sa.Integer(), nullable=False),
-        sa.Column('created_at', sa.DateTime(), server_default='now()', nullable=True),
+        sa.Column('created_at', sa.DateTime(), server_default=sa.text('now()'), nullable=True),
         sa.ForeignKeyConstraint(['material_id'], ['materials.id'], ondelete='CASCADE'),
         sa.PrimaryKeyConstraint('id')
     )

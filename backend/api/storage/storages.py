@@ -1,3 +1,4 @@
+import io
 import os
 from pathlib import Path
 from typing import BinaryIO
@@ -19,6 +20,8 @@ class LocalStorageMixin:
             return f.read()
 
     async def upload(self, data: bytes | BinaryIO, name: str) -> str:
+        if isinstance(data, bytes):
+            data = io.BytesIO(data)
         self.write(data, name)
         return self.get_url(name)
 
@@ -32,6 +35,8 @@ class S3StorageMixin:
             return f.read()
 
     async def upload(self, data: bytes | BinaryIO, name: str) -> str:
+        if isinstance(data, bytes):
+            data = io.BytesIO(data)
         self.write(data, name)
         return self.get_url(name)
 

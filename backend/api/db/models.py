@@ -223,6 +223,27 @@ class GeneratedDesign(SoftDeleteMixin, table=True):
     designs: list["Design"] = Relationship(back_populates="generated_design")
 
 
+class LoginSession(SoftDeleteMixin, table=True):
+    @declared_attr.directive
+    def __tablename__(cls) -> str:
+        return "login_sessions"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    user_id: int = Field(
+        sa_column=Column(
+            ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
+        )
+    )
+    login_token: str = Field(max_length=36, unique=True, index=True)
+    token_type: str = Field(max_length=20, index=True)
+    expires_at: datetime = Field(index=True)
+    created_at: Optional[datetime] = Field(
+        default=None, sa_column_kwargs={"server_default": func.now()}
+    )
+
+    user: Optional[User] = Relationship()
+
+
 class AIProviderConfig(SoftDeleteMixin, table=True):
     @declared_attr.directive
     def __tablename__(cls) -> str:

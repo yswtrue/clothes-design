@@ -1,8 +1,12 @@
-"""Generate pattern handler for worker queue."""
-
 import logging
+import uuid
 from typing import Any
 
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+
+from config import get_settings
+from shared.ai.base import AIProvider
 from shared.ai.exceptions import (
     ProviderError,
     ProviderRateLimitError,
@@ -10,6 +14,7 @@ from shared.ai.exceptions import (
 )
 from shared.ai.schemas import GenerationParams, StyleAnalysis
 from shared.providers.config_loader import get_provider_config
+from shared.providers.openai_image import OpenAIImageProvider
 from shared.providers.replicate import ReplicateProvider
 
 from .base import TaskHandler, WorkerError
@@ -18,27 +23,37 @@ logger = logging.getLogger(__name__)
 
 
 class GenerateHandler(TaskHandler):
-    """Handler for pattern generation tasks."""
-
     handler_name = "generate"
 
     def __init__(self) -> None:
-        """Initialize generate handler."""
         super().__init__()
-        self.provider: ReplicateProvider | None = None
+        self.provider: AIProvider | None = None
+        self._session_factory: async_sessionmaker | None = None
 
-    async def _get_provider(self) -> ReplicateProvider:
-        """Get or initialize the provider with DB config."""
+    async def _get_session_factory(self) -> async_sessionmaker:
+        if self._session_factory is None:
+            settings = get_settings()
+            engine = create_async_engine(settings.database.async_url, echo=False)
+            self._session_factory = async_sessionmaker(engine, expire_on_commit=False)
+        return self._session_factory
+
+    async def _get_provider(self) -> AIProvider:
         if self.provider is None:
-            config = await get_provider_config("replicate")
-            if config:
-                self.provider = ReplicateProvider.from_config(config)
+            openai_config = await get_provider_config("openai_image")
+            if openai_config:
+                self.provider = OpenAIImageProvider.from_config(openai_config)
+                self.logger.info(f"Using OpenAI image provider: {openai_config.model_name}")
             else:
-                self.provider = ReplicateProvider()
+                replicate_config = await get_provider_config("replicate")
+                if replicate_config:
+                    self.provider = ReplicateProvider.from_config(replicate_config)
+                    self.logger.info("Using Replicate provider from config")
+                else:
+                    self.provider = ReplicateProvider()
+                    self.logger.info("Using default Replicate provider")
         return self.provider
 
     async def validate_input(self, task_data: dict[str, Any]) -> None:
-        """Validate task input data."""
         required_fields = ["style", "params"]
         for field in required_fields:
             if field not in task_data:
@@ -55,11 +70,11 @@ class GenerateHandler(TaskHandler):
             raise WorkerError(f"Invalid generation params: {e}")
 
     async def handle(self, task_data: dict[str, Any]) -> dict[str, Any]:
-        """Process pattern generation task."""
         await self.validate_input(task_data)
 
         style = StyleAnalysis(**task_data["style"])
         params = GenerationParams(**task_data["params"])
+        design_id = task_data.get("design_id")
 
         try:
             provider = await self._get_provider()
@@ -74,9 +89,16 @@ class GenerateHandler(TaskHandler):
                 f"tiling={params.tiling}, seed={params.seed}"
             )
 
+            pattern_url = None
+            if design_id:
+                pattern_url = await self._save_and_update_design(
+                    design_id, image_bytes, params
+                )
+
             return {
                 "status": "success",
                 "image_data": image_b64,
+                "pattern_url": pattern_url,
                 "width": params.width,
                 "height": params.height,
                 "tiling": params.tiling,
@@ -104,6 +126,45 @@ class GenerateHandler(TaskHandler):
         except Exception as e:
             self.logger.exception(f"Unexpected error during generation: {e}")
             raise WorkerError(f"Pattern generation failed: {e}")
+
+    async def _save_and_update_design(
+        self, design_id: int, image_bytes: bytes, params: GenerationParams
+    ) -> str:
+        from api.db.models import Design, DesignVersion
+        from api.storage.storages import generated_image_storage
+
+        unique_id = uuid.uuid4().hex[:8]
+        filename = f"design_{design_id}_{unique_id}.png"
+        await generated_image_storage.upload(image_bytes, filename)
+        self.logger.info(f"Saved pattern image: {filename}")
+
+        session_factory = await self._get_session_factory()
+        async with session_factory() as session:
+            result = await session.execute(
+                select(Design).where(Design.id == design_id)
+            )
+            design = result.scalar_one_or_none()
+
+            if design:
+                design.status = "draft"
+
+                version_result = await session.execute(
+                    select(DesignVersion)
+                    .where(DesignVersion.design_id == design_id)
+                    .order_by(DesignVersion.version.desc())
+                    .limit(1)
+                )
+                version = version_result.scalar_one_or_none()
+
+                if version:
+                    version_data = version.data or {}
+                    version_data["pattern_url"] = filename
+                    version.data = version_data
+
+                await session.commit()
+                self.logger.info(f"Updated design {design_id} status to 'draft'")
+
+        return filename
 
 
 __all__ = ["GenerateHandler"]
