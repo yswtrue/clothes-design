@@ -1,9 +1,8 @@
 """Vectorizer.ai provider for raster-to-vector conversion with CMYK TIF output."""
 
-import os
-
 import aiohttp
 
+from config import get_settings
 from shared.ai.base import AIProvider
 from shared.ai.exceptions import (
     ProviderConfigurationError,
@@ -32,11 +31,13 @@ class VectorizerProvider(AIProvider):
         self,
         api_key: str | None = None,
         base_url: str | None = None,
-        timeout: int = 90,
+        timeout: int | None = None,
     ) -> None:
+        settings = get_settings().vectorizer
+
         # Vectorizer.ai uses HTTP Basic Auth with API_ID:API_SECRET
-        api_id = api_key or os.getenv("VECTORIZER_API_ID")
-        api_secret = os.getenv("VECTORIZER_API_SECRET")
+        api_id = api_key or settings.api_id
+        api_secret = settings.api_secret
 
         if not api_id or not api_secret:
             raise ProviderConfigurationError(
@@ -45,10 +46,8 @@ class VectorizerProvider(AIProvider):
 
         self.api_id = api_id
         self.api_secret = api_secret
-        self.timeout = timeout
-        self.base_url = (
-            base_url or os.getenv("VECTORIZER_BASE_URL") or "https://api.vectorizer.ai/api/v1"
-        )
+        self.timeout = timeout if timeout is not None else settings.timeout
+        self.base_url = base_url or settings.base_url
 
     @classmethod
     def from_config(cls, config: ProviderConfig) -> "VectorizerProvider":

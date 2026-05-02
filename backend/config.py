@@ -6,9 +6,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class StorageSettings(BaseSettings):
-    model_config = SettingsConfigDict(
-        env_file="../.env", env_file_encoding="utf-8", env_prefix="", extra="ignore"
-    )
+    model_config = SettingsConfigDict(env_prefix="", extra="ignore")
 
     storage_type: Literal["local", "s3"] = Field(default="local", alias="STORAGE_TYPE")
     local_storage_path: str = Field(default="./uploads", alias="LOCAL_STORAGE_PATH")
@@ -90,12 +88,24 @@ class RedisSettings(BaseSettings):
         return f"redis://{self.host}:{self.port}/{self.queue_db}"
 
 
+class VectorizerSettings(BaseSettings):
+    model_config = SettingsConfigDict(env_prefix="", extra="ignore")
+
+    api_id: str = Field(default="", alias="VECTORIZER_API_ID")
+    api_secret: str = Field(default="", alias="VECTORIZER_API_SECRET")
+    base_url: str = Field(
+        default="https://api.vectorizer.ai/api/v1", alias="VECTORIZER_BASE_URL"
+    )
+    timeout: int = Field(default=90, alias="VECTORIZER_TIMEOUT")
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="", extra="ignore")
 
     storage: StorageSettings = Field(default_factory=StorageSettings)
     database: DatabaseSettings = Field(default_factory=DatabaseSettings)
     redis: RedisSettings = Field(default_factory=RedisSettings)
+    vectorizer: VectorizerSettings = Field(default_factory=VectorizerSettings)
 
 
 @lru_cache
