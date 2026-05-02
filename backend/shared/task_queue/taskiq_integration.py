@@ -3,6 +3,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from taskiq import TaskiqResult
+from taskiq_redis.exceptions import ResultIsMissingError
 
 from taskiq_app import broker
 from .redis_client import get_redis_client
@@ -89,17 +90,19 @@ async def get_task_status(task_id: str) -> TaskStatus | None:
             result = json.loads(metadata["result"])
 
         error = metadata.get("error") or None
+        status = metadata.get("status", "pending")
 
-        taskiq_result: TaskiqResult | None = await broker.result_backend.get_result(task_id)
-
-        if taskiq_result is None:
-            status = metadata.get("status", "pending")
-        elif taskiq_result.is_err:
-            status = "failed"
-            error = str(taskiq_result.error) if taskiq_result.error else "Unknown error"
-        else:
-            status = "completed"
-            result = taskiq_result.return_value
+        try:
+            taskiq_result: TaskiqResult | None = await broker.result_backend.get_result(task_id)
+            if taskiq_result is not None:
+                if taskiq_result.is_err:
+                    status = "failed"
+                    error = str(taskiq_result.error) if taskiq_result.error else "Unknown error"
+                else:
+                    status = "completed"
+                    result = taskiq_result.return_value
+        except ResultIsMissingError:
+            pass
 
         return TaskStatus(
             task_id=task_id,
