@@ -35,13 +35,19 @@ class VectorizerProvider(AIProvider):
     ) -> None:
         settings = get_settings().vectorizer
 
-        # Vectorizer.ai uses HTTP Basic Auth with API_ID:API_SECRET
-        api_id = api_key or settings.api_id
-        api_secret = settings.api_secret
+        api_id: str | None = None
+        api_secret: str | None = None
+
+        if api_key and ":" in api_key:
+            api_id, api_secret = api_key.split(":", 1)
+        else:
+            api_id = api_key or settings.api_id
+            api_secret = settings.api_secret
 
         if not api_id or not api_secret:
             raise ProviderConfigurationError(
-                "Missing Vectorizer credentials: set VECTORIZER_API_ID and VECTORIZER_API_SECRET in .env"
+                "Missing Vectorizer credentials. Set api_key as 'api_id:api_secret' in Admin, "
+                "or set VECTORIZER_API_ID and VECTORIZER_API_SECRET in .env"
             )
 
         self.api_id = api_id

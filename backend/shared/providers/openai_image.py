@@ -273,7 +273,6 @@ class OpenAIImageProvider(AIProvider):
             return await response.read()
 
     def _get_dalle_size(self, width: int, height: int) -> str:
-        # DALL-E 3: 1024x1024, 1792x1024, 1024x1792 | DALL-E 2: 256x256, 512x512, 1024x1024
         aspect = width / height if height > 0 else 1.0
 
         if "dall-e-3" in self.model.lower():
@@ -285,6 +284,35 @@ class OpenAIImageProvider(AIProvider):
                 return "1024x1024"
         else:
             return "1024x1024"
+
+    def _get_aspect_ratio(self, width: int, height: int) -> str:
+        from math import gcd
+        
+        if width <= 0 or height <= 0:
+            return "1:1"
+        
+        divisor = gcd(width, height)
+        w_ratio = width // divisor
+        h_ratio = height // divisor
+        
+        valid_ratios = [
+            "1:1", "1:4", "1:8", "2:3", "3:2", "3:4", 
+            "4:1", "4:3", "4:5", "5:4", "8:1", "9:16", "16:9", "21:9"
+        ]
+        
+        exact_ratio = f"{w_ratio}:{h_ratio}"
+        if exact_ratio in valid_ratios:
+            return exact_ratio
+        
+        aspect = width / height
+        ratio_values = {
+            "1:1": 1.0, "1:4": 0.25, "1:8": 0.125, "2:3": 0.667, "3:2": 1.5,
+            "3:4": 0.75, "4:1": 4.0, "4:3": 1.333, "4:5": 0.8, "5:4": 1.25,
+            "8:1": 8.0, "9:16": 0.5625, "16:9": 1.778, "21:9": 2.333
+        }
+        
+        closest = min(valid_ratios, key=lambda r: abs(ratio_values[r] - aspect))
+        return closest
 
     def _build_prompt(self, style: StyleAnalysis, params: GenerationParams) -> str:
         if params.prompt_override:
@@ -320,9 +348,7 @@ class OpenAIImageProvider(AIProvider):
     async def _generate_img2img(
         self, style: StyleAnalysis, params: GenerationParams
     ) -> bytes:
-        if self._is_gpt_image_model() and not self._is_chat_model():
-            return await self._generate_via_images_edit_api(style, params)
-        return await self._generate_img2img_via_chat(style, params)
+        return await self._generate_via_images_edit_api(style, params)
 
     async def _generate_via_images_edit_api(
         self, style: StyleAnalysis, params: GenerationParams
@@ -332,24 +358,37 @@ class OpenAIImageProvider(AIProvider):
 
         prompt = self._build_fabric_prompt(style, params)
         image_bytes = base64.b64decode(params.init_image_b64)
+        url = f"{self.base_url}/images/edits"
+        size = self._get_aspect_ratio(params.width, params.height)
 
-        form = aiohttp.FormData()
-        form.add_field("model", self.model)
-        form.add_field("prompt", prompt)
-        form.add_field("image", image_bytes, filename="image.png", content_type="image/png")
-        form.add_field("n", "1")
-        form.add_field("size", self._get_dalle_size(params.width, params.height))
+        logger.info(
+            f"images/edits request: url={url}, model={self.model}, "
+            f"size={size}, image_size={len(image_bytes)}, prompt_length={len(prompt)}"
+        )
 
         for attempt in range(self.max_retries):
+            form = aiohttp.FormData()
+            form.add_field("model", self.model)
+            form.add_field("prompt", prompt)
+            form.add_field("image", image_bytes, filename="image.png", content_type="image/png")
+            form.add_field("n", "1")
+            form.add_field("size", size)
+
             try:
                 async with aiohttp.ClientSession() as session:
                     async with session.post(
-                        f"{self.base_url}/images/edits",
+                        url,
                         headers={"Authorization": f"Bearer {self.api_key}"},
                         data=form,
                         timeout=aiohttp.ClientTimeout(total=self.timeout),
                     ) as response:
                         response_text = await response.text()
+
+                        logger.info(
+                            f"images/edits response: status={response.status}, "
+                            f"body_length={len(response_text)}, "
+                            f"body_preview={response_text[:500]}"
+                        )
 
                         if response.status == 429:
                             raise ProviderRateLimitError("OpenAI rate limit exceeded")
@@ -358,29 +397,50 @@ class OpenAIImageProvider(AIProvider):
                             raise ProviderConfigurationError(f"Invalid API key: {response_text[:200]}")
 
                         if response.status >= 400:
+                            logger.error(
+                                f"images/edits API error: status={response.status}, "
+                                f"url={url}, model={self.model}, response={response_text}"
+                            )
                             raise ProviderError(f"API error {response.status}: {response_text[:500]}")
 
                         data = json.loads(response_text)
                         if "data" in data and data["data"]:
                             if "b64_json" in data["data"][0]:
+                                logger.info("images/edits success: got b64_json response")
                                 return base64.b64decode(data["data"][0]["b64_json"])
                             elif "url" in data["data"][0]:
+                                logger.info(f"images/edits success: downloading from URL")
                                 return await self._download_image(session, data["data"][0]["url"])
 
+                        logger.error(f"images/edits unexpected format: {response_text}")
                         raise ProviderError(f"Unexpected response format: {response_text[:500]}")
 
-            except (ProviderRateLimitError, ProviderTimeoutError):
+            except (ProviderRateLimitError, ProviderTimeoutError, ProviderError, ProviderConfigurationError):
+                logger.error(f"images/edits attempt {attempt + 1} failed with provider error", exc_info=True)
                 if attempt == self.max_retries - 1:
                     raise
                 await asyncio.sleep(2**attempt)
 
             except TimeoutError as e:
+                logger.error(f"images/edits attempt {attempt + 1} timed out after {self.timeout}s")
                 raise ProviderTimeoutError(f"Request timed out after {self.timeout}s") from e
 
             except aiohttp.ClientError as e:
-                logger.error(f"Images edit attempt {attempt + 1} failed: {e}")
+                logger.error(
+                    f"images/edits attempt {attempt + 1} network error: {type(e).__name__}: {e}",
+                    exc_info=True
+                )
                 if attempt == self.max_retries - 1:
                     raise ProviderError(f"Images edit failed after {self.max_retries} attempts: {e}") from e
+                await asyncio.sleep(2**attempt)
+
+            except Exception as e:
+                logger.error(
+                    f"images/edits attempt {attempt + 1} unexpected error: {type(e).__name__}: {e}",
+                    exc_info=True
+                )
+                if attempt == self.max_retries - 1:
+                    raise ProviderError(f"Images edit failed: {e}") from e
                 await asyncio.sleep(2**attempt)
 
         raise ProviderError("Images edit failed")
@@ -389,6 +449,7 @@ class OpenAIImageProvider(AIProvider):
         self, style: StyleAnalysis, params: GenerationParams
     ) -> bytes:
         prompt = self._build_fabric_prompt(style, params)
+        url = f"{self.base_url}/chat/completions"
         
         payload = {
             "model": self.model,
@@ -412,11 +473,13 @@ class OpenAIImageProvider(AIProvider):
             "max_tokens": 1000,
         }
 
+        logger.info(f"img2img request: url={url}, model={self.model}, base_url={self.base_url}")
+
         for attempt in range(self.max_retries):
             try:
                 async with aiohttp.ClientSession() as session:
                     async with session.post(
-                        f"{self.base_url}/chat/completions",
+                        url,
                         headers={
                             "Authorization": f"Bearer {self.api_key}",
                             "Content-Type": "application/json",
@@ -425,6 +488,12 @@ class OpenAIImageProvider(AIProvider):
                         timeout=aiohttp.ClientTimeout(total=self.timeout),
                     ) as response:
                         response_text = await response.text()
+                        
+                        logger.info(
+                            f"img2img response: status={response.status}, "
+                            f"body_length={len(response_text)}, "
+                            f"body_preview={response_text[:500]}"
+                        )
 
                         if response.status == 429:
                             raise ProviderRateLimitError("OpenAI rate limit exceeded")
@@ -435,6 +504,11 @@ class OpenAIImageProvider(AIProvider):
                             )
 
                         if response.status >= 400:
+                            logger.error(
+                                f"img2img API error: status={response.status}, "
+                                f"url={url}, model={self.model}, "
+                                f"response={response_text}"
+                            )
                             raise ProviderError(
                                 f"API error {response.status}: {response_text[:500]}"
                             )
@@ -447,12 +521,14 @@ class OpenAIImageProvider(AIProvider):
                         )
 
                         if not content:
+                            logger.error(f"img2img empty content: response={response_text}")
                             raise ProviderError(
                                 f"Empty response from API: {response_text[:500]}"
                             )
 
                         image_url = self._extract_image_url(content)
                         if not image_url:
+                            logger.error(f"img2img no image URL: content={content}")
                             raise ProviderError(
                                 f"No image URL found in response: {content[:500]}"
                             )
@@ -464,22 +540,36 @@ class OpenAIImageProvider(AIProvider):
                         )
                         return image_bytes
 
-            except (ProviderRateLimitError, ProviderTimeoutError):
+            except (ProviderRateLimitError, ProviderTimeoutError, ProviderError, ProviderConfigurationError):
+                logger.error(f"img2img attempt {attempt + 1} failed with provider error", exc_info=True)
                 if attempt == self.max_retries - 1:
                     raise
                 await asyncio.sleep(2**attempt)
 
             except TimeoutError as e:
+                logger.error(f"img2img attempt {attempt + 1} timed out after {self.timeout}s")
                 raise ProviderTimeoutError(
                     f"Request timed out after {self.timeout}s"
                 ) from e
 
             except aiohttp.ClientError as e:
-                logger.error(f"img2img attempt {attempt + 1} failed: {e}")
+                logger.error(
+                    f"img2img attempt {attempt + 1} network error: {type(e).__name__}: {e}",
+                    exc_info=True
+                )
                 if attempt == self.max_retries - 1:
                     raise ProviderError(
                         f"img2img failed after {self.max_retries} attempts: {e}"
                     ) from e
+                await asyncio.sleep(2**attempt)
+            
+            except Exception as e:
+                logger.error(
+                    f"img2img attempt {attempt + 1} unexpected error: {type(e).__name__}: {e}",
+                    exc_info=True
+                )
+                if attempt == self.max_retries - 1:
+                    raise ProviderError(f"img2img failed: {e}") from e
                 await asyncio.sleep(2**attempt)
 
         raise ProviderError("img2img generation failed")

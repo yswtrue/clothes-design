@@ -3,7 +3,6 @@ export interface GenerateRequest {
   pattern_type: 'seamless' | 'standalone' | 'full';
   prompt?: string;
   colors?: string[];
-  generate_vector?: boolean;
 }
 
 export interface GenerateResponse {
@@ -27,7 +26,6 @@ export interface TaskStatusResponse {
     tiling?: string;
     seed?: number;
     dimensions?: { width: number; height: number };
-    vector_url?: string;
   };
   error?: string;
 }

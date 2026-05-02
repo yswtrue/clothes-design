@@ -1,10 +1,8 @@
-"""Upscale task handler for image super-resolution."""
-
 import logging
 from typing import Any
 
-from shared.providers.config_loader import get_provider_config
-from shared.providers.esrgan import ESRGANProvider
+from shared.ai.base import AIProvider
+from shared.ai.factory import Capability, get_provider_by_capability
 
 from .base import TaskHandler, WorkerError
 
@@ -16,15 +14,15 @@ class UpscaleHandler(TaskHandler):
 
     def __init__(self) -> None:
         super().__init__()
-        self.provider: ESRGANProvider | None = None
+        self.provider: AIProvider | None = None
 
-    async def _get_provider(self) -> ESRGANProvider:
+    async def _get_provider(self) -> AIProvider:
         if self.provider is None:
-            config = await get_provider_config("esrgan")
-            if config:
-                self.provider = ESRGANProvider.from_config(config)
-            else:
-                self.provider = ESRGANProvider()
+            result = await get_provider_by_capability(Capability.UPSCALE)
+            if result is None:
+                raise WorkerError("No active upscale provider configured")
+            self.provider, provider_type = result
+            self.logger.info(f"Using provider: {provider_type}")
         return self.provider
 
     async def validate_input(self, task_data: dict[str, Any]) -> None:

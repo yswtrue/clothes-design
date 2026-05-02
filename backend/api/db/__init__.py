@@ -2,8 +2,6 @@
 
 from api.db.base import Base, engine, get_session
 from api.db.models import (
-    Design,
-    DesignVersion,
     Material,
     PrjTemplate,
     Role,
@@ -13,8 +11,6 @@ from api.db.models import (
 
 __all__ = [
     "Base",
-    "Design",
-    "DesignVersion",
     "Material",
     "PrjTemplate",
     "Role",

@@ -3,7 +3,7 @@ from typing import Any, Optional
 
 from api.auth.security import verify_password
 from api.db.base import AsyncSessionLocal, engine
-from api.db.models import AIProviderConfig, Design, Material, PrjTemplate, PromptTemplate, Role, User, UserRole
+from api.db.models import AIProviderConfig, Material, PrjTemplate, PromptTemplate, Role, User, UserRole
 from sqlalchemy import select
 from starlette.requests import Request
 from starlette.responses import Response
@@ -25,11 +25,9 @@ from starlette_admin.fields import (
 
 class ProviderType(str, Enum):
     OPENAI = "openai"
-    OPENAI_IMAGE = "openai_image"
-    GPTPROTO = "gptproto"
+    OPENAI_IMAGE_EDIT = "openai_image_edit"
     REPLICATE = "replicate"
-    VECTORIZER = "vectorizer"
-    ESRGAN = "esrgan"
+    VECTORIZER_AI = "vectorizer_ai"
 
 
 class TaskType(str, Enum):
@@ -40,11 +38,9 @@ class TaskType(str, Enum):
 
 DEFAULT_BASE_URLS = {
     "openai": "https://api.openai.com/v1",
-    "openai_image": "https://api.openai.com/v1",
-    "gptproto": "https://gptproto.com/api/v3",
+    "openai_image_edit": "https://api.openai.com/v1",
     "replicate": "https://api.replicate.com/v1",
-    "vectorizer": "https://api.vectorizer.ai/api/v1",
-    "esrgan": "https://api.replicate.com/v1",
+    "vectorizer_ai": "https://api.vectorizer.ai/api/v1",
 }
 
 
@@ -129,7 +125,7 @@ class AIProviderConfigView(ModelView):
         StringField(
             "base_url",
             required=False,
-            help_text="留空使用默认: openai/openai_image=api.openai.com, replicate=api.replicate.com",
+            help_text="留空使用默认 URL",
         ),
         PasswordField("api_key", required=True, help_text="API key"),
         StringField("model_name", required=True, help_text="Model identifier"),
@@ -266,7 +262,6 @@ def create_admin() -> Admin:
     admin.add_view(ModelView(User, icon="fa fa-users"))
     admin.add_view(ModelView(Role, icon="fa fa-shield"))
     admin.add_view(ModelView(UserRole, icon="fa fa-user-tag"))
-    admin.add_view(ModelView(Design, icon="fa fa-palette"))
     admin.add_view(ModelView(Material, icon="fa fa-image"))
     admin.add_view(PrjTemplateView(PrjTemplate, icon="fa fa-file-code"))
     admin.add_view(PromptTemplateView(PromptTemplate, icon="fa fa-comment-alt"))

@@ -1,9 +1,13 @@
+import base64
+import io
 import logging
 import uuid
 from typing import Any
 
+from PIL import Image
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+from starlette.datastructures import UploadFile
 
 from config import get_settings
 from shared.ai.base import AIProvider
@@ -12,17 +16,20 @@ from shared.ai.exceptions import (
     ProviderRateLimitError,
     ProviderTimeoutError,
 )
+from shared.ai.factory import Capability, get_provider_by_capability
 from shared.ai.schemas import GenerationParams, StyleAnalysis
-from shared.providers.config_loader import get_provider_config
-from shared.providers.gptproto import GPTProtoProvider
-from shared.providers.openai_image import OpenAIImageProvider
 from shared.providers.prompt_template_service import get_or_default_prompt
-from shared.providers.replicate import ReplicateProvider
-from shared.providers.vectorizer import VectorizerProvider
 
 from .base import TaskHandler, WorkerError
 
 logger = logging.getLogger(__name__)
+
+THUMBNAIL_SIZE = (400, 400)
+THUMBNAIL_QUALITY = 85
+
+
+def make_upload_file(data: bytes, filename: str) -> UploadFile:
+    return UploadFile(file=io.BytesIO(data), filename=filename)
 
 
 class GenerateHandler(TaskHandler):
@@ -31,7 +38,7 @@ class GenerateHandler(TaskHandler):
     def __init__(self) -> None:
         super().__init__()
         self.provider: AIProvider | None = None
-        self.img2img_provider: AIProvider | None = None
+        self.provider_type: str | None = None
         self._session_factory: async_sessionmaker | None = None
 
     async def _get_session_factory(self) -> async_sessionmaker:
@@ -41,48 +48,46 @@ class GenerateHandler(TaskHandler):
             self._session_factory = async_sessionmaker(engine, expire_on_commit=False)
         return self._session_factory
 
-    async def _get_provider(self, for_img2img: bool = False) -> AIProvider:
-        if for_img2img and self.img2img_provider is not None:
-            return self.img2img_provider
-        if not for_img2img and self.provider is not None:
-            return self.provider
+    async def _get_provider(self) -> tuple[AIProvider, str]:
+        if self.provider is not None and self.provider_type is not None:
+            return self.provider, self.provider_type
 
-        if for_img2img:
-            gptproto_config = await get_provider_config("gptproto")
-            if gptproto_config:
-                provider = GPTProtoProvider.from_config(gptproto_config)
-                self.img2img_provider = provider
-                self.logger.info(f"Using GPTProto provider for img2img: {gptproto_config.model_name}")
-                return provider
+        result = await get_provider_by_capability(Capability.IMAGE_GENERATION)
+        if result is None:
+            raise WorkerError("No active image generation provider configured")
 
-        openai_config = await get_provider_config("openai_image")
-        if openai_config:
-            provider = OpenAIImageProvider.from_config(openai_config)
-            self.logger.info(f"Using OpenAI image provider: {openai_config.model_name}")
-        else:
-            replicate_config = await get_provider_config("replicate")
-            if replicate_config:
-                provider = ReplicateProvider.from_config(replicate_config)
-                self.logger.info("Using Replicate provider from config")
-            else:
-                provider = ReplicateProvider()
-                self.logger.info("Using default Replicate provider")
+        self.provider, self.provider_type = result
+        self.logger.info(f"Using provider: {self.provider_type}")
+        return self.provider, self.provider_type
 
-        if for_img2img:
-            self.img2img_provider = provider
-        else:
-            self.provider = provider
+    async def _update_generated_design(
+        self, generated_design_id: int, status: str
+    ) -> None:
+        from api.db.models import GeneratedDesign
 
-        return provider
+        session_factory = await self._get_session_factory()
+        async with session_factory() as session:
+            result = await session.execute(
+                select(GeneratedDesign).where(GeneratedDesign.id == generated_design_id)
+            )
+            record = result.scalar_one_or_none()
+            if record:
+                record.status = status
+                await session.commit()
+                self.logger.info(f"Updated GeneratedDesign {generated_design_id} status to '{status}'")
 
-    def _get_provider_type(self, provider: AIProvider) -> str | None:
-        if isinstance(provider, GPTProtoProvider):
-            return "gptproto"
-        elif isinstance(provider, OpenAIImageProvider):
-            return "openai_image"
-        elif isinstance(provider, ReplicateProvider):
-            return "replicate"
-        return None
+    def _generate_thumbnail(self, image_bytes: bytes) -> bytes:
+        img = Image.open(io.BytesIO(image_bytes))
+        if img.mode in ("RGBA", "LA", "P"):
+            background = Image.new("RGB", img.size, (255, 255, 255))
+            if img.mode == "P":
+                img = img.convert("RGBA")
+            background.paste(img, mask=img.split()[-1] if img.mode == "RGBA" else None)
+            img = background
+        img.thumbnail(THUMBNAIL_SIZE, Image.Resampling.LANCZOS)
+        output = io.BytesIO()
+        img.save(output, format="JPEG", quality=THUMBNAIL_QUALITY, optimize=True)
+        return output.getvalue()
 
     async def validate_input(self, task_data: dict[str, Any]) -> None:
         required_fields = ["style", "params"]
@@ -105,16 +110,13 @@ class GenerateHandler(TaskHandler):
 
         style = StyleAnalysis(**task_data["style"])
         params = GenerationParams(**task_data["params"])
-        design_id = task_data.get("design_id")
-        generate_vector = task_data.get("generate_vector", False)
+        generated_design_id = task_data.get("generated_design_id")
 
         try:
             is_img2img = bool(params.init_image_b64)
             task_type = "img2img" if is_img2img else "text2img"
-            provider = await self._get_provider(for_img2img=is_img2img)
+            provider, provider_type = await self._get_provider()
 
-            provider_type = self._get_provider_type(provider)
-            
             if params.prompt_override:
                 prompt = params.prompt_override
                 self.logger.info(f"Using custom prompt ({task_type}/{provider_type}): {prompt[:100]}...")
@@ -129,9 +131,6 @@ class GenerateHandler(TaskHandler):
                 self.logger.info(f"Using default prompt ({task_type}/{provider_type}): {prompt[:100]}...")
 
             image_bytes = await provider.generate_pattern(style, params)
-
-            import base64
-
             image_b64 = base64.b64encode(image_bytes).decode("utf-8")
 
             self.logger.info(
@@ -140,18 +139,15 @@ class GenerateHandler(TaskHandler):
             )
 
             pattern_url = None
-            vector_url = None
-            if design_id:
-                pattern_url = await self._save_and_update_design(design_id, image_bytes, params)
-
-                if generate_vector:
-                    vector_url = await self._vectorize_and_save(design_id, image_bytes)
+            if generated_design_id:
+                pattern_url = await self._save_generated_design(
+                    generated_design_id, image_bytes, params
+                )
 
             return {
                 "status": "success",
                 "image_data": image_b64,
                 "pattern_url": pattern_url,
-                "vector_url": vector_url,
                 "width": params.width,
                 "height": params.height,
                 "tiling": params.tiling,
@@ -160,79 +156,57 @@ class GenerateHandler(TaskHandler):
 
         except ProviderTimeoutError as e:
             self.logger.error(f"Generation timeout: {e}")
+            if generated_design_id:
+                await self._update_generated_design(generated_design_id, "failed")
             return {"status": "error", "error": "Request timed out. Please retry."}
 
         except ProviderRateLimitError as e:
             self.logger.error(f"Rate limit exceeded: {e}")
-            return {
-                "status": "error",
-                "error": "Rate limit exceeded. Please retry later.",
-            }
+            if generated_design_id:
+                await self._update_generated_design(generated_design_id, "failed")
+            return {"status": "error", "error": "Rate limit exceeded. Please retry later."}
 
         except ProviderError as e:
             self.logger.error(f"Provider error: {e}")
-            return {
-                "status": "error",
-                "error": str(e),
-            }
+            if generated_design_id:
+                await self._update_generated_design(generated_design_id, "failed")
+            return {"status": "error", "error": str(e)}
 
         except Exception as e:
             self.logger.exception(f"Unexpected error during generation: {e}")
+            if generated_design_id:
+                await self._update_generated_design(generated_design_id, "failed")
             raise WorkerError(f"Pattern generation failed: {e}")
 
-    async def _save_and_update_design(
-        self, design_id: int, image_bytes: bytes, params: GenerationParams
+    async def _save_generated_design(
+        self, generated_design_id: int, image_bytes: bytes, params: GenerationParams
     ) -> str:
-        from api.db.models import Design, DesignVersion
+        from api.db.models import GeneratedDesign
         from api.storage.storages import generated_image_storage
 
         unique_id = uuid.uuid4().hex[:8]
-        filename = f"design_{design_id}_{unique_id}.png"
-        pattern_url = await generated_image_storage.upload(image_bytes, filename)
-        self.logger.info(f"Saved pattern image: {filename} -> {pattern_url}")
+        image_filename = f"gen_{generated_design_id}_{unique_id}.png"
+        thumb_filename = f"gen_{generated_design_id}_{unique_id}_thumb.jpg"
+
+        thumb_bytes = self._generate_thumbnail(image_bytes)
 
         session_factory = await self._get_session_factory()
         async with session_factory() as session:
-            result = await session.execute(select(Design).where(Design.id == design_id))
-            design = result.scalar_one_or_none()
+            result = await session.execute(
+                select(GeneratedDesign).where(GeneratedDesign.id == generated_design_id)
+            )
+            record = result.scalar_one_or_none()
 
-            if design:
-                design.status = "draft"
-
-                version_result = await session.execute(
-                    select(DesignVersion)
-                    .where(DesignVersion.design_id == design_id)
-                    .order_by(DesignVersion.version.desc())
-                    .limit(1)
-                )
-                version = version_result.scalar_one_or_none()
-
-                if version:
-                    version_data = dict(version.data) if version.data else {}
-                    version_data["pattern_url"] = pattern_url
-                    version.data = version_data
-
+            if record:
+                record.status = "completed"
+                record.image = make_upload_file(image_bytes, image_filename)
+                record.thumbnail = make_upload_file(thumb_bytes, thumb_filename)
+                record.seed = params.seed
                 await session.commit()
-                self.logger.info(f"Updated design {design_id} status to 'draft'")
+                self.logger.info(f"Updated GeneratedDesign {generated_design_id} status to 'completed'")
 
+        pattern_url = generated_image_storage.get_url(image_filename)
         return pattern_url
-
-    async def _vectorize_and_save(self, design_id: int, image_bytes: bytes) -> str | None:
-        from api.storage.storages import output_tif_storage
-
-        try:
-            vectorizer = VectorizerProvider()
-            svg_bytes = await vectorizer.vectorize(image_bytes)
-
-            unique_id = uuid.uuid4().hex[:8]
-            filename = f"design_{design_id}_{unique_id}.svg"
-            vector_url = await output_tif_storage.upload(svg_bytes, filename)
-            self.logger.info(f"Saved vector image: {filename} -> {vector_url}")
-            return vector_url
-
-        except Exception as e:
-            self.logger.error(f"Vectorization failed: {e}")
-            return None
 
 
 __all__ = ["GenerateHandler"]

@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from shared.ai.schemas import GenerationParams, StyleAnalysis
 from api.auth.dependencies import get_current_user
 from api.db.base import get_session
-from api.db.models import Design, DesignVersion, Material, User
+from api.db.models import GeneratedDesign, Material, User
 from api.materials.schemas import MaterialMeta
 from shared.task_queue import enqueue_task, get_task_status
 
@@ -21,28 +21,21 @@ _user_dep = Annotated[User, Depends(get_current_user)]
 
 
 class GenerateRequest(BaseModel):
-    """Request to generate a pattern."""
-
     material_id: int
     pattern_type: str  # seamless, standalone, full
     prompt: str | None = None
     colors: list[str] | None = None
     use_img2img: bool = True
     strength: float = 0.65
-    generate_vector: bool = False
 
 
 class GenerateResponse(BaseModel):
-    """Response from pattern generation request."""
-
     task_id: str
-    design_id: int
+    generated_design_id: int
     status: str = "pending"
 
 
 class TaskStatusResponse(BaseModel):
-    """Response for task status query."""
-
     task_id: str
     status: str  # pending, processing, completed, failed
     result: dict | None = None
@@ -55,20 +48,6 @@ async def generate_pattern(
     session: _session_dep,
     current_user: _user_dep,
 ):
-    """Generate a pattern from a material.
-
-    Args:
-        request: Generation parameters
-        session: Database session
-        current_user: Authenticated user
-
-    Returns:
-        Task ID and design ID for polling
-
-    Raises:
-        HTTPException: If material not found or doesn't belong to user
-    """
-    # Verify material exists and belongs to user
     result = await session.execute(
         select(Material).where(
             Material.id == request.material_id, Material.uploaded_by == current_user.id
@@ -88,7 +67,6 @@ async def generate_pattern(
         if meta.style_analysis:
             style_analysis = meta.style_analysis
 
-    # Build prompt from request or style analysis
     prompt = request.prompt
     if not prompt and style_analysis:
         prompt = style_analysis.style_description
@@ -99,7 +77,6 @@ async def generate_pattern(
             detail="Material has no style analysis and no prompt provided",
         )
 
-    # Use colors from request or style analysis
     colors = request.colors
     if not colors and style_analysis:
         colors = style_analysis.color_palette
@@ -118,20 +95,20 @@ async def generate_pattern(
                 detail=f"Failed to load material image: {e}",
             )
 
-    # Create Design record
-    from datetime import datetime
-
-    design_name = f"Design-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
-    design = Design(user_id=current_user.id, name=design_name, status="generating")
-    session.add(design)
-    await session.flush()
-
-    initial_version = DesignVersion(
-        design_id=design.id,
-        version=1,
-        data={"material_id": request.material_id, "pattern_type": request.pattern_type},
+    existing_count = await session.execute(
+        select(GeneratedDesign).where(GeneratedDesign.material_id == request.material_id)
     )
-    session.add(initial_version)
+    next_version = len(existing_count.scalars().all())
+
+    generated_design = GeneratedDesign(
+        material_id=request.material_id,
+        status="generating",
+        variant_index=next_version,
+        prompt_used=prompt,
+        generation_params={"pattern_type": request.pattern_type, "strength": request.strength},
+    )
+    session.add(generated_design)
+    await session.flush()
 
     gen_params = GenerationParams(
         style=prompt,
@@ -144,21 +121,19 @@ async def generate_pattern(
         prompt_override=request.prompt,
     )
 
-    # Enqueue task
     task_data = {
         "material_id": request.material_id,
-        "design_id": design.id,
+        "generated_design_id": generated_design.id,
         "pattern_type": request.pattern_type,
         "style": style_analysis.model_dump() if style_analysis else {"style_description": prompt},
         "params": gen_params.model_dump(),
-        "generate_vector": request.generate_vector,
     }
 
     task_id = await enqueue_task(task_type="generate", user_id=current_user.id, data=task_data)
 
     await session.commit()
 
-    return GenerateResponse(task_id=task_id, design_id=design.id, status="pending")
+    return GenerateResponse(task_id=task_id, generated_design_id=generated_design.id, status="pending")
 
 
 @router.get("/tasks/{task_id}", response_model=TaskStatusResponse)

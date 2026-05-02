@@ -9,6 +9,8 @@ from api.storage.storages import (
     preview_storage,
     prj_storage,
     thumbnail_storage,
+    upscaled_storage,
+    vector_storage,
 )
 from fastapi_storages.integrations.sqlalchemy import FileType
 from sqlalchemy import JSON, Column, ForeignKey, Text, UniqueConstraint, func
@@ -28,7 +30,6 @@ class User(SoftDeleteMixin, table=True):
         default_factory=datetime.utcnow, sa_column_kwargs={"server_default": func.now(), "onupdate": datetime.utcnow}
     )
 
-    designs: list["Design"] = Relationship(back_populates="user", cascade_delete=True)
     user_roles: list["UserRole"] = Relationship(
         back_populates="user", cascade_delete=True
     )
@@ -86,72 +87,6 @@ class UserRole(SoftDeleteMixin, table=True):
     role: Optional[Role] = Relationship(back_populates="user_roles")
 
 
-class Design(SoftDeleteMixin, table=True):
-    @declared_attr.directive
-    def __tablename__(cls) -> str:
-        return "designs"
-
-    id: Optional[int] = Field(default=None, primary_key=True)
-    user_id: Optional[int] = Field(
-        default=None,
-        sa_column=Column(ForeignKey("users.id", ondelete="SET NULL"), index=True),
-    )
-    generated_design_id: Optional[int] = Field(
-        default=None,
-        sa_column=Column(
-            ForeignKey("generated_designs.id", ondelete="SET NULL"), index=True
-        ),
-    )
-    prj_template_id: Optional[int] = Field(
-        default=None,
-        sa_column=Column(
-            ForeignKey("prj_templates.id", ondelete="SET NULL"), index=True
-        ),
-    )
-    name: str = Field(max_length=255)
-    status: str = Field(default="draft", max_length=50, index=True)
-    output_tif: Any = Field(default=None, sa_column=Column("output_tif_path", FileType(storage=output_tif_storage), nullable=True))
-    created_at: Optional[datetime] = Field(
-        default=None, sa_column_kwargs={"server_default": func.now()}, index=True
-    )
-    updated_at: Optional[datetime] = Field(
-        default=None, sa_column_kwargs={"server_default": func.now(), "onupdate": datetime.utcnow}
-    )
-
-    user: Optional[User] = Relationship(back_populates="designs")
-    generated_design: Optional["GeneratedDesign"] = Relationship(
-        back_populates="designs"
-    )
-    prj_template: Optional["PrjTemplate"] = Relationship(back_populates="designs")
-    versions: list["DesignVersion"] = Relationship(
-        back_populates="design", cascade_delete=True
-    )
-
-
-class DesignVersion(SoftDeleteMixin, table=True):
-    @declared_attr.directive
-    def __tablename__(cls) -> str:
-        return "design_versions"
-
-    @declared_attr.directive
-    def __table_args__(cls):
-        return (UniqueConstraint("design_id", "version", name="uq_design_version"),)
-
-    id: Optional[int] = Field(default=None, primary_key=True)
-    design_id: int = Field(
-        sa_column=Column(
-            ForeignKey("designs.id", ondelete="CASCADE"), nullable=False, index=True
-        )
-    )
-    version: int
-    data: Optional[dict] = Field(default=None, sa_column=Column(JSON))
-    created_at: Optional[datetime] = Field(
-        default=None, sa_column_kwargs={"server_default": func.now()}
-    )
-
-    design: Optional[Design] = Relationship(back_populates="versions")
-
-
 class Material(SoftDeleteMixin, table=True):
     @declared_attr.directive
     def __tablename__(cls) -> str:
@@ -194,8 +129,6 @@ class PrjTemplate(SoftDeleteMixin, table=True):
         default=None, sa_column_kwargs={"server_default": func.now()}
     )
 
-    designs: list["Design"] = Relationship(back_populates="prj_template")
-
 
 class GeneratedDesign(SoftDeleteMixin, table=True):
     @declared_attr.directive
@@ -208,8 +141,12 @@ class GeneratedDesign(SoftDeleteMixin, table=True):
             ForeignKey("materials.id", ondelete="CASCADE"), nullable=False, index=True
         )
     )
-    image: Any = Field(default=None, sa_column=Column("image_path", FileType(storage=generated_image_storage), nullable=False))
+    status: str = Field(default="generating", max_length=50, index=True)
+    image: Any = Field(default=None, sa_column=Column("image_path", FileType(storage=generated_image_storage), nullable=True))
     thumbnail: Any = Field(default=None, sa_column=Column("thumbnail_path", FileType(storage=thumbnail_storage), nullable=True))
+    upscaled_image: Any = Field(default=None, sa_column=Column("upscaled_path", FileType(storage=upscaled_storage), nullable=True))
+    vector_svg: Any = Field(default=None, sa_column=Column("vector_path", FileType(storage=vector_storage), nullable=True))
+    export_tif: Any = Field(default=None, sa_column=Column("export_tif_path", FileType(storage=output_tif_storage), nullable=True))
     prompt_used: Optional[str] = Field(default=None)
     seed: Optional[int] = Field(default=None)
     variant_index: int = Field(default=0)
@@ -218,9 +155,9 @@ class GeneratedDesign(SoftDeleteMixin, table=True):
     created_at: Optional[datetime] = Field(
         default=None, sa_column_kwargs={"server_default": func.now()}, index=True
     )
+    exported_at: Optional[datetime] = Field(default=None)
 
     material: Optional["Material"] = Relationship(back_populates="generated_designs")
-    designs: list["Design"] = Relationship(back_populates="generated_design")
 
 
 class LoginSession(SoftDeleteMixin, table=True):

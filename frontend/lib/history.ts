@@ -1,74 +1,49 @@
 import type {
-  DesignVersion,
-  PaginatedDesignsResponse,
-  RollbackResponse,
-  VersionsListResponse,
+  GeneratedDesign,
+  PaginatedHistoryResponse,
 } from '@/types/history';
 import { apiRequest } from './api';
 
-export async function fetchDesigns(
+export async function fetchHistory(
   page: number = 1,
-  size: number = 20
-): Promise<PaginatedDesignsResponse> {
-  return apiRequest<PaginatedDesignsResponse>(
-    `/api/designs?page=${page}&size=${size}`
+  size: number = 10
+): Promise<PaginatedHistoryResponse> {
+  return apiRequest<PaginatedHistoryResponse>(
+    `/api/history?page=${page}&size=${size}`
   );
 }
 
-export async function fetchVersions(designId: number): Promise<DesignVersion[]> {
-  const data = await apiRequest<VersionsListResponse>(
-    `/api/designs/${designId}/versions`
-  );
-  return data.versions;
+export async function fetchGeneratedDesign(id: number): Promise<GeneratedDesign> {
+  return apiRequest<GeneratedDesign>(`/api/history/${id}`);
 }
 
-export async function rollbackVersion(
-  designId: number,
-  version: number
-): Promise<RollbackResponse> {
-  return apiRequest<RollbackResponse>(
-    `/api/designs/${designId}/rollback`,
-    {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({ version }),
-    }
-  );
-}
-
-export async function deleteDesign(designId: number): Promise<void> {
-  await apiRequest<void>(
-    `/api/designs/${designId}`,
-    {
-      method: 'DELETE',
-    }
-  );
+export async function deleteGeneratedDesign(id: number): Promise<void> {
+  await apiRequest<void>(`/api/history/${id}`, { method: 'DELETE' });
 }
 
 export interface ExportResponse {
-  task_id: string;
-  design_id: number;
+  task_id: string | null;
+  generated_design_id: number;
   status: string;
+  download_url?: string | null;
+  upscaled_url?: string | null;
 }
 
 export interface ExportStatusResponse {
   task_id: string;
-  design_id: number | null;
+  generated_design_id: number | null;
   status: string;
   progress: number;
   current_step: string | null;
   download_url: string | null;
+  upscaled_url: string | null;
   error: string | null;
 }
 
-export async function triggerExport(designId: number): Promise<ExportResponse> {
+export async function triggerExport(generatedDesignId: number): Promise<ExportResponse> {
   return apiRequest<ExportResponse>(
-    `/api/export/designs/${designId}`,
-    {
-      method: 'POST',
-    }
+    `/api/export/generated-designs/${generatedDesignId}`,
+    { method: 'POST' }
   );
 }
 

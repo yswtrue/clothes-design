@@ -16,7 +16,6 @@ export default function GenerateTab() {
   const [materials, setMaterials] = useState<Material[]>([]);
   const [selectedMaterial, setSelectedMaterial] = useState<Material | null>(null);
   const [printType, setPrintType] = useState<'seamless' | 'standalone' | 'full'>('seamless');
-  const [generateVector, setGenerateVector] = useState(false);
   const [prompt, setPrompt] = useState('');
   const [promptTemplates, setPromptTemplates] = useState<PromptTemplateResponse[]>([]);
   const [selectedTemplateId, setSelectedTemplateId] = useState<number | null>(null);
@@ -24,7 +23,6 @@ export default function GenerateTab() {
   const [taskStatus, setTaskStatus] = useState<TaskStatusResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [resultPatternUrl, setResultPatternUrl] = useState<string | null>(null);
-  const [resultVectorUrl, setResultVectorUrl] = useState<string | null>(null);
   const [resultFileName, setResultFileName] = useState<string>('');
   const [designId, setDesignId] = useState<number | null>(null);
   const [showTimeoutHint, setShowTimeoutHint] = useState(false);
@@ -126,7 +124,6 @@ export default function GenerateTab() {
       const request: GenerateRequest = {
         material_id: selectedMaterial.id,
         pattern_type: printType,
-        generate_vector: generateVector,
         prompt: prompt || undefined,
       };
 
@@ -159,7 +156,6 @@ export default function GenerateTab() {
         }
 
         setResultPatternUrl(patternUrl);
-        setResultVectorUrl(completedTask.result.vector_url || null);
         setResultFileName(completedTask.result.file_name || `pattern-${response.design_id}.png`);
         setState('complete');
       } else if (completedTask.status === 'failed') {
@@ -177,14 +173,12 @@ export default function GenerateTab() {
     stopTimer();
     setSelectedMaterial(null);
     setPrintType('seamless');
-    setGenerateVector(false);
     setPrompt('');
     setPromptTemplates([]);
     setSelectedTemplateId(null);
     setTaskStatus(null);
     setError(null);
     setResultPatternUrl(null);
-    setResultVectorUrl(null);
     setResultFileName('');
     setDesignId(null);
     setShowTimeoutHint(false);
@@ -293,19 +287,6 @@ export default function GenerateTab() {
                   </p>
                 </div>
 
-                <div className="flex items-center gap-3">
-                  <input
-                    id="generate-vector"
-                    type="checkbox"
-                    checked={generateVector}
-                    onChange={(e) => setGenerateVector(e.target.checked)}
-                    className="h-4 w-4 rounded border-zinc-300 dark:border-zinc-600 text-zinc-950 dark:text-zinc-50 focus:ring-zinc-500"
-                  />
-                  <label htmlFor="generate-vector" className="text-sm text-zinc-700 dark:text-zinc-300">
-                    生成矢量图 (TIF)
-                  </label>
-                </div>
-
                 <button
                   onClick={handleGenerate}
                   disabled={state === 'generating'}
@@ -381,7 +362,6 @@ export default function GenerateTab() {
           <LazyPatternResult
             patternUrl={resultPatternUrl}
             fileName={resultFileName}
-            vectorUrl={resultVectorUrl}
             onGenerateAnother={handleReset}
           />
         </div>

@@ -27,9 +27,9 @@ DEFAULT_TEMPLATES = [
     {
         "name": "GPTProto 图生图模板",
         "task_type": "img2img",
-        "provider_type": "gptproto",
+        "provider_type": "openai_image_edit",
         "template": "Enhance this fabric design image. Clean up and refine all lines to be smoother and more precise. Improve clarity and sharpness while maintaining the original {pattern_type} pattern style. Keep the color palette: {color_palette}. Output a production-ready textile design. {style_description}.",
-        "description": "针对 GPTProto/Gemini 优化的图生图模板",
+        "description": "针对图片编辑模型优化的图生图模板",
         "is_default": 1,
         "is_active": 1,
     },

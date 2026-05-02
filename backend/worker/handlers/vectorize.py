@@ -1,10 +1,8 @@
-"""Worker handler for vectorization tasks."""
-
 import logging
 from typing import Any
 
-from shared.providers.config_loader import get_provider_config
-from shared.providers.vectorizer import VectorizerProvider
+from shared.ai.base import AIProvider
+from shared.ai.factory import Capability, get_provider_by_capability
 
 from .base import TaskHandler, WorkerError
 
@@ -16,15 +14,15 @@ class VectorizeHandler(TaskHandler):
 
     def __init__(self) -> None:
         super().__init__()
-        self.provider: VectorizerProvider | None = None
+        self.provider: AIProvider | None = None
 
-    async def _get_provider(self) -> VectorizerProvider:
+    async def _get_provider(self) -> AIProvider:
         if self.provider is None:
-            config = await get_provider_config("vectorizer")
-            if config:
-                self.provider = VectorizerProvider.from_config(config)
-            else:
-                self.provider = VectorizerProvider()
+            result = await get_provider_by_capability(Capability.VECTORIZE)
+            if result is None:
+                raise WorkerError("No active vectorizer provider configured")
+            self.provider, provider_type = result
+            self.logger.info(f"Using provider: {provider_type}")
         return self.provider
 
     async def validate_input(self, task_data: dict[str, Any]) -> None:

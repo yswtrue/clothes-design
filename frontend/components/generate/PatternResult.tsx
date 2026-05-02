@@ -5,7 +5,6 @@ interface PatternResultProps {
   fileName: string;
   fileSize?: number;
   dimensions?: { width: number; height: number };
-  vectorUrl?: string | null;
   onGenerateAnother: () => void;
 }
 
@@ -14,7 +13,6 @@ export default function PatternResult({
   fileName,
   fileSize,
   dimensions,
-  vectorUrl,
   onGenerateAnother,
 }: PatternResultProps) {
   const formatFileSize = (bytes?: number) => {
@@ -82,15 +80,6 @@ export default function PatternResult({
             再生成一个
           </button>
         </div>
-        {vectorUrl && (
-          <a
-            href={vectorUrl}
-            download={fileName.replace(/\.[^.]+$/, '.tif')}
-            className="w-full rounded-md border border-emerald-500 dark:border-emerald-400 bg-emerald-50 dark:bg-emerald-900/20 px-4 py-2.5 text-sm font-medium text-emerald-700 dark:text-emerald-300 hover:bg-emerald-100 dark:hover:bg-emerald-900/40 transition-colors text-center"
-          >
-            下载矢量图 (TIF)
-          </a>
-        )}
       </div>
     </div>
   );

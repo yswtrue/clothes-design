@@ -1,17 +1,19 @@
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 from sqlalchemy import select
 
 from shared.db import get_session_context
 
+if TYPE_CHECKING:
+    from shared.ai.factory import Capability
+
 
 DEFAULT_BASE_URLS = {
     "openai": "https://api.openai.com/v1",
-    "openai_image": "https://api.openai.com/v1",
+    "openai_image_edit": "https://api.openai.com/v1",
     "replicate": "https://api.replicate.com/v1",
-    "vectorizer": "https://api.vectorizer.ai/api/v1",
-    "esrgan": "https://api.replicate.com/v1",
-    "gptproto": "https://gptproto.com/api/v3",
+    "vectorizer_ai": "https://api.vectorizer.ai/api/v1",
 }
 
 
@@ -73,6 +75,40 @@ async def get_all_active_configs(provider_type: str) -> list[ProviderConfig]:
                 base_url=_get_base_url(provider_type, c.base_url),
                 model_name=c.model_name,
                 config=c.config,
+            )
+            for c in configs
+        ]
+
+
+async def get_provider_configs_by_capability(
+    capability: "Capability",
+) -> list[tuple[ProviderConfig, str]]:
+    from api.db.models import AIProviderConfig
+    from shared.ai.factory import CAPABILITY_PROVIDER_TYPES
+
+    provider_types = CAPABILITY_PROVIDER_TYPES.get(capability, [])
+    if not provider_types:
+        return []
+
+    async with get_session_context() as session:
+        stmt = (
+            select(AIProviderConfig)
+            .where(AIProviderConfig.provider_type.in_(provider_types))  # type: ignore[union-attr]
+            .where(AIProviderConfig.is_active == 1)  # type: ignore[arg-type]
+            .order_by(AIProviderConfig.priority)  # type: ignore[arg-type]
+        )
+        result = await session.execute(stmt)
+        configs = result.scalars().all()
+
+        return [
+            (
+                ProviderConfig(
+                    api_key=c.api_key,
+                    base_url=_get_base_url(c.provider_type, c.base_url),
+                    model_name=c.model_name,
+                    config=c.config,
+                ),
+                c.provider_type,
             )
             for c in configs
         ]

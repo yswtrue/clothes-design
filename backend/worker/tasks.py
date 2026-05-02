@@ -51,22 +51,6 @@ async def export_pattern_task(task_data: dict[str, Any]) -> dict[str, Any]:
     return await handler.handle(task_data)
 
 
-@broker.task(task_name="worker.tasks.generate_variants")
-async def generate_variants_task(task_data: dict[str, Any]) -> dict[str, Any]:
-    from worker.handlers.generate_variants import GenerateVariantsHandler
-
-    handler = GenerateVariantsHandler()
-    return await handler.handle(task_data)
-
-
-@broker.task(task_name="worker.tasks.compose_tif")
-async def compose_tif_task(task_data: dict[str, Any]) -> dict[str, Any]:
-    from worker.handlers.compose_tif import ComposeTifHandler
-
-    handler = ComposeTifHandler()
-    return await handler.handle(task_data)
-
-
 __all__ = [
     "analyze_task",
     "generate_task",
@@ -74,6 +58,4 @@ __all__ = [
     "vectorize_task",
     "mockup_task",
     "export_pattern_task",
-    "generate_variants_task",
-    "compose_tif_task",
 ]

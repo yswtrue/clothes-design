@@ -1,14 +1,13 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { fetchDesigns, deleteDesign, rollbackVersion, triggerExport, getExportStatus } from '@/lib/history';
-import type { Design } from '@/types/history';
-import DesignCard from '@/components/history/DesignCard';
-import { LazyVersionList } from '@/components/LazyComponents';
+import Image from 'next/image';
+import { fetchHistory, deleteGeneratedDesign, triggerExport, getExportStatus } from '@/lib/history';
+import type { MaterialWithDesigns, GeneratedDesign } from '@/types/history';
 import ConfirmModal from '@/components/history/ConfirmModal';
 import Pagination from '@/components/history/Pagination';
 
-type PageState = 'loading' | 'idle' | 'deleting' | 'rolling-back' | 'error';
+type PageState = 'loading' | 'idle' | 'deleting' | 'error';
 
 interface ConfirmModalState {
   isOpen: boolean;
@@ -19,19 +18,196 @@ interface ConfirmModalState {
   onConfirm: () => void;
 }
 
+function StatusBadge({ status }: { status: string }) {
+  const colors: Record<string, string> = {
+    completed: 'bg-green-100 dark:bg-green-900/30 text-green-800 dark:text-green-400',
+    generating: 'bg-blue-100 dark:bg-blue-900/30 text-blue-800 dark:text-blue-400',
+    exporting: 'bg-yellow-100 dark:bg-yellow-900/30 text-yellow-800 dark:text-yellow-400',
+    exported: 'bg-purple-100 dark:bg-purple-900/30 text-purple-800 dark:text-purple-400',
+    failed: 'bg-red-100 dark:bg-red-900/30 text-red-800 dark:text-red-400',
+  };
+  return (
+    <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${colors[status] || 'bg-zinc-100 dark:bg-zinc-800 text-zinc-800 dark:text-zinc-300'}`}>
+      {status}
+    </span>
+  );
+}
+
+function GeneratedDesignCard({
+  design,
+  onExport,
+  onDelete,
+  isExporting,
+}: {
+  design: GeneratedDesign;
+  onExport: () => void;
+  onDelete: () => void;
+  isExporting: boolean;
+}) {
+  const imageUrl = design.thumbnail_url || design.image_url;
+  
+  return (
+    <div className="group relative rounded-lg border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 overflow-hidden">
+      <div className="aspect-square relative bg-zinc-100 dark:bg-zinc-800">
+        {imageUrl ? (
+          <Image
+            src={imageUrl}
+            alt={`Design variant ${design.variant_index}`}
+            fill
+            unoptimized
+            className="object-cover"
+            sizes="(max-width: 768px) 50vw, 25vw"
+          />
+        ) : (
+          <div className="w-full h-full flex items-center justify-center text-zinc-400">
+            <svg className="w-12 h-12" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
+            </svg>
+          </div>
+        )}
+        {design.is_selected && (
+          <div className="absolute top-2 left-2 bg-blue-500 text-white text-xs px-2 py-0.5 rounded">
+            已选中
+          </div>
+        )}
+      </div>
+      <div className="p-3">
+        <div className="flex items-center justify-between mb-2">
+          <span className="text-sm font-medium text-zinc-700 dark:text-zinc-300">
+            #{design.variant_index + 1}
+          </span>
+          <StatusBadge status={design.status} />
+        </div>
+        {design.created_at && (
+          <p className="text-xs text-zinc-500 dark:text-zinc-400 mb-2">
+            {new Date(design.created_at).toLocaleDateString()}
+          </p>
+        )}
+        <div className="flex gap-2">
+          <button
+            onClick={onExport}
+            disabled={isExporting || !['completed', 'exported'].includes(design.status)}
+            className="flex-1 px-2 py-1.5 text-xs bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400 rounded hover:bg-blue-100 dark:hover:bg-blue-900/40 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+          >
+            {isExporting ? '导出中...' : design.exported_at ? '重新导出' : '导出'}
+          </button>
+          <button
+            onClick={onDelete}
+            className="px-2 py-1.5 text-xs text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 rounded transition-colors"
+          >
+            删除
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function MaterialCard({
+  material,
+  isExpanded,
+  onToggleExpand,
+  onExportDesign,
+  onDeleteDesign,
+  exportingDesignId,
+}: {
+  material: MaterialWithDesigns;
+  isExpanded: boolean;
+  onToggleExpand: () => void;
+  onExportDesign: (designId: number) => void;
+  onDeleteDesign: (design: GeneratedDesign) => void;
+  exportingDesignId: number | null;
+}) {
+  return (
+    <div className="rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 overflow-hidden">
+      <div
+        role="button"
+        tabIndex={0}
+        onClick={onToggleExpand}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            onToggleExpand();
+          }
+        }}
+        className="w-full p-4 text-left hover:bg-zinc-50 dark:hover:bg-zinc-800/50 transition-colors cursor-pointer"
+      >
+        <div className="flex items-center gap-4">
+          <div className="w-16 h-16 rounded-lg overflow-hidden bg-zinc-100 dark:bg-zinc-800 flex-shrink-0">
+            {material.thumbnail_url ? (
+              <Image
+                src={material.thumbnail_url}
+                alt={material.original_filename || 'Material'}
+                width={64}
+                height={64}
+                unoptimized
+                className="w-full h-full object-cover"
+              />
+            ) : (
+              <div className="w-full h-full flex items-center justify-center text-zinc-400">
+                <svg className="w-8 h-8" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                </svg>
+              </div>
+            )}
+          </div>
+          <div className="flex-1 min-w-0">
+            <h3 className="text-base font-medium text-zinc-900 dark:text-zinc-100 truncate">
+              {material.original_filename || `素材 #${material.id}`}
+            </h3>
+            <div className="mt-1 flex items-center gap-3 text-sm text-zinc-500 dark:text-zinc-400">
+              {material.created_at && (
+                <span>{new Date(material.created_at).toLocaleDateString()}</span>
+              )}
+              <span>{material.designs_count} 个生成结果</span>
+            </div>
+          </div>
+          <svg
+            className={`w-5 h-5 text-zinc-400 transition-transform ${isExpanded ? 'rotate-180' : ''}`}
+            fill="none"
+            viewBox="0 0 24 24"
+            stroke="currentColor"
+          >
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+          </svg>
+        </div>
+      </div>
+
+      {isExpanded && material.designs.length > 0 && (
+        <div className="border-t border-zinc-200 dark:border-zinc-700 p-4">
+          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-4">
+            {material.designs.map((design) => (
+              <GeneratedDesignCard
+                key={design.id}
+                design={design}
+                onExport={() => onExportDesign(design.id)}
+                onDelete={() => onDeleteDesign(design)}
+                isExporting={exportingDesignId === design.id}
+              />
+            ))}
+          </div>
+        </div>
+      )}
+
+      {isExpanded && material.designs.length === 0 && (
+        <div className="border-t border-zinc-200 dark:border-zinc-700 p-8 text-center text-zinc-500 dark:text-zinc-400">
+          暂无生成结果
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function HistoryTab() {
   const [state, setState] = useState<PageState>('loading');
-  const [designs, setDesigns] = useState<Design[]>([]);
-  const [expandedDesignIds, setExpandedDesignIds] = useState<Set<number>>(new Set());
+  const [materials, setMaterials] = useState<MaterialWithDesigns[]>([]);
+  const [expandedMaterialIds, setExpandedMaterialIds] = useState<Set<number>>(new Set());
   const [currentPage, setCurrentPage] = useState(1);
   const [totalPages, setTotalPages] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
-  const [rollingBackDesignId, setRollingBackDesignId] = useState<number | null>(null);
   const [exportingDesignId, setExportingDesignId] = useState<number | null>(null);
   const [retryTrigger, setRetryTrigger] = useState(0);
-  const [selectionMode, setSelectionMode] = useState(false);
-  const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
 
   const [confirmModal, setConfirmModal] = useState<ConfirmModalState>({
     isOpen: false,
@@ -42,7 +218,7 @@ export default function HistoryTab() {
     onConfirm: () => {},
   });
 
-  const DESIGNS_PER_PAGE = 10;
+  const MATERIALS_PER_PAGE = 10;
 
   useEffect(() => {
     let cancelled = false;
@@ -53,15 +229,15 @@ export default function HistoryTab() {
       setSuccessMessage(null);
 
       try {
-        const response = await fetchDesigns(currentPage, DESIGNS_PER_PAGE);
+        const response = await fetchHistory(currentPage, MATERIALS_PER_PAGE);
         if (!cancelled) {
-          setDesigns(response.items);
+          setMaterials(response.items);
           setTotalPages(response.pages);
           setState('idle');
         }
       } catch (err) {
         if (!cancelled) {
-          setError(err instanceof Error ? err.message : '加载设计失败');
+          setError(err instanceof Error ? err.message : '加载历史失败');
           setState('error');
         }
       }
@@ -81,151 +257,50 @@ export default function HistoryTab() {
     }
   }, [successMessage]);
 
-  function toggleExpand(designId: number) {
-    setExpandedDesignIds((prev) => {
+  function toggleExpand(materialId: number) {
+    setExpandedMaterialIds((prev) => {
       const next = new Set(prev);
-      if (next.has(designId)) {
-        next.delete(designId);
+      if (next.has(materialId)) {
+        next.delete(materialId);
       } else {
-        next.add(designId);
+        next.add(materialId);
       }
       return next;
     });
   }
 
-  function confirmDelete(design: Design) {
+  function confirmDeleteDesign(design: GeneratedDesign) {
     setConfirmModal({
       isOpen: true,
-      title: '删除设计',
-      message: `确定要删除"${design.name}"吗？此操作无法撤销。`,
+      title: '删除生成结果',
+      message: `确定要删除此生成结果吗？此操作无法撤销。`,
       confirmText: '删除',
       variant: 'danger',
-      onConfirm: () => handleDelete(design.id),
+      onConfirm: () => handleDeleteDesign(design),
     });
   }
 
-  async function handleDelete(designId: number) {
+  async function handleDeleteDesign(design: GeneratedDesign) {
     setConfirmModal((prev) => ({ ...prev, isOpen: false }));
     setState('deleting');
     setError(null);
 
     try {
-      await deleteDesign(designId);
+      await deleteGeneratedDesign(design.id);
 
-      setDesigns((prev) => prev.filter((d) => d.id !== designId));
+      setMaterials((prev) =>
+        prev.map((m) =>
+          m.id === design.material_id
+            ? { ...m, designs: m.designs.filter((d) => d.id !== design.id), designs_count: m.designs_count - 1 }
+            : m
+        )
+      );
 
-      setExpandedDesignIds((prev) => {
-        const next = new Set(prev);
-        next.delete(designId);
-        return next;
-      });
-
-      setSuccessMessage('设计删除成功');
+      setSuccessMessage('删除成功');
       setState('idle');
-
-      if (designs.length === 1 && currentPage > 1) {
-        setCurrentPage(currentPage - 1);
-      } else if (designs.length === 1 && currentPage === 1) {
-        setRetryTrigger(prev => prev + 1);
-      }
     } catch (err) {
-      setError(err instanceof Error ? err.message : '删除设计失败');
+      setError(err instanceof Error ? err.message : '删除失败');
       setState('error');
-    }
-  }
-
-  function toggleSelectionMode() {
-    setSelectionMode(!selectionMode);
-    setSelectedIds(new Set());
-  }
-
-  function toggleSelectAll() {
-    if (selectedIds.size === designs.length) {
-      setSelectedIds(new Set());
-    } else {
-      setSelectedIds(new Set(designs.map(d => d.id)));
-    }
-  }
-
-  function toggleSelectDesign(id: number) {
-    setSelectedIds(prev => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-  }
-
-  function confirmBatchDelete() {
-    if (selectedIds.size === 0) return;
-    setConfirmModal({
-      isOpen: true,
-      title: '批量删除设计',
-      message: `确定要删除选中的 ${selectedIds.size} 个设计吗？此操作无法撤销。`,
-      confirmText: '删除',
-      variant: 'danger',
-      onConfirm: () => handleBatchDelete(),
-    });
-  }
-
-  async function handleBatchDelete() {
-    setConfirmModal((prev) => ({ ...prev, isOpen: false }));
-    setState('deleting');
-    setError(null);
-
-    try {
-      await Promise.all(Array.from(selectedIds).map(id => deleteDesign(id)));
-
-      setSuccessMessage(`成功删除了 ${selectedIds.size} 个设计`);
-      setState('idle');
-      setSelectionMode(false);
-      setSelectedIds(new Set());
-      setRetryTrigger(prev => prev + 1);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : '批量删除设计失败');
-      setState('error');
-    }
-  }
-
-  function confirmRollback(designId: number, designName: string, versionNumber: number) {
-    setConfirmModal({
-      isOpen: true,
-      title: '回滚到版本',
-      message: `将"${designName}"回滚到版本 ${versionNumber}？这将使用版本 ${versionNumber} 的数据创建一个新版本。`,
-      confirmText: '回滚',
-      variant: 'default',
-      onConfirm: () => handleRollback(designId, versionNumber),
-    });
-  }
-
-  async function handleRollback(designId: number, versionNumber: number) {
-    setConfirmModal((prev) => ({ ...prev, isOpen: false }));
-    setState('rolling-back');
-    setRollingBackDesignId(designId);
-    setError(null);
-
-    try {
-      const response = await rollbackVersion(designId, versionNumber);
-      setSuccessMessage(`已回滚到版本 ${versionNumber}。新版本 ${response.version} 已创建。`);
-      setState('idle');
-      setRollingBackDesignId(null);
-
-      setExpandedDesignIds((prev) => {
-        const next = new Set(prev);
-        next.delete(designId);
-        return next;
-      });
-      setTimeout(() => {
-        setExpandedDesignIds((prev) => {
-          const next = new Set(prev);
-          next.add(designId);
-          return next;
-        });
-      }, 100);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : '版本回滚失败');
-      setState('error');
-      setRollingBackDesignId(null);
     }
   }
 
@@ -234,42 +309,59 @@ export default function HistoryTab() {
     window.scrollTo({ top: 0, behavior: 'smooth' });
   }
 
+  async function downloadFile(url: string, filename: string) {
+    const response = await fetch(url);
+    const blob = await response.blob();
+    const blobUrl = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = blobUrl;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(blobUrl);
+  }
+
   async function handleExport(designId: number) {
     setExportingDesignId(designId);
     setError(null);
 
     try {
-      const { task_id } = await triggerExport(designId);
-      
-      // Poll for export status
+      const response = await triggerExport(designId);
+
+      if (response.status === 'exported' && response.download_url) {
+        await downloadFile(response.download_url, `design-${designId}-export.svg`);
+        setSuccessMessage('导出完成，文件已开始下载');
+        setExportingDesignId(null);
+        return;
+      }
+
+      if (!response.task_id) {
+        throw new Error('导出失败：无法获取任务ID');
+      }
+
       const maxAttempts = 60;
       let attempts = 0;
-      
+
       while (attempts < maxAttempts) {
-        await new Promise(resolve => setTimeout(resolve, 2000));
-        const status = await getExportStatus(task_id);
-        
-        if (status.status === 'complete' && status.download_url) {
-          // Trigger download
-          const link = document.createElement('a');
-          link.href = status.download_url;
-          link.download = `design-${designId}-export.tif`;
-          document.body.appendChild(link);
-          link.click();
-          document.body.removeChild(link);
-          
+        await new Promise((resolve) => setTimeout(resolve, 2000));
+        const status = await getExportStatus(response.task_id);
+
+        if ((status.status === 'complete' || status.status === 'exported') && status.download_url) {
+          await downloadFile(status.download_url, `design-${designId}-export.svg`);
           setSuccessMessage('导出完成，文件已开始下载');
           setExportingDesignId(null);
+          setRetryTrigger((prev) => prev + 1);
           return;
         }
-        
+
         if (status.status === 'failed') {
           throw new Error(status.error || '导出失败');
         }
-        
+
         attempts++;
       }
-      
+
       throw new Error('导出超时，请重试');
     } catch (err) {
       setError(err instanceof Error ? err.message : '导出失败');
@@ -290,7 +382,7 @@ export default function HistoryTab() {
           <div className="mb-6 p-4 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg">
             <p className="text-red-800 dark:text-red-200">{error}</p>
             <button
-              onClick={() => setRetryTrigger(prev => prev + 1)}
+              onClick={() => setRetryTrigger((prev) => prev + 1)}
               className="mt-2 text-red-600 dark:text-red-400 underline hover:text-red-700 dark:hover:text-red-300"
             >
               重试
@@ -304,7 +396,7 @@ export default function HistoryTab() {
           </div>
         )}
 
-        {state === 'idle' && designs.length === 0 && (
+        {state === 'idle' && materials.length === 0 && (
           <div className="text-center py-12 bg-white dark:bg-gray-800 rounded-lg shadow">
             <svg
               className="mx-auto h-12 w-12 text-gray-400 dark:text-gray-500"
@@ -320,97 +412,36 @@ export default function HistoryTab() {
                 d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"
               />
             </svg>
-            <h3 className="mt-2 text-sm font-medium text-gray-900 dark:text-white">暂无设计</h3>
-            <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
-              上传素材开始创作。
-            </p>
+            <h3 className="mt-2 text-sm font-medium text-gray-900 dark:text-white">暂无历史</h3>
+            <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">上传素材开始创作。</p>
           </div>
         )}
 
-        {state !== 'loading' && designs.length > 0 && (
-          <div className="mb-4 flex items-center justify-between">
-            <h2 className="text-xl font-semibold text-gray-900 dark:text-white">设计历史</h2>
-            <button 
-              onClick={toggleSelectionMode}
-              className="px-3 py-1 text-sm bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-300 rounded hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors"
-            >
-              {selectionMode ? '取消选择' : '选择'}
-            </button>
+        {state !== 'loading' && materials.length > 0 && (
+          <div className="mb-4">
+            <h2 className="text-xl font-semibold text-gray-900 dark:text-white">生成历史</h2>
           </div>
         )}
 
-        {selectionMode && designs.length > 0 && (
-          <div className="mb-4 flex items-center justify-between p-4 bg-gray-50 dark:bg-gray-800/50 rounded-lg">
-            <div className="flex items-center space-x-2">
-              <input 
-                type="checkbox"
-                checked={selectedIds.size === designs.length}
-                onChange={toggleSelectAll}
-                className="w-4 h-4 rounded border-zinc-300 text-zinc-600 focus:ring-zinc-500 bg-white dark:bg-zinc-700 dark:border-zinc-600 cursor-pointer"
-              />
-              <span className="text-sm font-medium text-gray-700 dark:text-gray-300">全选</span>
-            </div>
-            <button
-              onClick={confirmBatchDelete}
-              disabled={selectedIds.size === 0}
-              className={`px-3 py-1 text-sm rounded transition-colors ${
-                selectedIds.size > 0 
-                  ? 'bg-red-100 text-red-700 hover:bg-red-200 dark:bg-red-900/30 dark:text-red-400 dark:hover:bg-red-900/50' 
-                  : 'bg-gray-100 text-gray-400 cursor-not-allowed dark:bg-gray-800 dark:text-gray-600'
-              }`}
-            >
-              删除选中 ({selectedIds.size})
-            </button>
-          </div>
-        )}
-
-        {state !== 'loading' && designs.length > 0 && (
+        {state !== 'loading' && materials.length > 0 && (
           <div className="space-y-4">
-            {designs.map((design) => (
-              <div key={design.id} className="flex gap-4">
-                {selectionMode && (
-                  <div className="flex-none flex items-start pt-6">
-                    <input
-                      type="checkbox"
-                      checked={selectedIds.has(design.id)}
-                      onChange={() => toggleSelectDesign(design.id)}
-                      className="w-5 h-5 rounded border-zinc-300 text-zinc-600 focus:ring-zinc-500 bg-white dark:bg-zinc-700 dark:border-zinc-600 cursor-pointer"
-                    />
-                  </div>
-                )}
-                <div className="flex-1 min-w-0">
-                  <DesignCard
-                    design={design}
-                    isExpanded={expandedDesignIds.has(design.id)}
-                    onToggleExpand={() => toggleExpand(design.id)}
-                    onDelete={() => confirmDelete(design)}
-                    onExport={() => handleExport(design.id)}
-                    isExporting={exportingDesignId === design.id}
-                  />
-                  {expandedDesignIds.has(design.id) && (
-                    <div className="bg-gray-50 dark:bg-gray-800 border-x border-b border-gray-200 dark:border-gray-700 rounded-b-lg p-4">
-                      <LazyVersionList
-                        designId={design.id}
-                        onRollback={(versionNumber) =>
-                          confirmRollback(design.id, design.name, versionNumber)
-                        }
-                        isRollingBack={rollingBackDesignId === design.id}
-                      />
-                    </div>
-                  )}
-                </div>
-              </div>
+            {materials.map((material) => (
+              <MaterialCard
+                key={material.id}
+                material={material}
+                isExpanded={expandedMaterialIds.has(material.id)}
+                onToggleExpand={() => toggleExpand(material.id)}
+                onExportDesign={handleExport}
+                onDeleteDesign={confirmDeleteDesign}
+                exportingDesignId={exportingDesignId}
+              />
             ))}
           </div>
         )}
 
-        {state !== 'loading' && designs.length > 0 && totalPages > 1 && (
+        {state !== 'loading' && materials.length > 0 && totalPages > 1 && (
           <div className="mt-8">
-            <Pagination
-              currentPage={currentPage}
-              totalPages={totalPages}
-              onPageChange={handlePageChange}
-            />
+            <Pagination currentPage={currentPage} totalPages={totalPages} onPageChange={handlePageChange} />
           </div>
         )}
 

@@ -6,13 +6,14 @@ from sqlalchemy import update
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from config import get_settings
+from shared.ai.base import AIProvider
 from shared.ai.exceptions import (
     ProviderConfigurationError,
+    ProviderError,
     ProviderRateLimitError,
     ProviderTimeoutError,
 )
-from shared.providers.config_loader import get_provider_config
-from shared.providers.gpt4v import GPT4VProvider, GPT4VProviderError
+from shared.ai.factory import Capability, get_provider_by_capability
 from api.storage.thumbnail import ThumbnailGenerator
 from api.storage.storages import thumbnail_storage
 
@@ -25,21 +26,20 @@ class AnalyzeHandler(TaskHandler):
 
     def __init__(self) -> None:
         super().__init__()
-        self.provider: GPT4VProvider | None = None
+        self.provider: AIProvider | None = None
+        self.provider_type: str | None = None
 
-    async def _get_provider(self) -> GPT4VProvider:
-        if self.provider is not None:
-            return self.provider
+    async def _get_provider(self) -> tuple[AIProvider, str]:
+        if self.provider is not None and self.provider_type is not None:
+            return self.provider, self.provider_type
 
-        config = await get_provider_config("openai")
-        if config:
-            self.provider = GPT4VProvider.from_config(config)
-            self.logger.info(f"Using DB config: {config.base_url}, model={config.model_name}")
-        else:
-            self.provider = GPT4VProvider()
-            self.logger.info("Using env config for OpenAI")
+        result = await get_provider_by_capability(Capability.ANALYSIS)
+        if result is None:
+            raise WorkerError("No active analysis provider configured")
 
-        return self.provider
+        self.provider, self.provider_type = result
+        self.logger.info(f"Using provider: {self.provider_type}")
+        return self.provider, self.provider_type
 
     async def validate_input(self, task_data: dict[str, Any]) -> None:
         if "image_data" not in task_data:
@@ -77,8 +77,8 @@ class AnalyzeHandler(TaskHandler):
             thumbnail_relative = unique_thumbnail_name
             self.logger.info(f"Generated thumbnail: {thumbnail_relative}")
 
-            analyze_prompt = await get_analyze_prompt(provider_type="openai")
-            provider = await self._get_provider()
+            provider, provider_type = await self._get_provider()
+            analyze_prompt = await get_analyze_prompt(provider_type=provider_type)
             analysis = await provider.analyze_style(image_data, prompt_override=analyze_prompt)
 
             result = {
@@ -129,8 +129,8 @@ class AnalyzeHandler(TaskHandler):
             self.logger.warning(f"Rate limit hit: {e}")
             raise WorkerError(f"Rate limited: {e}") from e
 
-        except GPT4VProviderError as e:
-            self.logger.error(f"GPT-4V error: {e}")
+        except ProviderError as e:
+            self.logger.error(f"Provider error: {e}")
             raise WorkerError(f"Analysis failed: {e}") from e
 
         except Exception as e:

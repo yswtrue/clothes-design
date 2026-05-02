@@ -12,11 +12,13 @@ from config import get_settings
 class LocalStorageMixin:
     def get_url(self, name: str) -> str:
         relative_path = self.get_name(name)
-        # Return relative path so frontend proxy can handle it (avoids CORB)
-        return f"/api/files/{relative_path}"
+        base_url = get_settings().storage.api_base_url.rstrip("/")
+        return f"{base_url}/api/files/{relative_path}"
 
     async def download(self, name: str) -> bytes:
-        with self.open(name) as f:
+        filename = Path(name).name
+        full_name = self.get_name(filename)
+        with self.open(full_name) as f:
             return f.read()
 
     async def upload(self, data: bytes | BinaryIO, name: str) -> str:
@@ -31,7 +33,9 @@ class S3StorageMixin:
         return self.get_path(name)
 
     async def download(self, name: str) -> bytes:
-        with self.open(name, "rb") as f:
+        filename = Path(name).name
+        full_name = self.get_name(filename)
+        with self.open(full_name, "rb") as f:
             return f.read()
 
     async def upload(self, data: bytes | BinaryIO, name: str) -> str:
@@ -92,4 +96,6 @@ preview_storage = _create_storage("prj_previews")
 material_storage = _create_storage("materials")
 generated_image_storage = _create_storage("generated")
 thumbnail_storage = _create_storage("thumbnails")
+upscaled_storage = _create_storage("upscaled")
+vector_storage = _create_storage("vectors")
 output_tif_storage = _create_storage("outputs")

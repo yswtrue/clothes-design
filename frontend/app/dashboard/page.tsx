@@ -9,10 +9,9 @@ import GenerateTab from '@/components/dashboard/GenerateTab';
 import HistoryTab from '@/components/dashboard/HistoryTab';
 import TemplatesTab from '@/components/dashboard/TemplatesTab';
 import OverviewTab from '@/components/dashboard/OverviewTab';
-import VariantsWorkflowTab from '@/components/dashboard/VariantsWorkflowTab';
 import { apiRequest } from '@/lib/api';
 
-type TabType = 'overview' | 'upload' | 'generate' | 'variants' | 'history' | 'templates';
+type TabType = 'overview' | 'upload' | 'generate' | 'history' | 'templates';
 
 interface QuickStats {
   designs: number;
@@ -61,7 +60,6 @@ export default function DashboardPage() {
     { id: 'overview' as const, label: '概览', icon: '🏠' },
     { id: 'upload' as const, label: '上传素材', icon: '📤' },
     { id: 'generate' as const, label: '生成图案', icon: '✨' },
-    { id: 'variants' as const, label: '布料变体', icon: '🎨' },
     { id: 'history' as const, label: '设计历史', icon: '📋' },
     { id: 'templates' as const, label: '服装模板', icon: '👔' },
   ];
@@ -119,7 +117,6 @@ export default function DashboardPage() {
         {activeTab === 'overview' && <OverviewTab stats={stats} isLoading={isLoading} onTabChange={setActiveTab} />}
         {activeTab === 'upload' && <UploadTab onUploadSuccess={loadStats} />}
         {activeTab === 'generate' && <GenerateTab />}
-        {activeTab === 'variants' && <VariantsWorkflowTab />}
         {activeTab === 'history' && <HistoryTab />}
         {activeTab === 'templates' && <TemplatesTab />}
       </main>

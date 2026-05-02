@@ -96,7 +96,7 @@ class VectorizerSettings(BaseSettings):
     base_url: str = Field(
         default="https://api.vectorizer.ai/api/v1", alias="VECTORIZER_BASE_URL"
     )
-    timeout: int = Field(default=90, alias="VECTORIZER_TIMEOUT")
+    timeout: int = Field(default=300, alias="VECTORIZER_TIMEOUT")
 
 
 class Settings(BaseSettings):
