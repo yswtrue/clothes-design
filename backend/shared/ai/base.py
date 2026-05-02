@@ -7,11 +7,12 @@ class AIProvider(ABC):
     """Abstract base class for AI service providers."""
 
     @abstractmethod
-    async def analyze_style(self, image: bytes) -> StyleAnalysis:
+    async def analyze_style(self, image: bytes, prompt_override: str | None = None) -> StyleAnalysis:
         """Analyze image style using AI vision model.
 
         Args:
             image: Image bytes to analyze
+            prompt_override: Optional custom prompt to use instead of default
 
         Returns:
             StyleAnalysis object containing style information

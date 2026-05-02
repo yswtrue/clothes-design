@@ -1,6 +1,49 @@
 import type { GenerateRequest, GenerateResponse, TaskStatusResponse } from '@/types/generate';
 import { apiRequest } from './api';
 
+export interface PromptTemplateResponse {
+  id: number;
+  name: string;
+  task_type: string;
+  provider_type: string | null;
+  template: string;
+  description: string | null;
+  is_default: boolean;
+  is_active: boolean;
+}
+
+export async function getDefaultPromptTemplate(
+  taskType: string,
+  providerType?: string
+): Promise<PromptTemplateResponse | null> {
+  const params = new URLSearchParams();
+  if (providerType) params.set('provider_type', providerType);
+  const query = params.toString();
+  const url = `/api/prompt-templates/default/${taskType}${query ? `?${query}` : ''}`;
+  
+  try {
+    return await apiRequest<PromptTemplateResponse>(url);
+  } catch {
+    return null;
+  }
+}
+
+export async function getPromptTemplates(
+  taskType?: string
+): Promise<PromptTemplateResponse[]> {
+  const params = new URLSearchParams();
+  if (taskType) params.set('task_type', taskType);
+  const query = params.toString();
+  const url = `/api/prompt-templates${query ? `?${query}` : ''}`;
+  
+  try {
+    const response = await apiRequest<{ items: PromptTemplateResponse[] }>(url);
+    return response.items || [];
+  } catch {
+    return [];
+  }
+}
+
 export async function submitGeneration(request: GenerateRequest): Promise<GenerateResponse> {
   return apiRequest<GenerateResponse>(
     '/api/generate',

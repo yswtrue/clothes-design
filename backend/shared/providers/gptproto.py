@@ -1,0 +1,209 @@
+"""GPTProto provider for image generation and editing via Gemini models."""
+
+import asyncio
+import base64
+import logging
+import os
+from typing import Any
+
+import aiohttp
+
+from shared.ai.base import AIProvider
+from shared.ai.exceptions import (
+    ProviderConfigurationError,
+    ProviderError,
+    ProviderRateLimitError,
+    ProviderTimeoutError,
+)
+from shared.ai.schemas import GenerationParams, Position, StyleAnalysis
+from shared.providers.config_loader import ProviderConfig
+
+logger = logging.getLogger(__name__)
+
+
+class GPTProtoProvider(AIProvider):
+    """GPTProto provider for Gemini image generation and editing."""
+
+    DEFAULT_BASE_URL = "https://gptproto.com/api/v3"
+    DEFAULT_MODEL = "google/gemini-3.1-flash-image-preview"
+
+    def __init__(
+        self,
+        api_key: str | None = None,
+        base_url: str | None = None,
+        model: str | None = None,
+        timeout: int = 300,
+        max_retries: int = 3,
+    ) -> None:
+        self.api_key = api_key or os.getenv("GPTPROTO_API_KEY")
+        if not self.api_key:
+            raise ProviderConfigurationError(
+                "Missing GPTProto API key. Set GPTPROTO_API_KEY environment variable."
+            )
+
+        self.base_url = (base_url or os.getenv("GPTPROTO_BASE_URL") or self.DEFAULT_BASE_URL).rstrip("/")
+        self.model = model or os.getenv("GPTPROTO_MODEL") or self.DEFAULT_MODEL
+        self.timeout = timeout
+        self.max_retries = max_retries
+
+    @classmethod
+    def from_config(cls, config: ProviderConfig) -> "GPTProtoProvider":
+        return cls(
+            api_key=config.api_key,
+            base_url=config.base_url,
+            model=config.model_name,
+        )
+
+    def _build_prompt(self, style: StyleAnalysis, params: GenerationParams) -> str:
+        if params.prompt_override:
+            return params.prompt_override
+
+        prompt_parts = [style.style_description]
+
+        if style.pattern_type == "seamless":
+            prompt_parts.append("seamless repeating pattern, tileable texture")
+        elif style.pattern_type == "standalone":
+            prompt_parts.append("standalone design element, centered composition")
+
+        if style.color_palette:
+            colors = ", ".join(style.color_palette[:3])
+            prompt_parts.append(f"color palette: {colors}")
+
+        prompt_parts.append("high quality, detailed, professional textile design")
+
+        return ". ".join(prompt_parts)
+
+    async def generate_pattern(self, style: StyleAnalysis, params: GenerationParams) -> bytes:
+        if params.init_image_b64:
+            return await self._generate_img2img(style, params)
+        return await self._generate_text2img(style, params)
+
+    async def _generate_text2img(self, style: StyleAnalysis, params: GenerationParams) -> bytes:
+        prompt = self._build_prompt(style, params)
+        url = f"{self.base_url}/{self.model}/image-gen"
+
+        payload = {
+            "prompt": prompt,
+            "size": "1K",
+            "aspect_ratio": "1:1",
+            "output_format": "png",
+            "enable_sync_mode": True,
+            "enable_base64_output": True,
+        }
+
+        return await self._make_request(url, payload)
+
+    async def _generate_img2img(self, style: StyleAnalysis, params: GenerationParams) -> bytes:
+        if not params.init_image_b64:
+            raise ProviderError("init_image_b64 is required for image editing")
+
+        prompt = self._build_prompt(style, params)
+        url = f"{self.base_url}/{self.model}/image-edit"
+
+        image_data_uri = f"data:image/png;base64,{params.init_image_b64}"
+
+        payload = {
+            "prompt": prompt,
+            "images": [image_data_uri],
+            "size": "1K",
+            "aspect_ratio": "1:1",
+            "output_format": "png",
+            "enable_sync_mode": True,
+            "enable_base64_output": True,
+        }
+
+        return await self._make_request(url, payload)
+
+    async def _make_request(self, url: str, payload: dict[str, Any]) -> bytes:
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json",
+        }
+
+        for attempt in range(self.max_retries):
+            try:
+                async with aiohttp.ClientSession() as session:
+                    async with session.post(
+                        url,
+                        headers=headers,
+                        json=payload,
+                        timeout=aiohttp.ClientTimeout(total=self.timeout),
+                    ) as response:
+                        response_text = await response.text()
+
+                        if response.status == 429:
+                            raise ProviderRateLimitError("GPTProto rate limit exceeded")
+
+                        if response.status == 401:
+                            raise ProviderConfigurationError(f"Invalid API key: {response_text[:200]}")
+
+                        if response.status >= 400:
+                            raise ProviderError(f"API error {response.status}: {response_text[:500]}")
+
+                        import json
+                        data = json.loads(response_text)
+
+                        if "data" in data and data["data"]:
+                            image_data = data["data"][0]
+                            if isinstance(image_data, dict):
+                                if "b64_json" in image_data:
+                                    return base64.b64decode(image_data["b64_json"])
+                                elif "url" in image_data:
+                                    return await self._download_image(session, image_data["url"])
+                            elif isinstance(image_data, str):
+                                if image_data.startswith("http"):
+                                    return await self._download_image(session, image_data)
+                                else:
+                                    return base64.b64decode(image_data)
+
+                        if "image" in data:
+                            img = data["image"]
+                            if isinstance(img, str):
+                                if img.startswith("http"):
+                                    return await self._download_image(session, img)
+                                return base64.b64decode(img)
+
+                        if "url" in data:
+                            return await self._download_image(session, data["url"])
+
+                        if "b64_json" in data:
+                            return base64.b64decode(data["b64_json"])
+
+                        raise ProviderError(f"Unexpected response format: {response_text[:500]}")
+
+            except (ProviderRateLimitError, ProviderTimeoutError):
+                if attempt == self.max_retries - 1:
+                    raise
+                await asyncio.sleep(2**attempt)
+
+            except asyncio.TimeoutError as e:
+                raise ProviderTimeoutError(f"Request timed out after {self.timeout}s") from e
+
+            except aiohttp.ClientError as e:
+                logger.error(f"GPTProto attempt {attempt + 1} failed: {e}")
+                if attempt == self.max_retries - 1:
+                    raise ProviderError(f"Request failed after {self.max_retries} attempts: {e}") from e
+                await asyncio.sleep(2**attempt)
+
+        raise ProviderError("Request failed")
+
+    async def _download_image(self, session: aiohttp.ClientSession, url: str) -> bytes:
+        async with session.get(url, timeout=aiohttp.ClientTimeout(total=60)) as response:
+            if response.status != 200:
+                raise ProviderError(f"Failed to download image: {response.status}")
+            return await response.read()
+
+    async def analyze_style(self, image: bytes, prompt_override: str | None = None) -> StyleAnalysis:
+        raise NotImplementedError("Use GPT4VProvider for style analysis")
+
+    async def upscale_image(self, image: bytes, target_size: int) -> bytes:
+        raise NotImplementedError("Use ReplicateProvider for upscaling")
+
+    async def vectorize(self, image: bytes, color_space: str = "rgb") -> bytes:
+        raise NotImplementedError("Use VectorizerProvider for vectorization")
+
+    async def composite_mockup(self, pattern: bytes, template: bytes, position: Position) -> bytes:
+        raise NotImplementedError("Use MockupsProvider for mockup compositing")
+
+
+__all__ = ["GPTProtoProvider"]

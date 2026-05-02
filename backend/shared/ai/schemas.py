@@ -43,6 +43,7 @@ class GenerationParams(BaseModel):
     seed: int = Field(default=42, ge=0, description="Random seed for reproducibility")
     init_image_b64: str | None = Field(default=None, description="Base64 encoded source image for img2img")
     strength: float = Field(default=0.75, ge=0.0, le=1.0, description="img2img strength (0=keep original, 1=ignore original)")
+    prompt_override: str | None = Field(default=None, description="Pre-rendered prompt from template, bypasses internal prompt building")
 
     class Config:
         json_schema_extra = {

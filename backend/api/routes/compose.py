@@ -10,7 +10,7 @@ from api.auth.dependencies import get_current_user
 from api.db.base import get_session
 from api.db.models import Design, GeneratedDesign, PrjTemplate, User
 from api.storage.storages import generated_image_storage, output_tif_storage, prj_storage
-from shared.task_queue.celery_integration import enqueue_task, get_task_status
+from shared.task_queue import enqueue_task, get_task_status
 
 router = APIRouter(prefix="/api/designs", tags=["compose"])
 

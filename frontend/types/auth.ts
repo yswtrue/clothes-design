@@ -8,6 +8,8 @@ export interface UserResponse {
   id: number;
   username: string;
   created_at: string | null;
+  roles?: string[];
+  is_superuser?: boolean;
 }
 
 export interface AuthError {

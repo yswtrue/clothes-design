@@ -139,20 +139,7 @@ class MockupsProvider(AIProvider):
             logger.error(f"Mockups API client error: {e}")
             raise MockupsProviderError(f"HTTP client error: {e}") from e
 
-    async def analyze_style(self, image: bytes) -> StyleAnalysis:
-        """Analyze image style.
-
-        Note: MockupsProvider doesn't support style analysis.
-
-        Args:
-            image: Image bytes to analyze
-
-        Returns:
-            StyleAnalysis object
-
-        Raises:
-            NotImplementedError: This provider doesn't support style analysis
-        """
+    async def analyze_style(self, image: bytes, prompt_override: str | None = None) -> StyleAnalysis:
         raise NotImplementedError(
             "MockupsProvider does not support style analysis. Use GPT4VProvider."
         )

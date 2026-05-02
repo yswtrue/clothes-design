@@ -61,21 +61,7 @@ class StabilityProvider(AIProvider):
         self.base_url = base_url or "https://api.stability.ai"
         self.engine_id = "stable-diffusion-xl-1024-v1-0"
 
-    async def analyze_style(self, image: bytes) -> StyleAnalysis:
-        """Analyze image style.
-
-        Note: Stability AI doesn't provide vision analysis.
-        This is a placeholder that should use GPT-4V or similar.
-
-        Args:
-            image: Image bytes to analyze
-
-        Returns:
-            StyleAnalysis object
-
-        Raises:
-            NotImplementedError: This provider doesn't support style analysis
-        """
+    async def analyze_style(self, image: bytes, prompt_override: str | None = None) -> StyleAnalysis:
         raise NotImplementedError(
             "StabilityProvider does not support style analysis. Use GPT4VProvider."
         )
@@ -222,16 +208,9 @@ class StabilityProvider(AIProvider):
         raise NotImplementedError("StabilityProvider does not support compositing")
 
     def _build_prompt(self, style: StyleAnalysis, params: GenerationParams) -> str:
-        """Build text prompt from style analysis.
+        if params.prompt_override:
+            return params.prompt_override
 
-        Args:
-            style: StyleAnalysis object
-            params: GenerationParams object
-
-        Returns:
-            Text prompt for Stability AI
-        """
-        # Start with style description
         prompt_parts = [style.style_description]
 
         # Add pattern type context

@@ -36,11 +36,12 @@ backend/
 | Start Worker | `python -m worker` | Uses `worker/__main__.py` |
 | Add Dependencies | `pyproject.toml` | `uv sync` to install |
 | DB Models | `api/db/models.py` | SQLAlchemy 2.0 Declarative |
-| API Routes | `api/routes/` | 11 route modules |
+| Admin Panel | `api/admin.py` | Starlette-Admin (AI Provider, Prompt Templates 等) |
+| API Routes | `api/routes/` | REST endpoints |
 | Auth Logic | `api/auth/security.py` | JWT + bcrypt |
 | Permissions | `api/rbac/service.py` | RBAC evaluation |
 | Storage | `api/storage/factory.py` | S3/Local via factory |
-| AI Providers | `shared/providers/` | Stability, GPT4V, ESRGAN, etc. |
+| AI Providers | `shared/providers/` | OpenAI, GPTProto, Replicate, Vectorizer |
 | Task Queue | `shared/task_queue/` | Celery + Redis enqueue |
 | Worker Handlers | `worker/handlers/` | Async task processing |
 | Migrations | `api/alembic/` | `alembic upgrade head` |
@@ -70,6 +71,7 @@ backend/
 - `ruff check .` - Lint code
 
 ## NOTES
+- **Admin Panel**: 访问 `/admin` 管理 AI Provider、Prompt Templates、用户、角色等。需要 admin 权限。配置在 `api/admin.py`。
 - **Worker Location**: Worker code lives under `backend/worker/`, not at repo root.
 - **Shared Modules**: `backend/shared/` provides AI providers, task queue, and common schemas. Imported via `from shared.xxx`.
 - **Storage**: Abstracted to support S3-compatible (MinIO) or local filesystem. Configure via `STORAGE_TYPE` env var.

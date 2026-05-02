@@ -31,5 +31,6 @@ class UserResponse(BaseModel):
     id: int
     username: str
     created_at: datetime | None = None
+    roles: list[str] = []
 
     model_config = ConfigDict(from_attributes=True)

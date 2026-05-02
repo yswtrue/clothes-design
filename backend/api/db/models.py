@@ -11,7 +11,7 @@ from api.storage.storages import (
     thumbnail_storage,
 )
 from fastapi_storages.integrations.sqlalchemy import FileType
-from sqlalchemy import JSON, Column, ForeignKey, UniqueConstraint, func
+from sqlalchemy import JSON, Column, ForeignKey, Text, UniqueConstraint, func
 from sqlalchemy.orm import declared_attr
 from sqlmodel import Field, Relationship
 
@@ -259,6 +259,35 @@ class AIProviderConfig(SoftDeleteMixin, table=True):
     priority: int = Field(default=0, index=True)
     rate_limit: Optional[int] = Field(default=None)
     config: Optional[dict] = Field(default=None, sa_column=Column(JSON))
+    created_at: Optional[datetime] = Field(
+        default=None, sa_column_kwargs={"server_default": func.now()}
+    )
+    updated_at: Optional[datetime] = Field(
+        default=None, sa_column_kwargs={"server_default": func.now(), "onupdate": datetime.utcnow}
+    )
+
+
+class PromptTemplate(SoftDeleteMixin, table=True):
+    """Prompt templates for AI generation tasks.
+    
+    Supports variable placeholders:
+    - {style_description}: Style analysis description
+    - {color_palette}: Comma-separated color list
+    - {pattern_type}: 'seamless' or 'standalone'
+    - {width}, {height}: Image dimensions
+    """
+    @declared_attr.directive
+    def __tablename__(cls) -> str:
+        return "prompt_templates"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    name: str = Field(max_length=100, unique=True, index=True)
+    task_type: str = Field(max_length=50, index=True)  # text2img, img2img, analyze
+    provider_type: Optional[str] = Field(default=None, max_length=50, index=True)  # null = all providers
+    template: str = Field(sa_column=Column("template", Text, nullable=False))
+    description: Optional[str] = Field(default=None, max_length=500)
+    is_default: int = Field(default=0, index=True)
+    is_active: int = Field(default=1, index=True)
     created_at: Optional[datetime] = Field(
         default=None, sa_column_kwargs={"server_default": func.now()}
     )

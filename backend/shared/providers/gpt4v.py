@@ -44,10 +44,10 @@ class GPT4VProvider(AIProvider):
             model=config.model_name,
         )
 
-    async def analyze_style(self, image: bytes) -> StyleAnalysis:
+    async def analyze_style(self, image: bytes, prompt_override: str | None = None) -> StyleAnalysis:
         image_b64 = base64.b64encode(image).decode("utf-8")
 
-        prompt = """Analyze this clothing design image and provide a detailed style analysis in JSON format.
+        prompt = prompt_override or """Analyze this clothing design image and provide a detailed style analysis in JSON format.
 
 Return ONLY valid JSON with these exact fields:
 {

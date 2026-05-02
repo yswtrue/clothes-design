@@ -13,6 +13,7 @@ import {
   submitCompose,
   pollComposeTask,
 } from '@/lib/variants';
+import { getPromptTemplates, PromptTemplateResponse } from '@/lib/generate';
 import MaterialSelector from '@/components/generate/MaterialSelector';
 import VariantsGallery from '@/components/generate/VariantsGallery';
 import PrjTemplateSelector from '@/components/generate/PrjTemplateSelector';
@@ -31,6 +32,10 @@ interface WorkflowState {
   resultTifUrl: string | null;
   resultFileName: string;
   error: string | null;
+  prompt: string;
+  promptTemplates: PromptTemplateResponse[];
+  selectedPromptTemplateId: number | null;
+  isLoadingPrompt: boolean;
 }
 
 const initialState: WorkflowState = {
@@ -45,6 +50,10 @@ const initialState: WorkflowState = {
   resultTifUrl: null,
   resultFileName: '',
   error: null,
+  prompt: '',
+  promptTemplates: [],
+  selectedPromptTemplateId: null,
+  isLoadingPrompt: false,
 };
 
 export default function VariantsWorkflowTab() {
@@ -77,14 +86,38 @@ export default function VariantsWorkflowTab() {
   };
 
   const handleSelectMaterial = async (material: Material) => {
-    setState((s) => ({ ...s, material, error: null }));
+    setState((s) => ({ ...s, material, error: null, isLoadingPrompt: true }));
     
     try {
-      const existingVariants = await getVariantsByMaterial(material.id);
-      if (existingVariants.length > 0) {
-        setState((s) => ({ ...s, variants: existingVariants }));
-      }
+      const [existingVariants, promptTemplatesList] = await Promise.all([
+        getVariantsByMaterial(material.id).catch(() => [] as GeneratedVariant[]),
+        getPromptTemplates('img2img'),
+      ]);
+      
+      const defaultTemplate = promptTemplatesList.find((t: PromptTemplateResponse) => t.is_default);
+      const selectedTemplate = defaultTemplate || promptTemplatesList[0];
+      
+      setState((s) => ({
+        ...s,
+        variants: existingVariants,
+        promptTemplates: promptTemplatesList,
+        selectedPromptTemplateId: selectedTemplate?.id || null,
+        prompt: selectedTemplate?.template || '',
+        isLoadingPrompt: false,
+      }));
     } catch {
+      setState((s) => ({ ...s, isLoadingPrompt: false }));
+    }
+  };
+
+  const handlePromptTemplateChange = (templateId: number) => {
+    const template = state.promptTemplates.find((t: PromptTemplateResponse) => t.id === templateId);
+    if (template) {
+      setState((s) => ({
+        ...s,
+        selectedPromptTemplateId: templateId,
+        prompt: template.template,
+      }));
     }
   };
 
@@ -104,6 +137,7 @@ export default function VariantsWorkflowTab() {
         material_id: state.material.id,
         count: 4,
         start_index: startIndex,
+        prompt_override: state.prompt || undefined,
       });
       setState((s) => ({ ...s, variantsTask: { task_id: response.task_id, status: 'pending' } }));
 
@@ -344,7 +378,44 @@ export default function VariantsWorkflowTab() {
                 onDeleteMaterial={handleDeleteMaterial}
               />
               {state.material && (
-                <div className="space-y-2">
+                <div className="space-y-4">
+                  <div className="space-y-3">
+                    <div className="flex items-center justify-between">
+                      <label htmlFor="variants-prompt" className="block text-sm font-medium text-zinc-700 dark:text-zinc-300">
+                        提示词
+                      </label>
+                      {state.promptTemplates.length > 0 && (
+                        <select
+                          value={state.selectedPromptTemplateId || ''}
+                          onChange={(e) => handlePromptTemplateChange(Number(e.target.value))}
+                          className="text-sm rounded-md border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 px-2 py-1 text-zinc-900 dark:text-zinc-100 focus:border-zinc-500 focus:outline-none focus:ring-1 focus:ring-zinc-500"
+                        >
+                          {state.promptTemplates.map((t) => (
+                            <option key={t.id} value={t.id}>
+                              {t.name} {t.is_default ? '(默认)' : ''}
+                            </option>
+                          ))}
+                        </select>
+                      )}
+                    </div>
+                    {state.isLoadingPrompt ? (
+                      <div className="h-32 flex items-center justify-center bg-zinc-50 dark:bg-zinc-900 rounded-md border border-zinc-300 dark:border-zinc-700">
+                        <div className="h-5 w-5 rounded-full border-2 border-zinc-300 dark:border-zinc-600 border-t-zinc-950 dark:border-t-zinc-50 animate-spin"></div>
+                      </div>
+                    ) : (
+                      <textarea
+                        id="variants-prompt"
+                        value={state.prompt}
+                        onChange={(e) => setState((s) => ({ ...s, prompt: e.target.value }))}
+                        rows={5}
+                        className="w-full rounded-md border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 px-3 py-2 text-sm text-zinc-900 dark:text-zinc-100 placeholder-zinc-400 dark:placeholder-zinc-500 focus:border-zinc-500 focus:outline-none focus:ring-1 focus:ring-zinc-500"
+                        placeholder="输入生成提示词，或使用默认模板..."
+                      />
+                    )}
+                    <p className="text-xs text-zinc-500 dark:text-zinc-400">
+                      支持变量: {'{style_description}'}, {'{color_palette}'}, {'{pattern_type}'}, {'{width}'}, {'{height}'}
+                    </p>
+                  </div>
                   <button
                     onClick={() => handleGenerateVariants(0)}
                     className="w-full rounded-md bg-zinc-950 dark:bg-zinc-50 px-4 py-3 text-sm font-medium text-white dark:text-zinc-950 hover:bg-zinc-800 dark:hover:bg-zinc-200 transition-colors"

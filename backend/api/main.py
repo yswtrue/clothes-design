@@ -17,12 +17,14 @@ from .routes.files import router as files_router
 from .routes.generate import router as generate_router
 from .routes.materials import router as materials_router
 from .routes.prj_templates import router as prj_templates_router
+from .routes.prompt_templates import router as prompt_templates_router
 from .routes.roles import router as roles_router
 from .routes.upload import router as upload_router
 from .routes.users import router as users_router
 from .routes.variants import router as variants_router
 from .db.base import get_session
 from .db.seed_users import seed_test_users
+from .db.seed_prompt_templates import seed_prompt_templates
 from .middleware.errors import (
     generic_exception_handler,
     http_exception_handler,
@@ -35,9 +37,14 @@ from .admin import create_admin
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    from taskiq_app import broker
+    
     configure_logging(level=logging.DEBUG)
     logger = logging.getLogger(__name__)
     logger.info("Starting Clothes Design API...")
+    
+    await broker.startup()
+    
     try:
         async for session in get_session():
             try:
@@ -45,6 +52,8 @@ async def lifespan(app: FastAPI):
                 await seed_default_roles(session)
                 logger.info("Seeding test users...")
                 await seed_test_users(session)
+                logger.info("Seeding prompt templates...")
+                await seed_prompt_templates(session)
                 logger.info("Committing seeds...")
                 await session.commit()
                 logger.info("Database seeding complete")
@@ -59,6 +68,7 @@ async def lifespan(app: FastAPI):
         raise
     yield
     logger.info("Shutting down Clothes Design API...")
+    await broker.shutdown()
 
 
 # Create FastAPI app
@@ -106,6 +116,7 @@ app.include_router(roles_router)
 app.include_router(upload_router)
 app.include_router(materials_router)
 app.include_router(prj_templates_router)
+app.include_router(prompt_templates_router)
 app.include_router(generate_router)
 app.include_router(variants_router)
 app.include_router(designs_router)

@@ -25,6 +25,7 @@ export interface GenerateVariantsRequest {
   material_id: number;
   count?: number;
   start_index?: number;
+  prompt_override?: string;
 }
 
 export interface GenerateVariantsResponse {

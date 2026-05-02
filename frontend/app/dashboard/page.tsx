@@ -57,7 +57,7 @@ export default function DashboardPage() {
     router.replace('/login');
   };
 
-  const tabs = [
+  const tabs: { id: TabType; label: string; icon: string }[] = [
     { id: 'overview' as const, label: '概览', icon: '🏠' },
     { id: 'upload' as const, label: '上传素材', icon: '📤' },
     { id: 'generate' as const, label: '生成图案', icon: '✨' },

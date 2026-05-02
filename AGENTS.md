@@ -34,12 +34,14 @@ clothes-design/
 | Task          | Location               | Notes                      |
 | :------------ | :--------------------- | :------------------------- |
 | API Endpoints | `backend/api/`         | FastAPI routers            |
-| DB Models     | `backend/db/models.py` | SQLAlchemy 2.0 Declarative |
+| DB Models     | `backend/api/db/models.py` | SQLAlchemy 2.0 Declarative |
+| Admin Panel   | `backend/api/admin.py` | Starlette-Admin (管理 AI Provider, Prompt Templates 等) |
 | UI Components | `frontend/components/` | React 19 / Tailwind 4      |
-| Auth Logic    | `backend/auth/`        | JWT + bcrypt < 5           |
-| Permissions   | `backend/rbac/`        | RBAC + JSONB logic         |
-| Migrations    | `backend/alembic/`     | `alembic -c alembic.ini`   |
-| Worker Jobs   | `worker/handlers/`     | Redis tasks                |
+| Auth Logic    | `backend/api/auth/`    | JWT + bcrypt < 5           |
+| Permissions   | `backend/api/rbac/`    | RBAC + JSONB logic         |
+| Migrations    | `backend/api/alembic/` | `alembic -c alembic.ini`   |
+| Worker Jobs   | `backend/worker/handlers/` | Celery tasks           |
+| AI Providers  | `backend/shared/providers/` | OpenAI, GPTProto, Replicate, etc. |
 
 ## CONVENTIONS
 
@@ -89,6 +91,7 @@ clothes-design/
 
 ## NOTES
 
+- **Admin Panel**: 访问 `/admin` 管理 AI Provider 配置、Prompt Templates、用户、角色等。需要 admin 权限登录。
 - **Auth Roles**: Default roles (admin, designer, viewer) seeded on backend startup.
 - **Storage**: Abstracted to support S3-compatible or local filesystem storage.
 - **Data Integrity**: DB constraints handle design versioning logic; do not reimplement in app layer.

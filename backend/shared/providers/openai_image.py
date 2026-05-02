@@ -22,13 +22,14 @@ logger = logging.getLogger(__name__)
 
 class OpenAIImageProvider(AIProvider):
     CHAT_IMAGE_MODELS = {"gpt-4o-image", "gpt-4o-image-vip", "gpt-image-1"}
+    GPT_IMAGE_MODELS = {"gpt-image-1", "gpt-image-2", "gpt-image-3"}
 
     def __init__(
         self,
         api_key: str | None = None,
         base_url: str | None = None,
         model: str = "dall-e-3",
-        timeout: int = 120,
+        timeout: int = 300,
         max_retries: int = 3,
     ) -> None:
         self.api_key = api_key or os.getenv("OPENAI_API_KEY")
@@ -56,6 +57,10 @@ class OpenAIImageProvider(AIProvider):
     def _is_chat_model(self) -> bool:
         model_lower = self.model.lower()
         return any(chat_model in model_lower for chat_model in self.CHAT_IMAGE_MODELS)
+
+    def _is_gpt_image_model(self) -> bool:
+        model_lower = self.model.lower()
+        return any(gpt_model in model_lower for gpt_model in self.GPT_IMAGE_MODELS)
 
     async def generate_pattern(
         self, style: StyleAnalysis, params: GenerationParams
@@ -282,6 +287,9 @@ class OpenAIImageProvider(AIProvider):
             return "1024x1024"
 
     def _build_prompt(self, style: StyleAnalysis, params: GenerationParams) -> str:
+        if params.prompt_override:
+            return params.prompt_override
+
         prompt_parts = [style.style_description]
 
         if style.pattern_type == "seamless":
@@ -298,6 +306,9 @@ class OpenAIImageProvider(AIProvider):
         return ". ".join(prompt_parts)
 
     def _build_fabric_prompt(self, style: StyleAnalysis, params: GenerationParams) -> str:
+        if params.prompt_override:
+            return params.prompt_override
+
         base_prompt = self._build_prompt(style, params)
         fabric_context = (
             "Based on this fabric photo, create a new fabric pattern design that captures "
@@ -307,6 +318,74 @@ class OpenAIImageProvider(AIProvider):
         return f"{fabric_context} Style requirements: {base_prompt}"
 
     async def _generate_img2img(
+        self, style: StyleAnalysis, params: GenerationParams
+    ) -> bytes:
+        if self._is_gpt_image_model() and not self._is_chat_model():
+            return await self._generate_via_images_edit_api(style, params)
+        return await self._generate_img2img_via_chat(style, params)
+
+    async def _generate_via_images_edit_api(
+        self, style: StyleAnalysis, params: GenerationParams
+    ) -> bytes:
+        if not params.init_image_b64:
+            raise ProviderError("init_image_b64 is required for image editing")
+
+        prompt = self._build_fabric_prompt(style, params)
+        image_bytes = base64.b64decode(params.init_image_b64)
+
+        form = aiohttp.FormData()
+        form.add_field("model", self.model)
+        form.add_field("prompt", prompt)
+        form.add_field("image", image_bytes, filename="image.png", content_type="image/png")
+        form.add_field("n", "1")
+        form.add_field("size", self._get_dalle_size(params.width, params.height))
+
+        for attempt in range(self.max_retries):
+            try:
+                async with aiohttp.ClientSession() as session:
+                    async with session.post(
+                        f"{self.base_url}/images/edits",
+                        headers={"Authorization": f"Bearer {self.api_key}"},
+                        data=form,
+                        timeout=aiohttp.ClientTimeout(total=self.timeout),
+                    ) as response:
+                        response_text = await response.text()
+
+                        if response.status == 429:
+                            raise ProviderRateLimitError("OpenAI rate limit exceeded")
+
+                        if response.status == 401:
+                            raise ProviderConfigurationError(f"Invalid API key: {response_text[:200]}")
+
+                        if response.status >= 400:
+                            raise ProviderError(f"API error {response.status}: {response_text[:500]}")
+
+                        data = json.loads(response_text)
+                        if "data" in data and data["data"]:
+                            if "b64_json" in data["data"][0]:
+                                return base64.b64decode(data["data"][0]["b64_json"])
+                            elif "url" in data["data"][0]:
+                                return await self._download_image(session, data["data"][0]["url"])
+
+                        raise ProviderError(f"Unexpected response format: {response_text[:500]}")
+
+            except (ProviderRateLimitError, ProviderTimeoutError):
+                if attempt == self.max_retries - 1:
+                    raise
+                await asyncio.sleep(2**attempt)
+
+            except TimeoutError as e:
+                raise ProviderTimeoutError(f"Request timed out after {self.timeout}s") from e
+
+            except aiohttp.ClientError as e:
+                logger.error(f"Images edit attempt {attempt + 1} failed: {e}")
+                if attempt == self.max_retries - 1:
+                    raise ProviderError(f"Images edit failed after {self.max_retries} attempts: {e}") from e
+                await asyncio.sleep(2**attempt)
+
+        raise ProviderError("Images edit failed")
+
+    async def _generate_img2img_via_chat(
         self, style: StyleAnalysis, params: GenerationParams
     ) -> bytes:
         prompt = self._build_fabric_prompt(style, params)
@@ -405,7 +484,7 @@ class OpenAIImageProvider(AIProvider):
 
         raise ProviderError("img2img generation failed")
 
-    async def analyze_style(self, image: bytes) -> StyleAnalysis:
+    async def analyze_style(self, image: bytes, prompt_override: str | None = None) -> StyleAnalysis:
         raise NotImplementedError("Use GPT4VProvider for style analysis")
 
     async def upscale_image(self, image: bytes, target_size: int) -> bytes:

@@ -3,7 +3,7 @@ from typing import Any, Optional
 
 from api.auth.security import verify_password
 from api.db.base import AsyncSessionLocal, engine
-from api.db.models import AIProviderConfig, Design, Material, PrjTemplate, Role, User, UserRole
+from api.db.models import AIProviderConfig, Design, Material, PrjTemplate, PromptTemplate, Role, User, UserRole
 from sqlalchemy import select
 from starlette.requests import Request
 from starlette.responses import Response
@@ -26,14 +26,22 @@ from starlette_admin.fields import (
 class ProviderType(str, Enum):
     OPENAI = "openai"
     OPENAI_IMAGE = "openai_image"
+    GPTPROTO = "gptproto"
     REPLICATE = "replicate"
     VECTORIZER = "vectorizer"
     ESRGAN = "esrgan"
 
 
+class TaskType(str, Enum):
+    TEXT2IMG = "text2img"
+    IMG2IMG = "img2img"
+    ANALYZE = "analyze"
+
+
 DEFAULT_BASE_URLS = {
     "openai": "https://api.openai.com/v1",
     "openai_image": "https://api.openai.com/v1",
+    "gptproto": "https://gptproto.com/api/v3",
     "replicate": "https://api.replicate.com/v1",
     "vectorizer": "https://api.vectorizer.ai/api/v1",
     "esrgan": "https://api.replicate.com/v1",
@@ -190,6 +198,62 @@ class PrjTemplateView(ModelView):
             obj.is_builtin = data["is_builtin"]
 
 
+class PromptTemplateView(ModelView):
+    name = "Prompt Template"
+    label = "Prompt Templates"
+
+    fields = [
+        IntegerField("id", exclude_from_create=True, exclude_from_edit=True),
+        StringField("name", required=True, help_text="模板名称（唯一）"),
+        EnumField("task_type", enum=TaskType, required=True, help_text="任务类型"),
+        EnumField(
+            "provider_type",
+            enum=ProviderType,
+            required=False,
+            help_text="指定 Provider（留空=通用）",
+        ),
+        StringField(
+            "template",
+            required=True,
+            maxlength=5000,
+            help_text="模板内容，支持变量: {style_description}, {color_palette}, {pattern_type}, {width}, {height}",
+        ),
+        StringField("description", help_text="模板描述"),
+        BooleanField("is_default", help_text="设为该任务类型的默认模板"),
+        BooleanField("is_active", help_text="启用/禁用"),
+        StringField("created_at", exclude_from_create=True, exclude_from_edit=True),
+        StringField("updated_at", exclude_from_create=True, exclude_from_edit=True),
+    ]
+
+    exclude_fields_from_list = ["template", "created_at", "updated_at", "deleted_at"]
+    searchable_fields = ["name", "task_type", "provider_type"]
+    sortable_fields = ["id", "name", "task_type", "provider_type", "is_default", "is_active"]
+
+    async def before_create(self, request: Request, data: dict[str, Any], obj: Any) -> None:
+        if "is_active" not in data or data["is_active"] is None:
+            data["is_active"] = 1
+            obj.is_active = 1
+        else:
+            data["is_active"] = 1 if data["is_active"] else 0
+            obj.is_active = data["is_active"]
+
+        if "is_default" not in data or data["is_default"] is None:
+            data["is_default"] = 0
+            obj.is_default = 0
+        else:
+            data["is_default"] = 1 if data["is_default"] else 0
+            obj.is_default = data["is_default"]
+
+    async def before_edit(self, request: Request, data: dict[str, Any], obj: Any) -> None:
+        if "is_active" in data:
+            data["is_active"] = 1 if data["is_active"] else 0
+            obj.is_active = data["is_active"]
+
+        if "is_default" in data:
+            data["is_default"] = 1 if data["is_default"] else 0
+            obj.is_default = data["is_default"]
+
+
 def create_admin() -> Admin:
     admin = Admin(
         engine,
@@ -205,6 +269,7 @@ def create_admin() -> Admin:
     admin.add_view(ModelView(Design, icon="fa fa-palette"))
     admin.add_view(ModelView(Material, icon="fa fa-image"))
     admin.add_view(PrjTemplateView(PrjTemplate, icon="fa fa-file-code"))
+    admin.add_view(PromptTemplateView(PromptTemplate, icon="fa fa-comment-alt"))
     admin.add_view(AIProviderConfigView(AIProviderConfig, icon="fa fa-key"))
 
     return admin

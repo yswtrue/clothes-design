@@ -1,7 +1,6 @@
 {
   "include": [
     "backend",
-    "worker",
     "frontend"
   ],
   "exclude": [
@@ -10,21 +9,14 @@
     "**/.*",
     "backend/alembic/versions"
   ],
-  "venvPath": "/Users/yswtrue/Codes/clothes-design/backend",
+  "venvPath": "backend",
   "venv": ".venv",
   "executionEnvironments": [
     {
       "root": "backend",
       "pythonVersion": "3.13",
-      "pythonPlatform": "Darwin",
-      "extraPaths": []
-    },
-    {
-      "root": "worker",
-      "pythonVersion": "3.13",
-      "pythonPlatform": "Darwin",
       "extraPaths": [
-        "../backend"
+        "backend"
       ]
     }
   ],

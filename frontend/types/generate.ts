@@ -16,9 +16,16 @@ export interface TaskStatusResponse {
   task_id: string;
   status: 'pending' | 'processing' | 'completed' | 'failed';
   result?: {
-    pattern_url: string;
-    file_name: string;
-    file_size: number;
+    status?: 'success' | 'error';
+    error?: string;
+    pattern_url?: string;
+    image_data?: string;
+    file_name?: string;
+    file_size?: number;
+    width?: number;
+    height?: number;
+    tiling?: string;
+    seed?: number;
     dimensions?: { width: number; height: number };
     vector_url?: string;
   };

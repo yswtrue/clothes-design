@@ -17,6 +17,7 @@ from api.storage.thumbnail import ThumbnailGenerator
 from api.storage.storages import thumbnail_storage
 
 from .base import TaskHandler, WorkerError
+from shared.providers.prompt_template_service import get_analyze_prompt
 
 
 class AnalyzeHandler(TaskHandler):
@@ -76,8 +77,9 @@ class AnalyzeHandler(TaskHandler):
             thumbnail_relative = unique_thumbnail_name
             self.logger.info(f"Generated thumbnail: {thumbnail_relative}")
 
+            analyze_prompt = await get_analyze_prompt(provider_type="openai")
             provider = await self._get_provider()
-            analysis = await provider.analyze_style(image_data)
+            analysis = await provider.analyze_style(image_data, prompt_override=analyze_prompt)
 
             result = {
                 "status": "success",

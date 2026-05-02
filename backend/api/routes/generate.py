@@ -12,7 +12,7 @@ from api.auth.dependencies import get_current_user
 from api.db.base import get_session
 from api.db.models import Design, DesignVersion, Material, User
 from api.materials.schemas import MaterialMeta
-from shared.task_queue.celery_integration import enqueue_task, get_task_status
+from shared.task_queue import enqueue_task, get_task_status
 
 router = APIRouter(prefix="/api/generate", tags=["generate"])
 
@@ -133,7 +133,6 @@ async def generate_pattern(
     )
     session.add(initial_version)
 
-    # Build generation parameters
     gen_params = GenerationParams(
         style=prompt,
         tiling="tile" if request.pattern_type == "seamless" else "clamp",
@@ -142,6 +141,7 @@ async def generate_pattern(
         seed=42,
         init_image_b64=init_image_b64,
         strength=request.strength,
+        prompt_override=request.prompt,
     )
 
     # Enqueue task

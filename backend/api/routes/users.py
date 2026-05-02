@@ -3,23 +3,40 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
+from sqlalchemy.orm import selectinload
 
 from api.auth.dependencies import get_current_user
 from api.auth.schemas import UserResponse
 from api.db.base import get_session
-from api.db.models import User
+from api.db.models import User, UserRole
 from api.rbac.permissions import require_permission
 from api.rbac.schemas import UserRoleAssignment
 from api.rbac.service import assign_role_to_user, get_role_by_id
 
 router = APIRouter(prefix="/api/users", tags=["users"])
-_user_dep = Depends(get_current_user)
 _session_dep = Depends(get_session)
 
 
 @router.get("/me", response_model=UserResponse)
-async def read_current_user(user: User = _user_dep) -> UserResponse:
-    return UserResponse.model_validate(user)
+async def read_current_user(
+    session: Annotated[AsyncSession, _session_dep],
+    user: User = Depends(get_current_user),
+) -> UserResponse:
+    result = await session.execute(
+        select(User)
+        .where(User.id == user.id)
+        .options(selectinload(User.user_roles).selectinload(UserRole.role))
+    )
+    user_with_roles = result.scalar_one()
+    
+    roles = [ur.role.name for ur in user_with_roles.user_roles if ur.role]
+    
+    return UserResponse(
+        id=user_with_roles.id,
+        username=user_with_roles.username,
+        created_at=user_with_roles.created_at,
+        roles=roles,
+    )
 
 
 @router.post("/{user_id}/roles", status_code=status.HTTP_201_CREATED)

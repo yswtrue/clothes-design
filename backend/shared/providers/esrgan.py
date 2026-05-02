@@ -148,8 +148,7 @@ class ESRGANProvider(AIProvider):
 
         raise ESRGANProviderError(f"Failed after {self.max_retries} attempts")
 
-    async def analyze_style(self, image: bytes) -> StyleAnalysis:
-        """Not implemented by ESRGAN provider."""
+    async def analyze_style(self, image: bytes, prompt_override: str | None = None) -> StyleAnalysis:
         raise NotImplementedError("Style analysis not supported by ESRGAN provider")
 
     async def generate_pattern(self, style: StyleAnalysis, params: GenerationParams) -> bytes:

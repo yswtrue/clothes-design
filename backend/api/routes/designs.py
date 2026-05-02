@@ -38,6 +38,17 @@ def _ensure_full_url(pattern_url: str | None) -> str | None:
     return generated_image_storage.get_url(pattern_url)
 
 
+def _convert_version_data_urls(data: dict | None) -> dict | None:
+    if not data:
+        return None
+    result = {**data}
+    if "pattern_url" in result:
+        result["pattern_url"] = _ensure_full_url(result["pattern_url"])
+    if "vector_url" in result:
+        result["vector_url"] = _ensure_full_url(result["vector_url"])
+    return result
+
+
 _session_dep = Annotated[AsyncSession, Depends(get_session)]
 _user_dep = Annotated[User, Depends(get_current_user)]
 
@@ -520,7 +531,7 @@ async def list_versions(
                 id=v.id,
                 design_id=v.design_id,
                 version=v.version,
-                data=v.data,
+                data=_convert_version_data_urls(v.data),
                 created_at=v.created_at,
             )
             for v in versions

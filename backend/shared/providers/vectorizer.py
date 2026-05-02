@@ -56,7 +56,16 @@ class VectorizerProvider(AIProvider):
             base_url=config.base_url,
         )
 
-    async def vectorize(self, image: bytes, color_space: str = "rgb") -> bytes:
+    async def vectorize(
+        self,
+        image: bytes,
+        color_space: str = "rgb",
+        *,
+        line_fit_tolerance: float = 0.05,
+        min_area_px: float = 0.5,
+        gap_filler_enabled: bool = True,
+        gap_filler_stroke_width: float = 2.0,
+    ) -> bytes:
         """Convert raster image to SVG format using Vectorizer.ai.
 
         Note: Vectorizer.ai does not support color space selection. The color_space
@@ -65,6 +74,12 @@ class VectorizerProvider(AIProvider):
         Args:
             image: Raster image bytes (PNG, JPEG, etc.)
             color_space: Ignored - kept for AIProvider interface compatibility
+            line_fit_tolerance: Max distance (px) between curves and approximating lines.
+                Lower = smoother curves, less line fragmentation. Default 0.05 (was 0.1).
+            min_area_px: Minimum shape area in pixels. Shapes smaller than this are
+                discarded. Higher = removes tiny fragments. Default 0.5 (was 0.125).
+            gap_filler_enabled: Fill gaps between shapes to prevent white line artifacts.
+            gap_filler_stroke_width: Width of gap filler strokes.
 
         Returns:
             Vectorized image as SVG bytes
@@ -72,6 +87,16 @@ class VectorizerProvider(AIProvider):
         form = aiohttp.FormData()
         form.add_field("image", image, content_type="image/png", filename="input.png")
         form.add_field("output.file_format", "svg")
+
+        form.add_field("output.curves.line_fit_tolerance", str(line_fit_tolerance))
+        form.add_field("processing.shapes.min_area_px", str(min_area_px))
+        form.add_field("output.gap_filler.enabled", "true" if gap_filler_enabled else "false")
+        form.add_field("output.gap_filler.stroke_width", str(gap_filler_stroke_width))
+
+        form.add_field("output.curves.allowed.quadratic_bezier", "true")
+        form.add_field("output.curves.allowed.cubic_bezier", "true")
+        form.add_field("output.curves.allowed.circular_arc", "true")
+        form.add_field("output.curves.allowed.elliptical_arc", "true")
 
         try:
             auth = aiohttp.BasicAuth(self.api_id, self.api_secret)
@@ -114,8 +139,7 @@ class VectorizerProvider(AIProvider):
             raise VectorizerError(f"Network error during vectorization: {e}") from e
 
     # Unimplemented AIProvider methods
-    async def analyze_style(self, image: bytes) -> StyleAnalysis:
-        """Not implemented by Vectorizer provider."""
+    async def analyze_style(self, image: bytes, prompt_override: str | None = None) -> StyleAnalysis:
         raise NotImplementedError("Style analysis not supported by Vectorizer.ai")
 
     async def generate_pattern(self, style: StyleAnalysis, params: GenerationParams) -> bytes:

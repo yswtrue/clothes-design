@@ -251,7 +251,9 @@ class ReplicateProvider(AIProvider):
         raise ProviderError("Upscaling failed")
 
     def _build_prompt(self, style: StyleAnalysis, params: GenerationParams) -> str:
-        """Build text prompt from style analysis."""
+        if params.prompt_override:
+            return params.prompt_override
+
         prompt_parts = [style.style_description]
 
         if style.pattern_type == "seamless":
@@ -268,7 +270,9 @@ class ReplicateProvider(AIProvider):
         return ". ".join(prompt_parts)
 
     def _build_fabric_prompt(self, style: StyleAnalysis, params: GenerationParams) -> str:
-        """Build prompt specifically for fabric img2img generation."""
+        if params.prompt_override:
+            return params.prompt_override
+
         base_prompt = self._build_prompt(style, params)
         fabric_context = (
             "Based on this fabric photo, create a new fabric pattern design that captures "
@@ -331,8 +335,7 @@ class ReplicateProvider(AIProvider):
 
         raise ProviderError("img2img generation failed")
 
-    async def analyze_style(self, image: bytes) -> StyleAnalysis:
-        """Not supported - use GPT4VProvider for style analysis."""
+    async def analyze_style(self, image: bytes, prompt_override: str | None = None) -> StyleAnalysis:
         raise NotImplementedError("Use GPT4VProvider for style analysis")
 
     async def vectorize(self, image: bytes, color_space: str = "rgb") -> bytes:

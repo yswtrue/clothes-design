@@ -10,7 +10,7 @@ from api.db.base import get_session
 from api.db.models import GeneratedDesign, Material, User
 from api.materials.schemas import MaterialMeta
 from api.storage.storages import generated_image_storage, thumbnail_storage
-from shared.task_queue.celery_integration import enqueue_task, get_task_status
+from shared.task_queue import enqueue_task, get_task_status
 
 router = APIRouter(prefix="/api/generate", tags=["variants"])
 

@@ -1,9 +1,8 @@
 from dataclasses import dataclass
 
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-from config import get_settings
+from shared.db import get_session_context
 
 
 DEFAULT_BASE_URLS = {
@@ -12,6 +11,7 @@ DEFAULT_BASE_URLS = {
     "replicate": "https://api.replicate.com/v1",
     "vectorizer": "https://api.vectorizer.ai/api/v1",
     "esrgan": "https://api.replicate.com/v1",
+    "gptproto": "https://gptproto.com/api/v3",
 }
 
 
@@ -32,61 +32,47 @@ def _get_base_url(provider_type: str, base_url: str | None) -> str:
 async def get_provider_config(provider_type: str) -> ProviderConfig | None:
     from api.db.models import AIProviderConfig
 
-    settings = get_settings()
-    engine = create_async_engine(settings.database.async_url, echo=False)
-    session_factory = async_sessionmaker(engine, expire_on_commit=False)
+    async with get_session_context() as session:
+        stmt = (
+            select(AIProviderConfig)
+            .where(AIProviderConfig.provider_type == provider_type)  # type: ignore[arg-type]
+            .where(AIProviderConfig.is_active == 1)  # type: ignore[arg-type]
+            .order_by(AIProviderConfig.priority)  # type: ignore[arg-type]
+            .limit(1)
+        )
+        result = await session.execute(stmt)
+        config = result.scalar_one_or_none()
 
-    try:
-        async with session_factory() as session:
-            stmt = (
-                select(AIProviderConfig)
-                .where(AIProviderConfig.provider_type == provider_type)  # type: ignore[arg-type]
-                .where(AIProviderConfig.is_active == 1)  # type: ignore[arg-type]
-                .order_by(AIProviderConfig.priority)  # type: ignore[arg-type]
-                .limit(1)
-            )
-            result = await session.execute(stmt)
-            config = result.scalar_one_or_none()
+        if config is None:
+            return None
 
-            if config is None:
-                return None
-
-            return ProviderConfig(
-                api_key=config.api_key,
-                base_url=_get_base_url(provider_type, config.base_url),
-                model_name=config.model_name,
-                config=config.config,
-            )
-    finally:
-        await engine.dispose()
+        return ProviderConfig(
+            api_key=config.api_key,
+            base_url=_get_base_url(provider_type, config.base_url),
+            model_name=config.model_name,
+            config=config.config,
+        )
 
 
 async def get_all_active_configs(provider_type: str) -> list[ProviderConfig]:
     from api.db.models import AIProviderConfig
 
-    settings = get_settings()
-    engine = create_async_engine(settings.database.async_url, echo=False)
-    session_factory = async_sessionmaker(engine, expire_on_commit=False)
+    async with get_session_context() as session:
+        stmt = (
+            select(AIProviderConfig)
+            .where(AIProviderConfig.provider_type == provider_type)  # type: ignore[arg-type]
+            .where(AIProviderConfig.is_active == 1)  # type: ignore[arg-type]
+            .order_by(AIProviderConfig.priority)  # type: ignore[arg-type]
+        )
+        result = await session.execute(stmt)
+        configs = result.scalars().all()
 
-    try:
-        async with session_factory() as session:
-            stmt = (
-                select(AIProviderConfig)
-                .where(AIProviderConfig.provider_type == provider_type)  # type: ignore[arg-type]
-                .where(AIProviderConfig.is_active == 1)  # type: ignore[arg-type]
-                .order_by(AIProviderConfig.priority)  # type: ignore[arg-type]
+        return [
+            ProviderConfig(
+                api_key=c.api_key,
+                base_url=_get_base_url(provider_type, c.base_url),
+                model_name=c.model_name,
+                config=c.config,
             )
-            result = await session.execute(stmt)
-            configs = result.scalars().all()
-
-            return [
-                ProviderConfig(
-                    api_key=c.api_key,
-                    base_url=_get_base_url(provider_type, c.base_url),
-                    model_name=c.model_name,
-                    config=c.config,
-                )
-                for c in configs
-            ]
-    finally:
-        await engine.dispose()
+            for c in configs
+        ]

@@ -11,7 +11,7 @@ from api.auth.dependencies import get_current_user
 from api.db.base import get_session
 from api.db.models import Material, User
 from api.materials.schemas import MaterialDetailResponse
-from shared.task_queue.celery_integration import enqueue_task
+from shared.task_queue import enqueue_task
 
 router = APIRouter(prefix="/api/upload", tags=["upload"])
 
