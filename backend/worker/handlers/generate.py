@@ -16,6 +16,7 @@ from shared.ai.schemas import GenerationParams, StyleAnalysis
 from shared.providers.config_loader import get_provider_config
 from shared.providers.openai_image import OpenAIImageProvider
 from shared.providers.replicate import ReplicateProvider
+from shared.providers.vectorizer import VectorizerProvider
 
 from .base import TaskHandler, WorkerError
 
@@ -75,6 +76,7 @@ class GenerateHandler(TaskHandler):
         style = StyleAnalysis(**task_data["style"])
         params = GenerationParams(**task_data["params"])
         design_id = task_data.get("design_id")
+        generate_vector = task_data.get("generate_vector", False)
 
         try:
             provider = await self._get_provider()
@@ -90,15 +92,18 @@ class GenerateHandler(TaskHandler):
             )
 
             pattern_url = None
+            vector_url = None
             if design_id:
-                pattern_url = await self._save_and_update_design(
-                    design_id, image_bytes, params
-                )
+                pattern_url = await self._save_and_update_design(design_id, image_bytes, params)
+
+                if generate_vector:
+                    vector_url = await self._vectorize_and_save(design_id, image_bytes)
 
             return {
                 "status": "success",
                 "image_data": image_b64,
                 "pattern_url": pattern_url,
+                "vector_url": vector_url,
                 "width": params.width,
                 "height": params.height,
                 "tiling": params.tiling,
@@ -135,14 +140,12 @@ class GenerateHandler(TaskHandler):
 
         unique_id = uuid.uuid4().hex[:8]
         filename = f"design_{design_id}_{unique_id}.png"
-        await generated_image_storage.upload(image_bytes, filename)
-        self.logger.info(f"Saved pattern image: {filename}")
+        pattern_url = await generated_image_storage.upload(image_bytes, filename)
+        self.logger.info(f"Saved pattern image: {filename} -> {pattern_url}")
 
         session_factory = await self._get_session_factory()
         async with session_factory() as session:
-            result = await session.execute(
-                select(Design).where(Design.id == design_id)
-            )
+            result = await session.execute(select(Design).where(Design.id == design_id))
             design = result.scalar_one_or_none()
 
             if design:
@@ -158,13 +161,30 @@ class GenerateHandler(TaskHandler):
 
                 if version:
                     version_data = version.data or {}
-                    version_data["pattern_url"] = filename
+                    version_data["pattern_url"] = pattern_url
                     version.data = version_data
 
                 await session.commit()
                 self.logger.info(f"Updated design {design_id} status to 'draft'")
 
-        return filename
+        return pattern_url
+
+    async def _vectorize_and_save(self, design_id: int, image_bytes: bytes) -> str | None:
+        from api.storage.storages import output_tif_storage
+
+        try:
+            vectorizer = VectorizerProvider()
+            svg_bytes = await vectorizer.vectorize(image_bytes)
+
+            unique_id = uuid.uuid4().hex[:8]
+            filename = f"design_{design_id}_{unique_id}.svg"
+            vector_url = await output_tif_storage.upload(svg_bytes, filename)
+            self.logger.info(f"Saved vector image: {filename} -> {vector_url}")
+            return vector_url
+
+        except Exception as e:
+            self.logger.error(f"Vectorization failed: {e}")
+            return None
 
 
 __all__ = ["GenerateHandler"]

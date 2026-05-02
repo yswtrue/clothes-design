@@ -27,6 +27,9 @@ class GenerateRequest(BaseModel):
     pattern_type: str  # seamless, standalone, full
     prompt: str | None = None
     colors: list[str] | None = None
+    use_img2img: bool = True
+    strength: float = 0.65
+    generate_vector: bool = False
 
 
 class GenerateResponse(BaseModel):
@@ -101,6 +104,20 @@ async def generate_pattern(
     if not colors and style_analysis:
         colors = style_analysis.color_palette
 
+    init_image_b64 = None
+    if request.use_img2img and material.file:
+        import base64
+
+        try:
+            with material.file.open() as f:
+                image_bytes = f.read()
+            init_image_b64 = base64.b64encode(image_bytes).decode("utf-8")
+        except Exception as e:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Failed to load material image: {e}",
+            )
+
     # Create Design record
     from datetime import datetime
 
@@ -123,6 +140,8 @@ async def generate_pattern(
         width=1024,
         height=1024,
         seed=42,
+        init_image_b64=init_image_b64,
+        strength=request.strength,
     )
 
     # Enqueue task
@@ -132,6 +151,7 @@ async def generate_pattern(
         "pattern_type": request.pattern_type,
         "style": style_analysis.model_dump() if style_analysis else {"style_description": prompt},
         "params": gen_params.model_dump(),
+        "generate_vector": request.generate_vector,
     }
 
     task_id = await enqueue_task(task_type="generate", user_id=current_user.id, data=task_data)

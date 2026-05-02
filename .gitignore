@@ -140,3 +140,4 @@ playwright/.cache/
 .pytest_cache
 
 **/__pycache__
+uploads/

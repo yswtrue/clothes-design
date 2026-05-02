@@ -6,7 +6,9 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class StorageSettings(BaseSettings):
-    model_config = SettingsConfigDict(env_prefix="", extra="ignore")
+    model_config = SettingsConfigDict(
+        env_file="../.env", env_file_encoding="utf-8", env_prefix="", extra="ignore"
+    )
 
     storage_type: Literal["local", "s3"] = Field(default="local", alias="STORAGE_TYPE")
     local_storage_path: str = Field(default="./uploads", alias="LOCAL_STORAGE_PATH")

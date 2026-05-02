@@ -5,6 +5,7 @@ interface PatternResultProps {
   fileName: string;
   fileSize?: number;
   dimensions?: { width: number; height: number };
+  vectorUrl?: string | null;
   onGenerateAnother: () => void;
 }
 
@@ -13,6 +14,7 @@ export default function PatternResult({
   fileName,
   fileSize,
   dimensions,
+  vectorUrl,
   onGenerateAnother,
 }: PatternResultProps) {
   const formatFileSize = (bytes?: number) => {
@@ -64,20 +66,31 @@ export default function PatternResult({
         </dl>
       </div>
 
-      <div className="flex gap-3">
-        <a
-          href={patternUrl}
-          download={fileName}
-          className="flex-1 rounded-md bg-zinc-950 dark:bg-zinc-50 px-4 py-2.5 text-sm font-medium text-white dark:text-zinc-950 hover:bg-zinc-800 dark:hover:bg-zinc-200 transition-colors text-center"
-        >
-          下载图案
-        </a>
-        <button
-          onClick={onGenerateAnother}
-          className="flex-1 rounded-md border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 px-4 py-2.5 text-sm font-medium text-zinc-950 dark:text-zinc-50 hover:bg-zinc-50 dark:hover:bg-zinc-800 transition-colors"
-        >
-          再生成一个
-        </button>
+      <div className="flex flex-col gap-3">
+        <div className="flex gap-3">
+          <a
+            href={patternUrl}
+            download={fileName}
+            className="flex-1 rounded-md bg-zinc-950 dark:bg-zinc-50 px-4 py-2.5 text-sm font-medium text-white dark:text-zinc-950 hover:bg-zinc-800 dark:hover:bg-zinc-200 transition-colors text-center"
+          >
+            下载图案
+          </a>
+          <button
+            onClick={onGenerateAnother}
+            className="flex-1 rounded-md border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 px-4 py-2.5 text-sm font-medium text-zinc-950 dark:text-zinc-50 hover:bg-zinc-50 dark:hover:bg-zinc-800 transition-colors"
+          >
+            再生成一个
+          </button>
+        </div>
+        {vectorUrl && (
+          <a
+            href={vectorUrl}
+            download={fileName.replace(/\.[^.]+$/, '.tif')}
+            className="w-full rounded-md border border-emerald-500 dark:border-emerald-400 bg-emerald-50 dark:bg-emerald-900/20 px-4 py-2.5 text-sm font-medium text-emerald-700 dark:text-emerald-300 hover:bg-emerald-100 dark:hover:bg-emerald-900/40 transition-colors text-center"
+          >
+            下载矢量图 (TIF)
+          </a>
+        )}
       </div>
     </div>
   );

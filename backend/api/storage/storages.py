@@ -11,12 +11,12 @@ from config import get_settings
 
 class LocalStorageMixin:
     def get_url(self, name: str) -> str:
-        settings = get_settings().storage
         relative_path = self.get_name(name)
-        return f"{settings.api_base_url}/api/files/{relative_path}"
+        # Return relative path so frontend proxy can handle it (avoids CORB)
+        return f"/api/files/{relative_path}"
 
     async def download(self, name: str) -> bytes:
-        with self.open(name, "rb") as f:
+        with self.open(name) as f:
             return f.read()
 
     async def upload(self, data: bytes | BinaryIO, name: str) -> str:

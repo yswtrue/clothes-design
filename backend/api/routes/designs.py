@@ -28,6 +28,16 @@ from api.storage.storages import generated_image_storage, preview_storage
 
 router = APIRouter(prefix="/api/designs", tags=["designs"])
 
+
+def _ensure_full_url(pattern_url: str | None) -> str | None:
+    """Convert storage filename to URL path if needed (for backward compatibility with old data)."""
+    if not pattern_url:
+        return None
+    if pattern_url.startswith(("http://", "https://", "/")):
+        return pattern_url
+    return generated_image_storage.get_url(pattern_url)
+
+
 _session_dep = Annotated[AsyncSession, Depends(get_session)]
 _user_dep = Annotated[User, Depends(get_current_user)]
 
@@ -167,6 +177,8 @@ async def get_design(
     if latest_version and latest_version.data:
         try:
             preview_state = DesignPreviewState(**latest_version.data)
+            if preview_state.pattern_url:
+                preview_state.pattern_url = _ensure_full_url(preview_state.pattern_url)
         except Exception:
             preview_state = None
 
@@ -249,6 +261,9 @@ async def update_design(
     session.add(new_version)
     await session.commit()
     await session.refresh(design)
+
+    if current_state.pattern_url:
+        current_state.pattern_url = _ensure_full_url(current_state.pattern_url)
 
     return DesignResponse(
         id=design.id,

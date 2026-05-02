@@ -23,20 +23,32 @@ class VectorizerError(Exception):
 class VectorizerProvider(AIProvider):
     """Vectorizer.ai provider for professional CMYK TIF vectorization."""
 
+    api_id: str
+    api_secret: str
+    timeout: int
+    base_url: str
+
     def __init__(
         self,
         api_key: str | None = None,
         base_url: str | None = None,
         timeout: int = 90,
     ) -> None:
-        self.api_key = api_key or os.getenv("VECTORIZER_API_KEY") or os.getenv("VECTORIZER_KEY")
-        if not self.api_key:
+        # Vectorizer.ai uses HTTP Basic Auth with API_ID:API_SECRET
+        api_id = api_key or os.getenv("VECTORIZER_API_ID")
+        api_secret = os.getenv("VECTORIZER_API_SECRET")
+
+        if not api_id or not api_secret:
             raise ProviderConfigurationError(
-                "Missing Vectorizer API key: set VECTORIZER_API_KEY or VECTORIZER_KEY"
+                "Missing Vectorizer credentials: set VECTORIZER_API_ID and VECTORIZER_API_SECRET in .env"
             )
 
+        self.api_id = api_id
+        self.api_secret = api_secret
         self.timeout = timeout
-        self.base_url = base_url or os.getenv("VECTORIZER_BASE_URL") or "https://api.vectorizer.ai/api/v1"
+        self.base_url = (
+            base_url or os.getenv("VECTORIZER_BASE_URL") or "https://api.vectorizer.ai/api/v1"
+        )
 
     @classmethod
     def from_config(cls, config: ProviderConfig) -> "VectorizerProvider":
@@ -45,38 +57,29 @@ class VectorizerProvider(AIProvider):
             base_url=config.base_url,
         )
 
-    async def vectorize(self, image: bytes, color_space: str = "CMYK") -> bytes:
-        """Convert raster image to CMYK TIF format using Vectorizer.ai.
+    async def vectorize(self, image: bytes, color_space: str = "rgb") -> bytes:
+        """Convert raster image to SVG format using Vectorizer.ai.
+
+        Note: Vectorizer.ai does not support color space selection. The color_space
+        parameter is accepted for interface compatibility but ignored.
 
         Args:
             image: Raster image bytes (PNG, JPEG, etc.)
-            color_space: Color space for output ("CMYK" or "RGB", default "CMYK")
+            color_space: Ignored - kept for AIProvider interface compatibility
 
         Returns:
-            Vectorized image as TIF bytes
-
-        Raises:
-            ValueError: Invalid color_space or unsupported image format
-            ProviderConfigurationError: Missing API key
-            ProviderTimeoutError: Request timeout
-            ProviderRateLimitError: Rate limit exceeded
-            VectorizerError: API errors
+            Vectorized image as SVG bytes
         """
-        # Validate color space
-        if color_space not in ("CMYK", "RGB"):
-            raise ValueError(f"Color space must be 'CMYK' or 'RGB', got '{color_space}'")
-
-        # Prepare multipart form data
         form = aiohttp.FormData()
         form.add_field("image", image, content_type="image/png", filename="input.png")
-        form.add_field("output.format", "tif")
-        form.add_field("output.colors", color_space.lower())
+        form.add_field("output.file_format", "svg")
 
         try:
+            auth = aiohttp.BasicAuth(self.api_id, self.api_secret)
             async with aiohttp.ClientSession() as session:
                 async with session.post(
                     f"{self.base_url}/vectorize",
-                    headers={"Authorization": f"Token {self.api_key}"},
+                    auth=auth,
                     data=form,
                     timeout=aiohttp.ClientTimeout(total=self.timeout),
                 ) as response:
