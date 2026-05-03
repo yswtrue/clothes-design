@@ -58,7 +58,7 @@ export async function submitGeneration(request: GenerateRequest): Promise<Genera
 export async function pollTaskStatus(
   taskId: string,
   onProgress?: (task: TaskStatusResponse) => void,
-  maxAttempts: number = 30,
+  maxAttempts: number = 60,
   intervalMs: number = 2000
 ): Promise<TaskStatusResponse> {
   let attempts = 0;
@@ -84,5 +84,5 @@ export async function pollTaskStatus(
     await new Promise((resolve) => setTimeout(resolve, intervalMs));
   }
 
-  throw new Error('Generation timeout after 60 seconds');
+  return { task_id: taskId, status: 'pending' } as TaskStatusResponse;
 }

@@ -24,13 +24,17 @@ logger = logging.getLogger(__name__)
 
 SDXL_MODEL = "stability-ai/sdxl:7762fd07cf82c948538e41f63f77d685e02b063e37e496e96eefd46c929f9bdc"
 FLUX_MODEL = "black-forest-labs/flux-schnell"
-ESRGAN_MODEL = "nightmareai/real-esrgan:f121d640bd286e1fdc67f9799164c1d5be36ff74576ee11c803ae5b665dd46aa"
-SDXL_IMG2IMG_MODEL = "stability-ai/sdxl:7762fd07cf82c948538e41f63f77d685e02b063e37e496e96eefd46c929f9bdc"
+ESRGAN_MODEL = (
+    "nightmareai/real-esrgan:f121d640bd286e1fdc67f9799164c1d5be36ff74576ee11c803ae5b665dd46aa"
+)
+SDXL_IMG2IMG_MODEL = (
+    "stability-ai/sdxl:7762fd07cf82c948538e41f63f77d685e02b063e37e496e96eefd46c929f9bdc"
+)
 
 
 class ReplicateProvider(AIProvider):
     """Unified Replicate provider for image generation and upscaling.
-    
+
     Supports:
     - Image generation via SDXL or Flux models
     - Image upscaling via Real-ESRGAN
@@ -50,10 +54,12 @@ class ReplicateProvider(AIProvider):
                 "Missing Replicate API token. Set REPLICATE_API_TOKEN environment variable."
             )
 
-        self.base_url = base_url or os.getenv("REPLICATE_BASE_URL") or "https://api.replicate.com/v1"
+        self.base_url = (
+            base_url or os.getenv("REPLICATE_BASE_URL") or "https://api.replicate.com/v1"
+        )
         self.timeout = timeout
         self.max_retries = max_retries
-        
+
         self.generation_model = FLUX_MODEL if generation_model == "flux" else SDXL_MODEL
 
     @classmethod
@@ -63,7 +69,7 @@ class ReplicateProvider(AIProvider):
             generation_model = config.config["generation_model"]
         elif config.model_name:
             generation_model = config.model_name
-            
+
         return cls(
             api_token=config.api_key,
             base_url=config.base_url,
@@ -86,7 +92,10 @@ class ReplicateProvider(AIProvider):
             async with session.post(
                 f"{self.base_url}/predictions",
                 headers=headers,
-                json={"version": model.split(":")[-1] if ":" in model else model, "input": input_data},
+                json={
+                    "version": model.split(":")[-1] if ":" in model else model,
+                    "input": input_data,
+                },
                 timeout=aiohttp.ClientTimeout(total=30),
             ) as response:
                 if response.status == 401:
@@ -96,17 +105,17 @@ class ReplicateProvider(AIProvider):
                 if response.status >= 400:
                     error_text = await response.text()
                     raise ProviderError(f"Replicate API error: {error_text}")
-                
+
                 prediction = await response.json()
 
             prediction_id = prediction["id"]
             get_url = f"{self.base_url}/predictions/{prediction_id}"
-            
+
             elapsed = 0.0
             while elapsed < self.timeout:
                 await asyncio.sleep(poll_interval)
                 elapsed += poll_interval
-                
+
                 async with session.get(
                     get_url,
                     headers=headers,
@@ -114,7 +123,7 @@ class ReplicateProvider(AIProvider):
                 ) as response:
                     result = await response.json()
                     status = result.get("status")
-                    
+
                     if status == "succeeded":
                         return result
                     elif status == "failed":
@@ -143,9 +152,9 @@ class ReplicateProvider(AIProvider):
         """Generate pattern using SDXL or Flux on Replicate."""
         if params.init_image_b64:
             return await self._generate_img2img(style, params)
-        
+
         prompt = self._build_prompt(style, params)
-        
+
         if "flux" in self.generation_model.lower():
             input_data = {
                 "prompt": prompt,
@@ -171,30 +180,30 @@ class ReplicateProvider(AIProvider):
             try:
                 result = await self._run_prediction(self.generation_model, input_data)
                 output = result.get("output")
-                
+
                 if isinstance(output, list) and output:
                     image_url = output[0]
                 elif isinstance(output, str):
                     image_url = output
                 else:
                     raise ProviderError(f"Unexpected output format: {output}")
-                
+
                 image_bytes = await self._download_image(image_url)
-                
+
                 logger.info(
                     f"Pattern generated: {params.width}x{params.height}, seed={params.seed}"
                 )
                 return image_bytes
-                
+
             except (ProviderTimeoutError, ProviderRateLimitError):
                 if attempt == self.max_retries - 1:
                     raise
-                await asyncio.sleep(2 ** attempt)
+                await asyncio.sleep(2**attempt)
             except Exception as e:
                 logger.error(f"Generation attempt {attempt + 1} failed: {e}")
                 if attempt == self.max_retries - 1:
                     raise ProviderError(f"Generation failed after {self.max_retries} attempts: {e}")
-                await asyncio.sleep(2 ** attempt)
+                await asyncio.sleep(2**attempt)
 
         raise ProviderError("Generation failed")
 
@@ -213,10 +222,10 @@ class ReplicateProvider(AIProvider):
         elif raw_scale <= 6.0:
             scale = 4
         else:
-            scale = 4
-            
+            scale = 8
+
         image_uri = await self._upload_image_data_uri(image)
-        
+
         input_data = {
             "image": image_uri,
             "scale": scale,
@@ -227,26 +236,26 @@ class ReplicateProvider(AIProvider):
             try:
                 result = await self._run_prediction(ESRGAN_MODEL, input_data)
                 output = result.get("output")
-                
+
                 if isinstance(output, str):
                     image_url = output
                 else:
                     raise ProviderError(f"Unexpected output format: {output}")
-                
+
                 upscaled_bytes = await self._download_image(image_url)
-                
+
                 logger.info(f"Image upscaled: {input_size}px -> {target_size}px (scale={scale})")
                 return upscaled_bytes
-                
+
             except (ProviderTimeoutError, ProviderRateLimitError):
                 if attempt == self.max_retries - 1:
                     raise
-                await asyncio.sleep(2 ** attempt)
+                await asyncio.sleep(2**attempt)
             except Exception as e:
-                logger.error(f"Upscale attempt {attempt + 1} failed: {e}")
+                logger.error(f"Upscale attempt {attempt + 1} failed: {e}", exc_info=True)
                 if attempt == self.max_retries - 1:
                     raise ProviderError(f"Upscaling failed after {self.max_retries} attempts: {e}")
-                await asyncio.sleep(2 ** attempt)
+                await asyncio.sleep(2**attempt)
 
         raise ProviderError("Upscaling failed")
 
@@ -281,14 +290,12 @@ class ReplicateProvider(AIProvider):
         )
         return f"{fabric_context} Style requirements: {base_prompt}"
 
-    async def _generate_img2img(
-        self, style: StyleAnalysis, params: GenerationParams
-    ) -> bytes:
+    async def _generate_img2img(self, style: StyleAnalysis, params: GenerationParams) -> bytes:
         """Generate pattern using SDXL img2img on Replicate."""
         prompt = self._build_fabric_prompt(style, params)
-        
+
         init_image_uri = f"data:image/jpeg;base64,{params.init_image_b64}"
-        
+
         input_data = {
             "image": init_image_uri,
             "prompt": prompt,
@@ -305,16 +312,16 @@ class ReplicateProvider(AIProvider):
             try:
                 result = await self._run_prediction(SDXL_IMG2IMG_MODEL, input_data)
                 output = result.get("output")
-                
+
                 if isinstance(output, list) and output:
                     image_url = output[0]
                 elif isinstance(output, str):
                     image_url = output
                 else:
                     raise ProviderError(f"Unexpected output format: {output}")
-                
+
                 image_bytes = await self._download_image(image_url)
-                
+
                 logger.info(
                     f"img2img generated: model={SDXL_IMG2IMG_MODEL}, "
                     f"strength={params.strength}, seed={params.seed}"
@@ -324,18 +331,20 @@ class ReplicateProvider(AIProvider):
             except (ProviderTimeoutError, ProviderRateLimitError):
                 if attempt == self.max_retries - 1:
                     raise
-                await asyncio.sleep(2 ** attempt)
+                await asyncio.sleep(2**attempt)
             except Exception as e:
                 logger.error(f"img2img attempt {attempt + 1} failed: {e}")
                 if attempt == self.max_retries - 1:
                     raise ProviderError(
                         f"img2img failed after {self.max_retries} attempts: {e}"
                     ) from e
-                await asyncio.sleep(2 ** attempt)
+                await asyncio.sleep(2**attempt)
 
         raise ProviderError("img2img generation failed")
 
-    async def analyze_style(self, image: bytes, prompt_override: str | None = None) -> StyleAnalysis:
+    async def analyze_style(
+        self, image: bytes, prompt_override: str | None = None
+    ) -> StyleAnalysis:
         raise NotImplementedError("Use GPT4VProvider for style analysis")
 
     async def vectorize(self, image: bytes, color_space: str = "rgb") -> bytes:

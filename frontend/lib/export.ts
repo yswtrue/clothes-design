@@ -1,9 +1,9 @@
-import type { ExportResponse, ExportStatusResponse } from '@/types/export';
+import type { ExportFormat, ExportResponse, ExportStatusResponse } from '@/types/export';
 import { apiRequest } from './api';
 
-export async function triggerExport(designId: number): Promise<ExportResponse> {
+export async function triggerExport(designId: number, format: ExportFormat = 'svg'): Promise<ExportResponse> {
   return apiRequest<ExportResponse>(
-    `/api/export/designs/${designId}`,
+    `/api/export/generated-designs/${designId}?format=${format}`,
     {
       method: 'POST',
     }
@@ -29,7 +29,7 @@ export async function pollExportStatus(
       onProgress(status);
     }
 
-    if (status.status === 'complete') {
+    if (status.status === 'exported') {
       return status;
     }
 

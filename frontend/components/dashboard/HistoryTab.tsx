@@ -2,7 +2,8 @@
 
 import { useState, useEffect } from 'react';
 import Image from 'next/image';
-import { fetchHistory, deleteGeneratedDesign, triggerExport, getExportStatus } from '@/lib/history';
+import { useRouter } from 'next/navigation';
+import { fetchHistory, deleteGeneratedDesign } from '@/lib/history';
 import type { MaterialWithDesigns, GeneratedDesign } from '@/types/history';
 import ConfirmModal from '@/components/history/ConfirmModal';
 import Pagination from '@/components/history/Pagination';
@@ -37,12 +38,10 @@ function GeneratedDesignCard({
   design,
   onExport,
   onDelete,
-  isExporting,
 }: {
   design: GeneratedDesign;
   onExport: () => void;
   onDelete: () => void;
-  isExporting: boolean;
 }) {
   const imageUrl = design.thumbnail_url || design.image_url;
   
@@ -86,10 +85,10 @@ function GeneratedDesignCard({
         <div className="flex gap-2">
           <button
             onClick={onExport}
-            disabled={isExporting || !['completed', 'exported'].includes(design.status)}
+            disabled={!['completed', 'exported'].includes(design.status)}
             className="flex-1 px-2 py-1.5 text-xs bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400 rounded hover:bg-blue-100 dark:hover:bg-blue-900/40 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
           >
-            {isExporting ? '导出中...' : design.exported_at ? '重新导出' : '导出'}
+            {design.exported_at ? '重新导出' : '导出'}
           </button>
           <button
             onClick={onDelete}
@@ -109,14 +108,12 @@ function MaterialCard({
   onToggleExpand,
   onExportDesign,
   onDeleteDesign,
-  exportingDesignId,
 }: {
   material: MaterialWithDesigns;
   isExpanded: boolean;
   onToggleExpand: () => void;
   onExportDesign: (designId: number) => void;
   onDeleteDesign: (design: GeneratedDesign) => void;
-  exportingDesignId: number | null;
 }) {
   return (
     <div className="rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 overflow-hidden">
@@ -182,7 +179,6 @@ function MaterialCard({
                 design={design}
                 onExport={() => onExportDesign(design.id)}
                 onDelete={() => onDeleteDesign(design)}
-                isExporting={exportingDesignId === design.id}
               />
             ))}
           </div>
@@ -199,6 +195,7 @@ function MaterialCard({
 }
 
 export default function HistoryTab() {
+  const router = useRouter();
   const [state, setState] = useState<PageState>('loading');
   const [materials, setMaterials] = useState<MaterialWithDesigns[]>([]);
   const [expandedMaterialIds, setExpandedMaterialIds] = useState<Set<number>>(new Set());
@@ -206,7 +203,6 @@ export default function HistoryTab() {
   const [totalPages, setTotalPages] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
-  const [exportingDesignId, setExportingDesignId] = useState<number | null>(null);
   const [retryTrigger, setRetryTrigger] = useState(0);
 
   const [confirmModal, setConfirmModal] = useState<ConfirmModalState>({
@@ -309,64 +305,8 @@ export default function HistoryTab() {
     window.scrollTo({ top: 0, behavior: 'smooth' });
   }
 
-  async function downloadFile(url: string, filename: string) {
-    const response = await fetch(url);
-    const blob = await response.blob();
-    const blobUrl = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = blobUrl;
-    link.download = filename;
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    URL.revokeObjectURL(blobUrl);
-  }
-
-  async function handleExport(designId: number) {
-    setExportingDesignId(designId);
-    setError(null);
-
-    try {
-      const response = await triggerExport(designId);
-
-      if (response.status === 'exported' && response.download_url) {
-        await downloadFile(response.download_url, `design-${designId}-export.svg`);
-        setSuccessMessage('导出完成，文件已开始下载');
-        setExportingDesignId(null);
-        return;
-      }
-
-      if (!response.task_id) {
-        throw new Error('导出失败：无法获取任务ID');
-      }
-
-      const maxAttempts = 60;
-      let attempts = 0;
-
-      while (attempts < maxAttempts) {
-        await new Promise((resolve) => setTimeout(resolve, 2000));
-        const status = await getExportStatus(response.task_id);
-
-        if ((status.status === 'complete' || status.status === 'exported') && status.download_url) {
-          await downloadFile(status.download_url, `design-${designId}-export.svg`);
-          setSuccessMessage('导出完成，文件已开始下载');
-          setExportingDesignId(null);
-          setRetryTrigger((prev) => prev + 1);
-          return;
-        }
-
-        if (status.status === 'failed') {
-          throw new Error(status.error || '导出失败');
-        }
-
-        attempts++;
-      }
-
-      throw new Error('导出超时，请重试');
-    } catch (err) {
-      setError(err instanceof Error ? err.message : '导出失败');
-      setExportingDesignId(null);
-    }
+  function handleExport(designId: number) {
+    router.push(`/export/${designId}`);
   }
 
   return (
@@ -433,7 +373,6 @@ export default function HistoryTab() {
                 onToggleExpand={() => toggleExpand(material.id)}
                 onExportDesign={handleExport}
                 onDeleteDesign={confirmDeleteDesign}
-                exportingDesignId={exportingDesignId}
               />
             ))}
           </div>

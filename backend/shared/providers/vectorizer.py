@@ -1,5 +1,8 @@
 """Vectorizer.ai provider for raster-to-vector conversion with CMYK TIF output."""
 
+import asyncio
+import logging
+
 import aiohttp
 
 from config import get_settings
@@ -7,10 +10,11 @@ from shared.ai.base import AIProvider
 from shared.ai.exceptions import (
     ProviderConfigurationError,
     ProviderRateLimitError,
-    ProviderTimeoutError,
 )
 from shared.ai.schemas import GenerationParams, Position, StyleAnalysis
 from shared.providers.config_loader import ProviderConfig
+
+logger = logging.getLogger(__name__)
 
 
 class VectorizerError(Exception):
@@ -71,6 +75,7 @@ class VectorizerProvider(AIProvider):
         min_area_px: float = 0.5,
         gap_filler_enabled: bool = True,
         gap_filler_stroke_width: float = 2.0,
+        max_retries: int = 3,
     ) -> bytes:
         """Convert raster image to SVG format using Vectorizer.ai.
 
@@ -86,10 +91,43 @@ class VectorizerProvider(AIProvider):
                 discarded. Higher = removes tiny fragments. Default 0.5 (was 0.125).
             gap_filler_enabled: Fill gaps between shapes to prevent white line artifacts.
             gap_filler_stroke_width: Width of gap filler strokes.
+            max_retries: Maximum retry attempts for transient network errors.
 
         Returns:
             Vectorized image as SVG bytes
         """
+        last_error: Exception | None = None
+
+        for attempt in range(max_retries):
+            try:
+                return await self._do_vectorize(
+                    image,
+                    line_fit_tolerance=line_fit_tolerance,
+                    min_area_px=min_area_px,
+                    gap_filler_enabled=gap_filler_enabled,
+                    gap_filler_stroke_width=gap_filler_stroke_width,
+                )
+            except (aiohttp.ClientPayloadError, aiohttp.ServerTimeoutError) as e:
+                last_error = e
+                logger.warning(f"Vectorize attempt {attempt + 1} failed: {e}")
+                if attempt < max_retries - 1:
+                    await asyncio.sleep(2**attempt)
+            except aiohttp.ClientError as e:
+                raise VectorizerError(f"Network error during vectorization: {e}") from e
+
+        raise VectorizerError(
+            f"Vectorization failed after {max_retries} attempts: {last_error}"
+        ) from last_error
+
+    async def _do_vectorize(
+        self,
+        image: bytes,
+        *,
+        line_fit_tolerance: float,
+        min_area_px: float,
+        gap_filler_enabled: bool,
+        gap_filler_stroke_width: float,
+    ) -> bytes:
         form = aiohttp.FormData()
         form.add_field("image", image, content_type="image/png", filename="input.png")
         form.add_field("output.file_format", "svg")
@@ -104,48 +142,39 @@ class VectorizerProvider(AIProvider):
         form.add_field("output.curves.allowed.circular_arc", "true")
         form.add_field("output.curves.allowed.elliptical_arc", "true")
 
-        try:
-            auth = aiohttp.BasicAuth(self.api_id, self.api_secret)
-            async with aiohttp.ClientSession() as session:
-                async with session.post(
-                    f"{self.base_url}/vectorize",
-                    auth=auth,
-                    data=form,
-                    timeout=aiohttp.ClientTimeout(total=self.timeout),
-                ) as response:
-                    # Handle specific errors
-                    if response.status == 401:
-                        raise ProviderConfigurationError("Invalid Vectorizer API key")
+        auth = aiohttp.BasicAuth(self.api_id, self.api_secret)
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                f"{self.base_url}/vectorize",
+                auth=auth,
+                data=form,
+                timeout=aiohttp.ClientTimeout(total=self.timeout),
+            ) as response:
+                if response.status == 401:
+                    raise ProviderConfigurationError("Invalid Vectorizer API key")
 
-                    if response.status == 429:
-                        retry_after = int(response.headers.get("Retry-After", 60))
-                        raise ProviderRateLimitError(
-                            f"Rate limit exceeded. Retry after {retry_after}s"
-                        )
+                if response.status == 429:
+                    retry_after = int(response.headers.get("Retry-After", 60))
+                    raise ProviderRateLimitError(f"Rate limit exceeded. Retry after {retry_after}s")
 
-                    if response.status == 415:
-                        raise ValueError("Unsupported image format")
+                if response.status == 415:
+                    raise ValueError("Unsupported image format")
 
-                    if response.status == 413:
-                        raise ValueError("Image file too large")
+                if response.status == 413:
+                    raise ValueError("Image file too large")
 
-                    response.raise_for_status()
+                response.raise_for_status()
 
-                    # Stream download for large TIF files
-                    chunks = []
-                    async for chunk in response.content.iter_chunked(8192):
-                        chunks.append(chunk)
+                chunks = []
+                async for chunk in response.content.iter_chunked(8192):
+                    chunks.append(chunk)
 
-                    return b"".join(chunks)
-
-        except aiohttp.ServerTimeoutError as e:
-            raise ProviderTimeoutError(f"Vectorization timed out after {self.timeout}s") from e
-
-        except aiohttp.ClientError as e:
-            raise VectorizerError(f"Network error during vectorization: {e}") from e
+                return b"".join(chunks)
 
     # Unimplemented AIProvider methods
-    async def analyze_style(self, image: bytes, prompt_override: str | None = None) -> StyleAnalysis:
+    async def analyze_style(
+        self, image: bytes, prompt_override: str | None = None
+    ) -> StyleAnalysis:
         raise NotImplementedError("Style analysis not supported by Vectorizer.ai")
 
     async def generate_pattern(self, style: StyleAnalysis, params: GenerationParams) -> bytes:

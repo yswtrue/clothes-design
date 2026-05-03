@@ -2,10 +2,10 @@
 
 import { use, useState, useEffect } from 'react';
 import { triggerExport, pollExportStatus } from '@/lib/export';
-import { ExportStatusResponse } from '@/types/export';
+import { fetchGeneratedDesign } from '@/lib/history';
+import type { ExportFormat, ExportStatusResponse } from '@/types/export';
 import ExportProgress from '@/components/export/ExportProgress';
 import DownloadButton from '@/components/export/DownloadButton';
-import { apiRequest } from '@/lib/api';
 
 type ExportState = 'idle' | 'loading' | 'exporting' | 'complete' | 'error';
 
@@ -21,6 +21,7 @@ export default function ExportPage({ params }: PageProps) {
 
   const [state, setState] = useState<ExportState>('idle');
   const [exportStatus, setExportStatus] = useState<ExportStatusResponse | null>(null);
+  const [exportFormat, setExportFormat] = useState<ExportFormat | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
 
@@ -32,13 +33,8 @@ export default function ExportPage({ params }: PageProps) {
     setState('loading');
     setError(null);
     try {
-      const design = await apiRequest<{ preview_state?: { pattern_url: string } }>(
-        `/api/designs/${designIdNum}`
-      );
-      
-      if (design.preview_state?.pattern_url) {
-        setPreviewUrl(design.preview_state.pattern_url);
-      }
+      const design = await fetchGeneratedDesign(designIdNum);
+      setPreviewUrl(design.thumbnail_url || design.image_url || null);
       setState('idle');
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load design');
@@ -46,19 +42,40 @@ export default function ExportPage({ params }: PageProps) {
     }
   };
 
-  const handleExport = async () => {
+  const handleExport = async (format: ExportFormat) => {
     setState('exporting');
+    setExportFormat(format);
     setError(null);
     setExportStatus(null);
 
     try {
-      const response = await triggerExport(designIdNum);
+      const response = await triggerExport(designIdNum, format);
+
+      if (!response.task_id && response.status === 'exported' && response.download_url) {
+        setExportStatus({
+          task_id: '',
+          generated_design_id: designIdNum,
+          format: format,
+          status: 'exported',
+          progress: 100,
+          current_step: 'complete',
+          download_url: response.download_url,
+          upscaled_url: response.upscaled_url,
+          error: null,
+        });
+        setState('complete');
+        return;
+      }
+
+      if (!response.task_id) {
+        throw new Error('No task ID returned');
+      }
 
       const completedStatus = await pollExportStatus(response.task_id, (status) => {
         setExportStatus(status);
       });
 
-      if (completedStatus.status === 'complete' && completedStatus.download_url) {
+      if (completedStatus.status === 'exported' && completedStatus.download_url) {
         setState('complete');
       } else if (completedStatus.status === 'failed') {
         setError(completedStatus.error || 'Export failed');
@@ -73,6 +90,7 @@ export default function ExportPage({ params }: PageProps) {
   const handleReset = () => {
     setState('idle');
     setExportStatus(null);
+    setExportFormat(null);
     setError(null);
   };
 
@@ -155,21 +173,13 @@ export default function ExportPage({ params }: PageProps) {
                 <h2 className="text-lg font-medium text-zinc-950 dark:text-zinc-50 mb-4">
                   Export Options
                 </h2>
-                <div className="space-y-3">
+                <div className="space-y-3 mb-6">
                   <div className="flex justify-between items-center py-2 border-b border-zinc-200 dark:border-zinc-800">
                     <span className="text-sm font-medium text-zinc-700 dark:text-zinc-300">
                       Resolution
                     </span>
                     <span className="text-sm text-zinc-600 dark:text-zinc-400">
                       12K (12000px)
-                    </span>
-                  </div>
-                  <div className="flex justify-between items-center py-2 border-b border-zinc-200 dark:border-zinc-800">
-                    <span className="text-sm font-medium text-zinc-700 dark:text-zinc-300">
-                      Format
-                    </span>
-                    <span className="text-sm text-zinc-600 dark:text-zinc-400">
-                      TIF (CMYK)
                     </span>
                   </div>
                   <div className="flex justify-between items-center py-2">
@@ -182,13 +192,46 @@ export default function ExportPage({ params }: PageProps) {
                   </div>
                 </div>
 
-                <button
-                  onClick={handleExport}
-                  disabled={state === 'exporting'}
-                  className="w-full mt-6 rounded-md bg-zinc-950 dark:bg-zinc-50 px-4 py-3 text-sm font-medium text-white dark:text-zinc-950 hover:bg-zinc-800 dark:hover:bg-zinc-200 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  {state === 'exporting' ? 'Exporting...' : 'Start Export'}
-                </button>
+                <div className="space-y-3">
+                  <button
+                    onClick={() => handleExport('svg')}
+                    disabled={state === 'exporting'}
+                    className="w-full rounded-md border-2 border-zinc-950 dark:border-zinc-50 bg-transparent px-4 py-3 text-sm font-medium text-zinc-950 dark:text-zinc-50 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    {state === 'exporting' && exportFormat === 'svg' ? (
+                      'Exporting SVG...'
+                    ) : (
+                      <span className="flex items-center justify-center gap-2">
+                        <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z" />
+                        </svg>
+                        Export SVG (Vector)
+                      </span>
+                    )}
+                  </button>
+
+                  <button
+                    onClick={() => handleExport('tif')}
+                    disabled={state === 'exporting'}
+                    className="w-full rounded-md bg-zinc-950 dark:bg-zinc-50 px-4 py-3 text-sm font-medium text-white dark:text-zinc-950 hover:bg-zinc-800 dark:hover:bg-zinc-200 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    {state === 'exporting' && exportFormat === 'tif' ? (
+                      'Exporting TIF...'
+                    ) : (
+                      <span className="flex items-center justify-center gap-2">
+                        <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                        </svg>
+                        Export TIF (CMYK, Print-Ready)
+                      </span>
+                    )}
+                  </button>
+                </div>
+
+                <p className="mt-4 text-xs text-zinc-500 dark:text-zinc-500 text-center">
+                  SVG: Infinitely scalable vector format<br />
+                  TIF: 300 DPI CMYK for professional printing
+                </p>
               </div>
             </div>
 
@@ -204,18 +247,19 @@ export default function ExportPage({ params }: PageProps) {
           </div>
         )}
 
-        {state === 'complete' && exportStatus?.download_url && (
+        {state === 'complete' && exportStatus?.download_url && exportFormat && (
           <div className="max-w-2xl mx-auto space-y-6">
             <DownloadButton
               downloadUrl={exportStatus.download_url}
               designId={designIdNum}
+              format={exportFormat}
             />
             <div className="text-center">
               <button
                 onClick={handleReset}
                 className="text-sm text-zinc-600 dark:text-zinc-400 hover:text-zinc-950 dark:hover:text-zinc-50 transition-colors"
               >
-                Export Another Design
+                Export Another Format
               </button>
             </div>
           </div>

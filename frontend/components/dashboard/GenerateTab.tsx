@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect } from 'react';
 import { submitGeneration, pollTaskStatus, getPromptTemplates, PromptTemplateResponse } from '@/lib/generate';
 import { Material } from '@/types/upload';
 import { GenerateRequest, TaskStatusResponse } from '@/types/generate';
@@ -9,7 +9,7 @@ import PrintTypeSelector from '@/components/generate/PrintTypeSelector';
 import { LazyGenerationProgress, LazyPatternResult } from '@/components/LazyComponents';
 import { apiRequest } from '@/lib/api';
 
-type GenerateState = 'idle' | 'loading_materials' | 'ready' | 'generating' | 'complete' | 'error';
+type GenerateState = 'idle' | 'loading_materials' | 'ready' | 'generating' | 'complete' | 'error' | 'pending_background';
 
 export default function GenerateTab() {
   const [state, setState] = useState<GenerateState>('idle');
@@ -25,42 +25,10 @@ export default function GenerateTab() {
   const [resultPatternUrl, setResultPatternUrl] = useState<string | null>(null);
   const [resultFileName, setResultFileName] = useState<string>('');
   const [designId, setDesignId] = useState<number | null>(null);
-  const [showTimeoutHint, setShowTimeoutHint] = useState(false);
-  const [elapsedSeconds, setElapsedSeconds] = useState(0);
-  const timerRef = useRef<NodeJS.Timeout | null>(null);
 
   useEffect(() => {
     loadMaterials();
   }, []);
-
-  useEffect(() => {
-    return () => {
-      if (timerRef.current) {
-        clearInterval(timerRef.current);
-      }
-    };
-  }, []);
-
-  const startTimer = () => {
-    setElapsedSeconds(0);
-    setShowTimeoutHint(false);
-    timerRef.current = setInterval(() => {
-      setElapsedSeconds((prev) => {
-        const next = prev + 1;
-        if (next >= 60 && !showTimeoutHint) {
-          setShowTimeoutHint(true);
-        }
-        return next;
-      });
-    }, 1000);
-  };
-
-  const stopTimer = () => {
-    if (timerRef.current) {
-      clearInterval(timerRef.current);
-      timerRef.current = null;
-    }
-  };
 
   const loadMaterials = async () => {
     setState('loading_materials');
@@ -118,7 +86,6 @@ export default function GenerateTab() {
     setState('generating');
     setError(null);
     setTaskStatus(null);
-    startTimer();
 
     try {
       const request: GenerateRequest = {
@@ -134,8 +101,6 @@ export default function GenerateTab() {
       const completedTask = await pollTaskStatus(response.task_id, (task) => {
         setTaskStatus(task);
       });
-
-      stopTimer();
 
       if (completedTask.status === 'completed' && completedTask.result) {
         if (completedTask.result.status === 'error') {
@@ -161,16 +126,16 @@ export default function GenerateTab() {
       } else if (completedTask.status === 'failed') {
         setError(completedTask.error || '生成失败');
         setState('error');
+      } else if (completedTask.status === 'pending' || completedTask.status === 'processing') {
+        setState('pending_background');
       }
     } catch (err) {
-      stopTimer();
       setError(err instanceof Error ? err.message : '生成图案失败');
       setState('error');
     }
   };
 
   const handleReset = () => {
-    stopTimer();
     setSelectedMaterial(null);
     setPrintType('seamless');
     setPrompt('');
@@ -181,8 +146,6 @@ export default function GenerateTab() {
     setResultPatternUrl(null);
     setResultFileName('');
     setDesignId(null);
-    setShowTimeoutHint(false);
-    setElapsedSeconds(0);
     setState('ready');
   };
 
@@ -300,58 +263,11 @@ export default function GenerateTab() {
 
           <div className="lg:col-span-1">
             {state === 'generating' && (
-              <div className="space-y-4">
-                <LazyGenerationProgress
-                  task={taskStatus}
-                  isPolling={true}
-                  error={error || undefined}
-                />
-                
-                {showTimeoutHint && (
-                  <div className="rounded-lg border border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-900/20 p-4">
-                    <div className="flex items-start gap-3">
-                      <svg
-                        className="h-5 w-5 text-amber-600 dark:text-amber-400 flex-shrink-0 mt-0.5"
-                        fill="none"
-                        viewBox="0 0 24 24"
-                        stroke="currentColor"
-                      >
-                        <path
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                          strokeWidth={2}
-                          d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"
-                        />
-                      </svg>
-                      <div className="flex-1">
-                        <h3 className="text-sm font-medium text-amber-800 dark:text-amber-200">
-                          生成时间较长 ({elapsedSeconds}秒)
-                        </h3>
-                        <p className="mt-1 text-sm text-amber-700 dark:text-amber-300">
-                          AI 正在努力生成图案，您可以：
-                        </p>
-                        <div className="mt-3 flex flex-col gap-2">
-                          <a
-                            href="/dashboard?tab=history"
-                            className="inline-flex items-center justify-center rounded-md bg-amber-100 dark:bg-amber-800/50 px-3 py-2 text-sm font-medium text-amber-800 dark:text-amber-200 hover:bg-amber-200 dark:hover:bg-amber-800 transition-colors"
-                          >
-                            <svg className="h-4 w-4 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
-                            </svg>
-                            去设计历史查看进度
-                          </a>
-                          <button
-                            onClick={() => setShowTimeoutHint(false)}
-                            className="inline-flex items-center justify-center rounded-md border border-amber-300 dark:border-amber-700 px-3 py-2 text-sm font-medium text-amber-700 dark:text-amber-300 hover:bg-amber-100 dark:hover:bg-amber-900/50 transition-colors"
-                          >
-                            继续等待
-                          </button>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                )}
-              </div>
+              <LazyGenerationProgress
+                task={taskStatus}
+                isPolling={true}
+                error={error || undefined}
+              />
             )}
           </div>
         </div>
@@ -364,6 +280,46 @@ export default function GenerateTab() {
             fileName={resultFileName}
             onGenerateAnother={handleReset}
           />
+        </div>
+      )}
+
+      {state === 'pending_background' && (
+        <div className="max-w-md mx-auto">
+          <div className="rounded-lg border border-blue-200 dark:border-blue-800 bg-blue-50 dark:bg-blue-900/20 p-6 text-center">
+            <svg
+              className="h-12 w-12 text-blue-600 dark:text-blue-400 mx-auto mb-4"
+              fill="none"
+              viewBox="0 0 24 24"
+              stroke="currentColor"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"
+              />
+            </svg>
+            <h3 className="text-lg font-medium text-blue-800 dark:text-blue-200 mb-2">
+              图案生成中
+            </h3>
+            <p className="text-sm text-blue-700 dark:text-blue-300 mb-4">
+              AI 正在努力生成图案，您可以前往设计历史查看进度
+            </p>
+            <div className="flex flex-col gap-3">
+              <a
+                href="/dashboard?tab=history"
+                className="inline-flex items-center justify-center rounded-md bg-blue-600 dark:bg-blue-500 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 dark:hover:bg-blue-600 transition-colors"
+              >
+                查看设计历史
+              </a>
+              <button
+                onClick={handleReset}
+                className="inline-flex items-center justify-center rounded-md border border-blue-300 dark:border-blue-700 px-4 py-2 text-sm font-medium text-blue-700 dark:text-blue-300 hover:bg-blue-100 dark:hover:bg-blue-900/50 transition-colors"
+              >
+                继续生成新图案
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>

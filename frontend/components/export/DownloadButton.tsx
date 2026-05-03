@@ -1,11 +1,29 @@
 'use client';
 
+import type { ExportFormat } from '@/types/export';
+
 interface DownloadButtonProps {
   downloadUrl: string;
   designId: number;
+  format: ExportFormat;
 }
 
-export default function DownloadButton({ downloadUrl, designId }: DownloadButtonProps) {
+const formatLabels: Record<ExportFormat, { name: string; extension: string; description: string }> = {
+  svg: {
+    name: 'SVG',
+    extension: 'svg',
+    description: 'Vector format, infinitely scalable',
+  },
+  tif: {
+    name: 'TIF',
+    extension: 'tif',
+    description: 'CMYK, 300 DPI, print-ready',
+  },
+};
+
+export default function DownloadButton({ downloadUrl, designId, format }: DownloadButtonProps) {
+  const formatInfo = formatLabels[format];
+
   return (
     <div className="rounded-lg border border-green-200 dark:border-green-800 bg-green-50 dark:bg-green-900/20 p-6">
       <div className="flex flex-col items-center gap-4">
@@ -29,12 +47,12 @@ export default function DownloadButton({ downloadUrl, designId }: DownloadButton
             Export Complete!
           </h3>
           <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-400">
-            Your high-resolution TIF file is ready for download
+            Your {formatInfo.name} file is ready for download
           </p>
         </div>
         <a
           href={downloadUrl}
-          download={`design-${designId}-12K-CMYK.tif`}
+          download={`design-${designId}-12K.${formatInfo.extension}`}
           className="inline-flex items-center gap-2 rounded-md bg-zinc-950 dark:bg-zinc-50 px-6 py-3 text-sm font-medium text-white dark:text-zinc-950 hover:bg-zinc-800 dark:hover:bg-zinc-200 transition-colors"
         >
           <svg
@@ -50,10 +68,10 @@ export default function DownloadButton({ downloadUrl, designId }: DownloadButton
               d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"
             />
           </svg>
-          Download TIF (CMYK, 12K)
+          Download {formatInfo.name}
         </a>
         <p className="text-xs text-zinc-500 dark:text-zinc-500">
-          Format: TIF • Color Space: CMYK • Resolution: 12000px
+          Format: {formatInfo.name} • {formatInfo.description}
         </p>
       </div>
     </div>

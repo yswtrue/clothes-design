@@ -8,8 +8,6 @@ from alembic import context
 from config import get_settings
 from api.db.models import (
     AIProviderConfig,
-    Design,
-    DesignVersion,
     GeneratedDesign,
     LoginSession,
     Material,
@@ -37,7 +35,9 @@ def render_item(type_, obj, autogen_context):
 
 def get_sqlalchemy_url() -> str:
     settings = get_settings()
-    return settings.database.connection_url.replace("postgresql+asyncpg://", "postgresql://")
+    return settings.database.connection_url.replace(
+        "postgresql+asyncpg://", "postgresql://"
+    )
 
 
 def run_migrations_offline() -> None:

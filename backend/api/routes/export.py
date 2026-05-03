@@ -1,8 +1,8 @@
-"""Export API endpoints for high-resolution TIF CMYK exports."""
+"""Export API endpoints for high-resolution SVG and TIF CMYK exports."""
 
-from typing import Annotated
+from typing import Annotated, Literal
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from api.auth.dependencies import get_current_user
 from api.db.base import get_session
 from api.db.models import GeneratedDesign, Material, User
-from api.storage.storages import upscaled_storage, vector_storage
+from api.storage.storages import output_tif_storage, upscaled_storage, vector_storage
 from shared.task_queue import (
     enqueue_task,
     get_task_status,
@@ -20,6 +20,8 @@ from shared.task_queue import (
 )
 
 router = APIRouter(prefix="/api/export", tags=["export"])
+
+ExportFormat = Literal["svg", "tif"]
 
 _session_dep = Annotated[AsyncSession, Depends(get_session)]
 _user_dep = Annotated[User, Depends(get_current_user)]
@@ -38,6 +40,7 @@ def _get_file_path(file_obj) -> str | None:
 class ExportResponse(BaseModel):
     task_id: str | None = None
     generated_design_id: int
+    format: ExportFormat
     status: str = "pending"
     download_url: str | None = None
     upscaled_url: str | None = None
@@ -46,6 +49,7 @@ class ExportResponse(BaseModel):
 class ExportStatusResponse(BaseModel):
     task_id: str
     generated_design_id: int | None = None
+    format: ExportFormat | None = None
     status: str
     progress: int = 0
     current_step: str | None = None
@@ -63,6 +67,7 @@ async def trigger_export(
     generated_design_id: int,
     session: _session_dep,
     current_user: _user_dep,
+    format: ExportFormat = Query(default="svg", description="Export format: svg or tif"),
 ):
     result = await session.execute(
         select(GeneratedDesign).where(GeneratedDesign.id == generated_design_id)
@@ -103,12 +108,25 @@ async def trigger_export(
 
     existing_vector = _get_file_path(generated_design.vector_svg)
     existing_upscaled = _get_file_path(generated_design.upscaled_image)
-    if existing_vector and existing_upscaled:
+    existing_tif = _get_file_path(generated_design.export_tif)
+
+    if format == "svg" and existing_vector and existing_upscaled:
         return ExportResponse(
             task_id=None,
             generated_design_id=generated_design_id,
+            format=format,
             status="exported",
             download_url=vector_storage.get_url(existing_vector),
+            upscaled_url=upscaled_storage.get_url(existing_upscaled),
+        )
+
+    if format == "tif" and existing_tif and existing_upscaled:
+        return ExportResponse(
+            task_id=None,
+            generated_design_id=generated_design_id,
+            format=format,
+            status="exported",
+            download_url=output_tif_storage.get_url(existing_tif),
             upscaled_url=upscaled_storage.get_url(existing_upscaled),
         )
 
@@ -124,7 +142,7 @@ async def trigger_export(
         "generated_design_id": generated_design_id,
         "target_resolution": 12000,
         "color_space": "CMYK",
-        "format": "tif",
+        "format": format,
     }
 
     task_id = await enqueue_task(
@@ -136,6 +154,7 @@ async def trigger_export(
     return ExportResponse(
         task_id=task_id,
         generated_design_id=generated_design_id,
+        format=format,
         status="pending",
     )
 
@@ -161,6 +180,7 @@ async def get_export_status(
         )
 
     generated_design_id = task_status.data.get("generated_design_id") if task_status.data else None
+    export_format = task_status.data.get("format", "svg") if task_status.data else "svg"
     current_step = None
     progress = 0
     download_url = None
@@ -179,6 +199,9 @@ async def get_export_status(
         if step_info == "vectorizing":
             current_step = "vectorizing"
             progress = 60
+        elif step_info == "converting":
+            current_step = "converting"
+            progress = 60
         else:
             current_step = "upscaling"
             progress = 25
@@ -193,6 +216,7 @@ async def get_export_status(
     return ExportStatusResponse(
         task_id=task_id,
         generated_design_id=generated_design_id,
+        format=export_format,
         status=export_status,
         progress=progress,
         current_step=current_step,

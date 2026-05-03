@@ -1,6 +1,6 @@
 'use client';
 
-import { ExportStatusResponse } from '@/types/export';
+import type { ExportStatusResponse } from '@/types/export';
 
 interface ExportProgressProps {
   status: ExportStatusResponse | null;
@@ -11,12 +11,16 @@ interface ExportProgressProps {
 export default function ExportProgress({ status, isPolling, error }: ExportProgressProps) {
   if (!isPolling && !status && !error) return null;
 
-  const getStepText = (currentStep: string | null): string => {
+  const getStepText = (currentStep: string | null, format: string | null): string => {
+    const formatLabel = format === 'tif' ? 'TIF' : 'SVG';
     if (currentStep === 'upscaling') {
       return 'Step 1/2: Upscaling to 12K resolution...';
     }
     if (currentStep === 'vectorizing') {
-      return 'Step 2/2: Converting to CMYK TIF...';
+      return `Step 2/2: Vectorizing to ${formatLabel}...`;
+    }
+    if (currentStep === 'converting') {
+      return `Step 2/2: Converting to ${formatLabel} (CMYK)...`;
     }
     if (currentStep === 'complete') {
       return 'Export complete!';
@@ -85,7 +89,7 @@ export default function ExportProgress({ status, isPolling, error }: ExportProgr
             </div>
             <div className="text-center w-full">
               <h3 className="text-lg font-medium text-zinc-950 dark:text-zinc-50">
-                {getStepText(status?.current_step || null)}
+                {getStepText(status?.current_step || null, status?.format || null)}
               </h3>
               <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-400">
                 Processing high-resolution export... this may take 1-2 minutes

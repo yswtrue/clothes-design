@@ -3,7 +3,15 @@ from typing import Any, Optional
 
 from api.auth.security import verify_password
 from api.db.base import AsyncSessionLocal, engine
-from api.db.models import AIProviderConfig, Material, PrjTemplate, PromptTemplate, Role, User, UserRole
+from api.db.models import (
+    AIProviderConfig,
+    Material,
+    PrjTemplate,
+    PromptTemplate,
+    Role,
+    User,
+    UserRole,
+)
 from sqlalchemy import select
 from starlette.requests import Request
 from starlette.responses import Response
@@ -162,6 +170,33 @@ class AIProviderConfigView(ModelView):
             obj.is_active = data["is_active"]
 
 
+class MaterialView(ModelView):
+    name = "Material"
+    label = "Materials"
+
+    fields = [
+        IntegerField("id", exclude_from_create=True, exclude_from_edit=True),
+        IntegerField("uploaded_by", exclude_from_create=True, exclude_from_edit=True),
+        StringField("original_filename", label="原始文件名"),
+        StringField(
+            "stored_filename", label="存储文件名", exclude_from_create=True, exclude_from_edit=True
+        ),
+        IntegerField(
+            "file_size", label="文件大小", exclude_from_create=True, exclude_from_edit=True
+        ),
+        StringField(
+            "mime_type", label="MIME 类型", exclude_from_create=True, exclude_from_edit=True
+        ),
+        FileField("file", label="文件", exclude_from_list=True),
+        JSONField("meta", label="元数据", exclude_from_list=True),
+        StringField("created_at", exclude_from_create=True, exclude_from_edit=True),
+    ]
+
+    exclude_fields_from_list = ["meta", "created_at", "deleted_at", "stored_filename"]
+    searchable_fields = ["original_filename", "mime_type"]
+    sortable_fields = ["id", "original_filename", "file_size", "created_at"]
+
+
 class PrjTemplateView(ModelView):
     name = "PRJ Template"
     label = "PRJ Templates"
@@ -262,7 +297,7 @@ def create_admin() -> Admin:
     admin.add_view(ModelView(User, icon="fa fa-users"))
     admin.add_view(ModelView(Role, icon="fa fa-shield"))
     admin.add_view(ModelView(UserRole, icon="fa fa-user-tag"))
-    admin.add_view(ModelView(Material, icon="fa fa-image"))
+    admin.add_view(MaterialView(Material, icon="fa fa-image"))
     admin.add_view(PrjTemplateView(PrjTemplate, icon="fa fa-file-code"))
     admin.add_view(PromptTemplateView(PromptTemplate, icon="fa fa-comment-alt"))
     admin.add_view(AIProviderConfigView(AIProviderConfig, icon="fa fa-key"))
