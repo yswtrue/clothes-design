@@ -32,7 +32,7 @@ class GPTProtoProvider(AIProvider):
         api_key: str | None = None,
         base_url: str | None = None,
         model: str | None = None,
-        timeout: int = 300,
+        timeout: int = 600,
         max_retries: int = 3,
     ) -> None:
         self.api_key = api_key or os.getenv("GPTPROTO_API_KEY")
@@ -41,7 +41,9 @@ class GPTProtoProvider(AIProvider):
                 "Missing GPTProto API key. Set GPTPROTO_API_KEY environment variable."
             )
 
-        self.base_url = (base_url or os.getenv("GPTPROTO_BASE_URL") or self.DEFAULT_BASE_URL).rstrip("/")
+        self.base_url = (
+            base_url or os.getenv("GPTPROTO_BASE_URL") or self.DEFAULT_BASE_URL
+        ).rstrip("/")
         self.model = model or os.getenv("GPTPROTO_MODEL") or self.DEFAULT_MODEL
         self.timeout = timeout
         self.max_retries = max_retries
@@ -135,12 +137,17 @@ class GPTProtoProvider(AIProvider):
                             raise ProviderRateLimitError("GPTProto rate limit exceeded")
 
                         if response.status == 401:
-                            raise ProviderConfigurationError(f"Invalid API key: {response_text[:200]}")
+                            raise ProviderConfigurationError(
+                                f"Invalid API key: {response_text[:200]}"
+                            )
 
                         if response.status >= 400:
-                            raise ProviderError(f"API error {response.status}: {response_text[:500]}")
+                            raise ProviderError(
+                                f"API error {response.status}: {response_text[:500]}"
+                            )
 
                         import json
+
                         data = json.loads(response_text)
 
                         if "data" in data and data["data"]:
@@ -182,7 +189,9 @@ class GPTProtoProvider(AIProvider):
             except aiohttp.ClientError as e:
                 logger.error(f"GPTProto attempt {attempt + 1} failed: {e}")
                 if attempt == self.max_retries - 1:
-                    raise ProviderError(f"Request failed after {self.max_retries} attempts: {e}") from e
+                    raise ProviderError(
+                        f"Request failed after {self.max_retries} attempts: {e}"
+                    ) from e
                 await asyncio.sleep(2**attempt)
 
         raise ProviderError("Request failed")
@@ -193,7 +202,9 @@ class GPTProtoProvider(AIProvider):
                 raise ProviderError(f"Failed to download image: {response.status}")
             return await response.read()
 
-    async def analyze_style(self, image: bytes, prompt_override: str | None = None) -> StyleAnalysis:
+    async def analyze_style(
+        self, image: bytes, prompt_override: str | None = None
+    ) -> StyleAnalysis:
         raise NotImplementedError("Use GPT4VProvider for style analysis")
 
     async def upscale_image(self, image: bytes, target_size: int) -> bytes:

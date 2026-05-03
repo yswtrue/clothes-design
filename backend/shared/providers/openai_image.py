@@ -29,7 +29,7 @@ class OpenAIImageProvider(AIProvider):
         api_key: str | None = None,
         base_url: str | None = None,
         model: str = "dall-e-3",
-        timeout: int = 300,
+        timeout: int = 600,
         max_retries: int = 3,
     ) -> None:
         self.api_key = api_key or os.getenv("OPENAI_API_KEY")
