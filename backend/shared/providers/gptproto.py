@@ -2,6 +2,7 @@
 
 import asyncio
 import base64
+import json
 import logging
 import os
 from typing import Any
@@ -21,9 +22,11 @@ from shared.providers.config_loader import ProviderConfig
 logger = logging.getLogger(__name__)
 
 
-class GPTProtoProvider(AIProvider):
-    """GPTProto provider for Gemini image generation and editing."""
+POLL_INTERVAL_SECONDS = 2
+MAX_POLL_ATTEMPTS = 150
 
+
+class GPTProtoProvider(AIProvider):
     DEFAULT_BASE_URL = "https://gptproto.com/api/v3"
     DEFAULT_MODEL = "google/gemini-3.1-flash-image-preview"
 
@@ -34,6 +37,7 @@ class GPTProtoProvider(AIProvider):
         model: str | None = None,
         timeout: int = 600,
         max_retries: int = 3,
+        sync_mode: bool = False,
     ) -> None:
         self.api_key = api_key or os.getenv("GPTPROTO_API_KEY")
         if not self.api_key:
@@ -47,13 +51,16 @@ class GPTProtoProvider(AIProvider):
         self.model = model or os.getenv("GPTPROTO_MODEL") or self.DEFAULT_MODEL
         self.timeout = timeout
         self.max_retries = max_retries
+        self.sync_mode = sync_mode
 
     @classmethod
     def from_config(cls, config: ProviderConfig) -> "GPTProtoProvider":
+        extra_config = config.config or {}
         return cls(
             api_key=config.api_key,
             base_url=config.base_url,
             model=config.model_name,
+            sync_mode=extra_config.get("sync_mode", False),
         )
 
     def _build_prompt(self, style: StyleAnalysis, params: GenerationParams) -> str:
@@ -82,14 +89,15 @@ class GPTProtoProvider(AIProvider):
 
     async def _generate_text2img(self, style: StyleAnalysis, params: GenerationParams) -> bytes:
         prompt = self._build_prompt(style, params)
-        url = f"{self.base_url}/{self.model}/image-gen"
+        model_path = self.model.replace("google/", "")
+        url = f"{self.base_url}/google/{model_path}/text-to-image"
 
-        payload = {
+        payload: dict[str, Any] = {
             "prompt": prompt,
             "size": "1K",
             "aspect_ratio": "1:1",
             "output_format": "png",
-            "enable_sync_mode": True,
+            "enable_sync_mode": self.sync_mode,
             "enable_base64_output": True,
         }
 
@@ -100,17 +108,20 @@ class GPTProtoProvider(AIProvider):
             raise ProviderError("init_image_b64 is required for image editing")
 
         prompt = self._build_prompt(style, params)
-        url = f"{self.base_url}/{self.model}/image-edit"
+        model_path = self.model.replace("google/", "")
+        url = f"{self.base_url}/google/{model_path}/image-edit"
 
-        image_data_uri = f"data:image/png;base64,{params.init_image_b64}"
+        image_input = params.init_image_b64
+        if not image_input.startswith("http"):
+            image_input = f"data:image/png;base64,{params.init_image_b64}"
 
-        payload = {
+        payload: dict[str, Any] = {
             "prompt": prompt,
-            "images": [image_data_uri],
+            "images": [image_input],
             "size": "1K",
             "aspect_ratio": "1:1",
             "output_format": "png",
-            "enable_sync_mode": True,
+            "enable_sync_mode": self.sync_mode,
             "enable_base64_output": True,
         }
 
@@ -118,7 +129,7 @@ class GPTProtoProvider(AIProvider):
 
     async def _make_request(self, url: str, payload: dict[str, Any]) -> bytes:
         headers = {
-            "Authorization": f"Bearer {self.api_key}",
+            "Authorization": self.api_key,
             "Content-Type": "application/json",
         }
 
@@ -146,37 +157,8 @@ class GPTProtoProvider(AIProvider):
                                 f"API error {response.status}: {response_text[:500]}"
                             )
 
-                        import json
-
                         data = json.loads(response_text)
-
-                        if "data" in data and data["data"]:
-                            image_data = data["data"][0]
-                            if isinstance(image_data, dict):
-                                if "b64_json" in image_data:
-                                    return base64.b64decode(image_data["b64_json"])
-                                elif "url" in image_data:
-                                    return await self._download_image(session, image_data["url"])
-                            elif isinstance(image_data, str):
-                                if image_data.startswith("http"):
-                                    return await self._download_image(session, image_data)
-                                else:
-                                    return base64.b64decode(image_data)
-
-                        if "image" in data:
-                            img = data["image"]
-                            if isinstance(img, str):
-                                if img.startswith("http"):
-                                    return await self._download_image(session, img)
-                                return base64.b64decode(img)
-
-                        if "url" in data:
-                            return await self._download_image(session, data["url"])
-
-                        if "b64_json" in data:
-                            return base64.b64decode(data["b64_json"])
-
-                        raise ProviderError(f"Unexpected response format: {response_text[:500]}")
+                        return await self._process_response(session, data, headers)
 
             except (ProviderRateLimitError, ProviderTimeoutError):
                 if attempt == self.max_retries - 1:
@@ -195,6 +177,138 @@ class GPTProtoProvider(AIProvider):
                 await asyncio.sleep(2**attempt)
 
         raise ProviderError("Request failed")
+
+    async def _process_response(
+        self,
+        session: aiohttp.ClientSession,
+        data: dict[str, Any],
+        headers: dict[str, str],
+    ) -> bytes:
+        if "data" in data and isinstance(data["data"], dict):
+            response_data = data["data"]
+            status = response_data.get("status", "")
+
+            if status in ("processing", "starting", "pending"):
+                return await self._poll_for_result(session, response_data, headers)
+
+            outputs = response_data.get("outputs", [])
+            if outputs:
+                return await self._extract_image_from_outputs(session, outputs)
+
+            urls = response_data.get("urls", {})
+            if isinstance(urls, dict) and urls.get("get"):
+                return await self._poll_url(session, urls["get"], headers)
+
+        return await self._extract_image_legacy(session, data)
+
+    async def _poll_for_result(
+        self,
+        session: aiohttp.ClientSession,
+        response_data: dict[str, Any],
+        headers: dict[str, str],
+    ) -> bytes:
+        prediction_id = response_data.get("id")
+        urls = response_data.get("urls", {})
+
+        if isinstance(urls, dict) and urls.get("get"):
+            poll_url = urls["get"]
+        elif prediction_id:
+            poll_url = f"{self.base_url}/predictions/{prediction_id}/result"
+        else:
+            raise ProviderError("No prediction ID or URL found for polling")
+
+        return await self._poll_url(session, poll_url, headers)
+
+    async def _poll_url(
+        self,
+        session: aiohttp.ClientSession,
+        poll_url: str,
+        headers: dict[str, str],
+    ) -> bytes:
+        for _ in range(MAX_POLL_ATTEMPTS):
+            await asyncio.sleep(POLL_INTERVAL_SECONDS)
+
+            async with session.get(
+                poll_url,
+                headers=headers,
+                timeout=aiohttp.ClientTimeout(total=60),
+            ) as response:
+                if response.status == 202:
+                    continue
+
+                if response.status != 200:
+                    response_text = await response.text()
+                    raise ProviderError(
+                        f"Poll request failed: {response.status} - {response_text[:200]}"
+                    )
+
+                data = json.loads(await response.text())
+
+                if "data" in data and isinstance(data["data"], dict):
+                    status = data["data"].get("status", "")
+                    if status == "failed":
+                        error = data["data"].get("error", "Unknown error")
+                        raise ProviderError(f"Generation failed: {error}")
+                    if status in ("processing", "starting", "pending"):
+                        continue
+
+                    outputs = data["data"].get("outputs", [])
+                    if outputs:
+                        return await self._extract_image_from_outputs(session, outputs)
+
+                return await self._extract_image_legacy(session, data)
+
+        raise ProviderTimeoutError(
+            f"Polling timed out after {MAX_POLL_ATTEMPTS * POLL_INTERVAL_SECONDS}s"
+        )
+
+    async def _extract_image_from_outputs(
+        self, session: aiohttp.ClientSession, outputs: list[Any]
+    ) -> bytes:
+        for output in outputs:
+            if isinstance(output, dict):
+                if "b64_json" in output:
+                    return base64.b64decode(output["b64_json"])
+                if "url" in output:
+                    return await self._download_image(session, output["url"])
+            elif isinstance(output, str):
+                if output.startswith("http"):
+                    return await self._download_image(session, output)
+                else:
+                    return base64.b64decode(output)
+
+        raise ProviderError("No image found in outputs")
+
+    async def _extract_image_legacy(
+        self, session: aiohttp.ClientSession, data: dict[str, Any]
+    ) -> bytes:
+        if "data" in data and isinstance(data["data"], list) and data["data"]:
+            image_data = data["data"][0]
+            if isinstance(image_data, dict):
+                if "b64_json" in image_data:
+                    return base64.b64decode(image_data["b64_json"])
+                elif "url" in image_data:
+                    return await self._download_image(session, image_data["url"])
+            elif isinstance(image_data, str):
+                if image_data.startswith("http"):
+                    return await self._download_image(session, image_data)
+                else:
+                    return base64.b64decode(image_data)
+
+        if "image" in data:
+            img = data["image"]
+            if isinstance(img, str):
+                if img.startswith("http"):
+                    return await self._download_image(session, img)
+                return base64.b64decode(img)
+
+        if "url" in data:
+            return await self._download_image(session, data["url"])
+
+        if "b64_json" in data:
+            return base64.b64decode(data["b64_json"])
+
+        raise ProviderError(f"Unexpected response format: {json.dumps(data)[:500]}")
 
     async def _download_image(self, session: aiohttp.ClientSession, url: str) -> bytes:
         async with session.get(url, timeout=aiohttp.ClientTimeout(total=60)) as response:

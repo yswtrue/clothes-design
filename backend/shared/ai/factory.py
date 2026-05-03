@@ -20,7 +20,7 @@ class Capability(str, Enum):
 
 CAPABILITY_PROVIDER_TYPES: dict[Capability, list[str]] = {
     Capability.ANALYSIS: ["openai"],
-    Capability.IMAGE_GENERATION: ["openai_image_edit"],
+    Capability.IMAGE_GENERATION: ["gptproto", "openai_image_edit"],
     Capability.UPSCALE: ["replicate"],
     Capability.VECTORIZE: ["vectorizer_ai"],
 }
@@ -28,6 +28,7 @@ CAPABILITY_PROVIDER_TYPES: dict[Capability, list[str]] = {
 
 def _get_provider_class(provider_type: str) -> type[Any]:
     from shared.providers.gpt4v import GPT4VProvider
+    from shared.providers.gptproto import GPTProtoProvider
     from shared.providers.openai_image import OpenAIImageProvider
     from shared.providers.replicate import ReplicateProvider
     from shared.providers.vectorizer import VectorizerProvider
@@ -35,6 +36,7 @@ def _get_provider_class(provider_type: str) -> type[Any]:
     providers: dict[str, type[Any]] = {
         "openai": GPT4VProvider,
         "openai_image_edit": OpenAIImageProvider,
+        "gptproto": GPTProtoProvider,
         "replicate": ReplicateProvider,
         "vectorizer_ai": VectorizerProvider,
     }

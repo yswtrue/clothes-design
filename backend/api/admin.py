@@ -34,6 +34,7 @@ from starlette_admin.fields import (
 class ProviderType(str, Enum):
     OPENAI = "openai"
     OPENAI_IMAGE_EDIT = "openai_image_edit"
+    GPTPROTO = "gptproto"
     REPLICATE = "replicate"
     VECTORIZER_AI = "vectorizer_ai"
 
@@ -47,6 +48,7 @@ class TaskType(str, Enum):
 DEFAULT_BASE_URLS = {
     "openai": "https://api.openai.com/v1",
     "openai_image_edit": "https://api.openai.com/v1",
+    "gptproto": "https://gptproto.com/api/v3",
     "replicate": "https://api.replicate.com/v1",
     "vectorizer_ai": "https://api.vectorizer.ai/api/v1",
 }
