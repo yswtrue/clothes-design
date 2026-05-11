@@ -37,7 +37,7 @@ class GPTProtoProvider(AIProvider):
         model: str | None = None,
         timeout: int = 600,
         max_retries: int = 3,
-        sync_mode: bool = False,
+        sync_mode: bool = True,
     ) -> None:
         self.api_key = api_key or os.getenv("GPTPROTO_API_KEY")
         if not self.api_key:
@@ -60,7 +60,7 @@ class GPTProtoProvider(AIProvider):
             api_key=config.api_key,
             base_url=config.base_url,
             model=config.model_name,
-            sync_mode=extra_config.get("sync_mode", False),
+            sync_mode=extra_config.get("sync_mode", True),
         )
 
     def _build_prompt(self, style: StyleAnalysis, params: GenerationParams) -> str:
@@ -188,7 +188,7 @@ class GPTProtoProvider(AIProvider):
             response_data = data["data"]
             status = response_data.get("status", "")
 
-            if status in ("processing", "starting", "pending"):
+            if status in ("processing", "starting", "pending", "created"):
                 return await self._poll_for_result(session, response_data, headers)
 
             outputs = response_data.get("outputs", [])
@@ -249,7 +249,7 @@ class GPTProtoProvider(AIProvider):
                     if status == "failed":
                         error = data["data"].get("error", "Unknown error")
                         raise ProviderError(f"Generation failed: {error}")
-                    if status in ("processing", "starting", "pending"):
+                    if status in ("processing", "starting", "pending", "created"):
                         continue
 
                     outputs = data["data"].get("outputs", [])

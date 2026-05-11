@@ -41,14 +41,46 @@ DEFAULT_TEMPLATES = [
 
 Requirements:
 1. Remove all fabric textures (weave, knit, material grain)
-2. Ignore surface occlusions (wrinkles, shadows, overlays, dust, loose threads)
+2. Ignore surface occlusions (wrinkles, folds, overlays, dust, loose threads)
 3. Complete missing or obscured pattern areas, maintaining style consistency
 4. Output a clean, flat vector-style pattern with crisp edges and solid colors
+
+Color Correction (IMPORTANT):
+- Remove all shadow effects and restore true colors as if under neutral flat lighting
+- For faded or washed-out areas, restore colors to full saturation and intended brightness
+- Infer the original vibrant colors from the brightest/clearest areas of the same color region
+- Ensure uniform color across the entire pattern (no lighting gradients or color shifts)
 
 Style: {style_description}
 Colors: {color_palette}
 Output: {width}x{height} pixels, {pattern_type} pattern""",
-        "description": "从布料照片还原原始平面图案，去除布纹和遮挡物，补全缺失部分",
+        "description": "从布料照片还原原始平面图案，去除布纹和遮挡物，补全缺失部分，校正阴影和褪色",
+        "is_default": 0,
+        "is_active": 1,
+    },
+    {
+        "name": "图案元素提取生成模板",
+        "task_type": "img2img",
+        "provider_type": None,
+        "template": """Extract pattern elements from this fabric photo and generate a similar flat pattern design.
+
+Requirements:
+1. Identify and extract the core pattern elements (motifs, shapes, decorative units)
+2. Remove all fabric textures (weave, knit, thread grain, material surface)
+3. Flatten the design - remove any 3D effects, folds, wrinkles, or perspective distortion
+4. Ignore all occlusions (shadows, overlays, objects, hands, tags, dust, loose threads)
+5. Generate a new pattern inspired by the extracted elements, maintaining similar style and composition
+
+Color Correction (IMPORTANT):
+- Remove all shadow effects and restore true colors as if under neutral flat lighting
+- For faded or washed-out areas, restore colors to full saturation and intended brightness
+- Infer the original vibrant colors from the brightest/clearest areas of the same color region
+- Ensure uniform color across the entire pattern (no lighting gradients or color shifts)
+
+Style: {style_description}
+Colors: {color_palette}
+Output: {width}x{height} pixels, clean flat {pattern_type} pattern with crisp edges""",
+        "description": "从布料照片提取图案元素，生成类似的平面图案，去除布纹、拉平、忽略遮挡物，校正颜色",
         "is_default": 0,
         "is_active": 1,
     },

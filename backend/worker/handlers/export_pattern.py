@@ -4,6 +4,7 @@ import uuid
 from datetime import datetime
 from typing import Any, Literal
 
+from PIL import Image
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from starlette.datastructures import UploadFile
@@ -172,11 +173,16 @@ class ExportPatternHandler(TaskHandler):
                 self.logger.info(f"Reusing existing upscaled image: {existing_upscaled_path}")
                 upscaled_bytes = await upscaled_storage.download(existing_upscaled_path)
                 upscaled_filename = existing_upscaled_path
+                if not image_filename:
+                    raise WorkerError(f"GeneratedDesign {generated_design_id} has no image path")
+                pattern_bytes = await generated_image_storage.download(image_filename)
+                original_size = Image.open(io.BytesIO(pattern_bytes)).size[0]
             else:
                 if not image_filename:
                     raise WorkerError(f"GeneratedDesign {generated_design_id} has no image path")
                 self.logger.info(f"Downloading pattern: {image_filename}")
                 pattern_bytes = await generated_image_storage.download(image_filename)
+                original_size = Image.open(io.BytesIO(pattern_bytes)).size[0]
 
                 upscaler = await self._get_upscaler()
                 self.logger.info(f"Upscaling pattern to {target_resolution}px")
@@ -198,6 +204,12 @@ class ExportPatternHandler(TaskHandler):
 
                 await self._save_upscaled_path(generated_design_id, upscaled_filename)
 
+            upscaled_size = Image.open(io.BytesIO(upscaled_bytes)).size[0]
+            export_dpi = 300
+            self.logger.info(
+                f"Export: {original_size}px -> {upscaled_size}px, DPI={export_dpi}"
+            )
+
             if export_format == "svg":
                 return await self._export_svg(
                     generated_design_id,
@@ -213,6 +225,7 @@ class ExportPatternHandler(TaskHandler):
                     upscaled_filename,
                     target_resolution,
                     color_space,
+                    export_dpi,
                 )
 
         except WorkerError:
@@ -275,11 +288,12 @@ class ExportPatternHandler(TaskHandler):
         upscaled_filename: str,
         target_resolution: int,
         color_space: ColorSpace,
+        dpi: int = 300,
     ) -> dict[str, Any]:
         from api.db.models import GeneratedDesign
 
-        self.logger.info(f"Converting to TIF ({color_space})")
-        tif_bytes = png_to_tif(upscaled_bytes, color_space=color_space, dpi=300)
+        self.logger.info(f"Converting to TIF ({color_space}, {dpi} DPI)")
+        tif_bytes = png_to_tif(upscaled_bytes, color_space=color_space, dpi=dpi)
         self.logger.info(f"Converted to TIF: {len(tif_bytes)} bytes")
 
         unique_id = uuid.uuid4().hex[:8]

@@ -128,6 +128,12 @@ def png_to_tif(
     if embedded_icc and "icc_profile" not in img.info:
         img.info["icc_profile"] = embedded_icc
 
+    # For RGB output without ICC profile, embed sRGB to ensure consistent color
+    if color_space == "RGB" and "icc_profile" not in img.info:
+        srgb_profile = _get_srgb_profile()
+        img.info["icc_profile"] = ImageCms.ImageCmsProfile(srgb_profile).tobytes()
+        logger.debug("Embedded sRGB profile for RGB TIF output")
+
     if color_space == "CMYK":
         if use_icc_profile:
             img = _convert_rgb_to_cmyk_with_profile(img)

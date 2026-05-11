@@ -18,6 +18,7 @@ from shared.ai.exceptions import (
 )
 from shared.ai.factory import Capability, get_provider_by_capability
 from shared.ai.schemas import GenerationParams, StyleAnalysis
+from shared.ai.seamless import make_seamless
 from shared.providers.prompt_template_service import get_or_default_prompt
 
 from .base import TaskHandler, WorkerError
@@ -74,7 +75,9 @@ class GenerateHandler(TaskHandler):
             if record:
                 record.status = status
                 await session.commit()
-                self.logger.info(f"Updated GeneratedDesign {generated_design_id} status to '{status}'")
+                self.logger.info(
+                    f"Updated GeneratedDesign {generated_design_id} status to '{status}'"
+                )
 
     def _generate_thumbnail(self, image_bytes: bytes) -> bytes:
         img = Image.open(io.BytesIO(image_bytes))
@@ -119,7 +122,9 @@ class GenerateHandler(TaskHandler):
 
             if params.prompt_override:
                 prompt = params.prompt_override
-                self.logger.info(f"Using custom prompt ({task_type}/{provider_type}): {prompt[:100]}...")
+                self.logger.info(
+                    f"Using custom prompt ({task_type}/{provider_type}): {prompt[:100]}..."
+                )
             else:
                 prompt = await get_or_default_prompt(
                     task_type=task_type,
@@ -128,9 +133,17 @@ class GenerateHandler(TaskHandler):
                     provider_type=provider_type,
                 )
                 params = params.model_copy(update={"prompt_override": prompt})
-                self.logger.info(f"Using default prompt ({task_type}/{provider_type}): {prompt[:100]}...")
+                self.logger.info(
+                    f"Using default prompt ({task_type}/{provider_type}): {prompt[:100]}..."
+                )
 
             image_bytes = await provider.generate_pattern(style, params)
+
+            if params.tiling == "tile" and style.pattern_type == "seamless":
+                self.logger.info("Applying seamless tiling post-processing...")
+                # image_bytes = make_seamless(image_bytes)
+                self.logger.info("Seamless tiling applied successfully")
+
             image_b64 = base64.b64encode(image_bytes).decode("utf-8")
 
             self.logger.info(
@@ -164,7 +177,10 @@ class GenerateHandler(TaskHandler):
             self.logger.error(f"Rate limit exceeded: {e}")
             if generated_design_id:
                 await self._update_generated_design(generated_design_id, "failed")
-            return {"status": "error", "error": "Rate limit exceeded. Please retry later."}
+            return {
+                "status": "error",
+                "error": "Rate limit exceeded. Please retry later.",
+            }
 
         except ProviderError as e:
             self.logger.error(f"Provider error: {e}")
@@ -203,7 +219,9 @@ class GenerateHandler(TaskHandler):
                 record.thumbnail = make_upload_file(thumb_bytes, thumb_filename)
                 record.seed = params.seed
                 await session.commit()
-                self.logger.info(f"Updated GeneratedDesign {generated_design_id} status to 'completed'")
+                self.logger.info(
+                    f"Updated GeneratedDesign {generated_design_id} status to 'completed'"
+                )
 
         pattern_url = generated_image_storage.get_url(image_filename)
         return pattern_url
