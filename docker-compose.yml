@@ -36,7 +36,7 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
       POSTGRES_DB: ${POSTGRES_DB:-clothes_design}
     ports:
-      - "${POSTGRES_PORT:-5432}:5432"
+      - "${POSTGRES_FORWARD_PORT:-127.0.0.1:5432}:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
@@ -51,7 +51,7 @@ services:
     container_name: clothes-design-redis
     command: redis-server --appendonly yes
     ports:
-      - "${REDIS_PORT:-6379}:6379"
+      - "${REDIS_FORWARD_PORT:-127.0.0.1:6379}:6379"
     volumes:
       - redis_data:/data
     healthcheck:
@@ -93,8 +93,6 @@ services:
       JWT_REFRESH_EXPIRY: ${JWT_REFRESH_EXPIRY:-604800}
       FRONTEND_URL: ${FRONTEND_URL:-http://localhost:3000}
       BACKEND_URL: ${BACKEND_URL:-http://localhost:8000}
-    ports:
-      - "${BACKEND_PORT:-8000}:8000"
     labels:
       - "traefik.enable=true"
       - "traefik.http.routers.backend.rule=Host(`${TRAEFIK_BACKEND_HOST:-api.localhost}`)"
@@ -148,8 +146,6 @@ services:
     container_name: clothes-design-frontend
     environment:
       BACKEND_API_URL: ${BACKEND_API_URL:-http://localhost:8000}
-    ports:
-      - "${FRONTEND_PORT:-3000}:3000"
     labels:
       - "traefik.enable=true"
       - "traefik.http.routers.frontend.rule=Host(`${TRAEFIK_FRONTEND_HOST:-localhost}`)"
