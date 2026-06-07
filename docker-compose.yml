@@ -62,7 +62,7 @@ services:
 
   traefik:
     <<: *service-defaults
-    image: traefik:v3.3
+    image: traefik:v3
     container_name: clothes-design-traefik
     command:
       - "--providers.docker=true"
