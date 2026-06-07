@@ -1,19 +1,16 @@
 import io
 import logging
 import uuid
+from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Literal
 
 from PIL import Image
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+from sqlmodel import col
 from starlette.datastructures import UploadFile
 
-from config import get_settings
-from shared.ai.base import AIProvider
-from shared.ai.exceptions import ProviderError
-from shared.ai.factory import Capability, get_provider_by_capability
-from shared.task_queue import release_export_slot
 from api.storage.converter import ColorSpace, png_to_tif
 from api.storage.storages import (
     generated_image_storage,
@@ -21,12 +18,32 @@ from api.storage.storages import (
     upscaled_storage,
     vector_storage,
 )
+from config import get_settings
+from shared.ai.base import AIProvider
+from shared.ai.exceptions import AIProviderError
+from shared.ai.factory import Capability, get_provider_by_capability
+from shared.task_queue import release_export_slot
 
 from .base import TaskHandler, WorkerError
 
 logger = logging.getLogger(__name__)
 
 ExportFormat = Literal["svg", "tif"]
+
+
+@dataclass(frozen=True)
+class ExportContext:
+    image_filename: str
+    existing_vector_path: str | None
+    existing_tif_path: str | None
+    existing_upscaled_path: str | None
+
+
+@dataclass(frozen=True)
+class UpscaledImage:
+    data: bytes
+    filename: str
+    original_size: int
 
 
 def make_upload_file(data: bytes, filename: str) -> UploadFile:
@@ -81,7 +98,7 @@ class ExportPatternHandler(TaskHandler):
         session_factory = await self._get_session_factory()
         async with session_factory() as session:
             result = await session.execute(
-                select(GeneratedDesign).where(GeneratedDesign.id == generated_design_id)
+                select(GeneratedDesign).where(col(GeneratedDesign.id) == generated_design_id)
             )
             record = result.scalar_one_or_none()
             if record:
@@ -118,6 +135,103 @@ class ExportPatternHandler(TaskHandler):
         if export_format not in ("svg", "tif"):
             raise WorkerError(f"Invalid format: {export_format}")
 
+    async def _load_export_context(self, generated_design_id: int) -> ExportContext:
+        from api.db.models import GeneratedDesign
+
+        session_factory = await self._get_session_factory()
+        async with session_factory() as session:
+            result = await session.execute(
+                select(GeneratedDesign).where(col(GeneratedDesign.id) == generated_design_id)
+            )
+            record = result.scalar_one_or_none()
+            if not record:
+                raise WorkerError(f"GeneratedDesign {generated_design_id} not found")
+            if not record.image:
+                raise WorkerError(f"GeneratedDesign {generated_design_id} has no image")
+
+            image_filename = _get_file_path(record.image)
+            if not image_filename:
+                raise WorkerError(f"GeneratedDesign {generated_design_id} has no image path")
+
+            return ExportContext(
+                image_filename=image_filename,
+                existing_vector_path=_get_file_path(record.vector_svg),
+                existing_tif_path=_get_file_path(record.export_tif),
+                existing_upscaled_path=_get_file_path(record.upscaled_image),
+            )
+
+    def _existing_export_response(
+        self,
+        generated_design_id: int,
+        target_resolution: int,
+        export_format: ExportFormat,
+        context: ExportContext,
+    ) -> dict[str, Any] | None:
+        if export_format == "svg" and context.existing_vector_path and context.existing_upscaled_path:
+            self.logger.info(f"Reusing existing SVG export: {context.existing_vector_path}")
+            return {
+                "download_url": vector_storage.get_url(context.existing_vector_path),
+                "generated_design_id": generated_design_id,
+                "resolution": target_resolution,
+                "format": "svg",
+                "upscaled_url": upscaled_storage.get_url(context.existing_upscaled_path),
+                "reused": True,
+            }
+
+        if export_format == "tif" and context.existing_tif_path and context.existing_upscaled_path:
+            self.logger.info(f"Reusing existing TIF export: {context.existing_tif_path}")
+            return {
+                "download_url": output_tif_storage.get_url(context.existing_tif_path),
+                "generated_design_id": generated_design_id,
+                "resolution": target_resolution,
+                "format": "tif",
+                "upscaled_url": upscaled_storage.get_url(context.existing_upscaled_path),
+                "reused": True,
+            }
+
+        return None
+
+    async def _prepare_upscaled_image(
+        self,
+        generated_design_id: int,
+        target_resolution: int,
+        context: ExportContext,
+    ) -> UpscaledImage:
+        pattern_bytes = await generated_image_storage.download(context.image_filename)
+        original_size = Image.open(io.BytesIO(pattern_bytes)).size[0]
+
+        if context.existing_upscaled_path:
+            self.logger.info(f"Reusing existing upscaled image: {context.existing_upscaled_path}")
+            upscaled_bytes = await upscaled_storage.download(context.existing_upscaled_path)
+            return UpscaledImage(
+                data=upscaled_bytes,
+                filename=context.existing_upscaled_path,
+                original_size=original_size,
+            )
+
+        self.logger.info(f"Downloading pattern: {context.image_filename}")
+        upscaler = await self._get_upscaler()
+        self.logger.info(f"Upscaling pattern to {target_resolution}px")
+        try:
+            upscaled_bytes = await upscaler.upscale_image(pattern_bytes, target_resolution)
+        except AIProviderError as e:
+            self.logger.error(
+                f"Upscale failed, reverting status to completed: {e}", exc_info=True
+            )
+            await self._update_status(generated_design_id, "completed")
+            raise WorkerError(f"Upscale failed: {e}") from e
+
+        self.logger.info(f"Upscaled: {len(pattern_bytes)} → {len(upscaled_bytes)} bytes")
+        upscaled_filename = f"gen_{generated_design_id}_{uuid.uuid4().hex[:8]}_upscaled.png"
+        await upscaled_storage.upload(upscaled_bytes, upscaled_filename)
+        self.logger.info(f"Saved upscaled image: {upscaled_filename}")
+        await self._save_upscaled_path(generated_design_id, upscaled_filename)
+        return UpscaledImage(
+            data=upscaled_bytes,
+            filename=upscaled_filename,
+            original_size=original_size,
+        )
+
     async def handle(self, task_data: dict[str, Any]) -> dict[str, Any]:
         await self.validate_input(task_data)
 
@@ -126,107 +240,47 @@ class ExportPatternHandler(TaskHandler):
         color_space: ColorSpace = task_data.get("color_space", "CMYK")
         export_format: ExportFormat = task_data.get("format", "svg")
 
-        from api.db.models import GeneratedDesign
-
         try:
-            session_factory = await self._get_session_factory()
-            async with session_factory() as session:
-                result = await session.execute(
-                    select(GeneratedDesign).where(GeneratedDesign.id == generated_design_id)
-                )
-                record = result.scalar_one_or_none()
-                if not record:
-                    raise WorkerError(f"GeneratedDesign {generated_design_id} not found")
-                if not record.image:
-                    raise WorkerError(f"GeneratedDesign {generated_design_id} has no image")
-
-                existing_vector_path = _get_file_path(record.vector_svg)
-                existing_tif_path = _get_file_path(record.export_tif)
-                existing_upscaled_path = _get_file_path(record.upscaled_image)
-                image_filename = _get_file_path(record.image)
-
-            if export_format == "svg" and existing_vector_path and existing_upscaled_path:
-                self.logger.info(f"Reusing existing SVG export: {existing_vector_path}")
-                return {
-                    "download_url": vector_storage.get_url(existing_vector_path),
-                    "generated_design_id": generated_design_id,
-                    "resolution": target_resolution,
-                    "format": "svg",
-                    "upscaled_url": upscaled_storage.get_url(existing_upscaled_path),
-                    "reused": True,
-                }
-
-            if export_format == "tif" and existing_tif_path and existing_upscaled_path:
-                self.logger.info(f"Reusing existing TIF export: {existing_tif_path}")
-                return {
-                    "download_url": output_tif_storage.get_url(existing_tif_path),
-                    "generated_design_id": generated_design_id,
-                    "resolution": target_resolution,
-                    "format": "tif",
-                    "upscaled_url": upscaled_storage.get_url(existing_upscaled_path),
-                    "reused": True,
-                }
+            context = await self._load_export_context(generated_design_id)
+            existing_export = self._existing_export_response(
+                generated_design_id,
+                target_resolution,
+                export_format,
+                context,
+            )
+            if existing_export:
+                return existing_export
 
             await self._update_status(generated_design_id, "exporting")
+            upscaled = await self._prepare_upscaled_image(
+                generated_design_id,
+                target_resolution,
+                context,
+            )
 
-            if existing_upscaled_path:
-                self.logger.info(f"Reusing existing upscaled image: {existing_upscaled_path}")
-                upscaled_bytes = await upscaled_storage.download(existing_upscaled_path)
-                upscaled_filename = existing_upscaled_path
-                if not image_filename:
-                    raise WorkerError(f"GeneratedDesign {generated_design_id} has no image path")
-                pattern_bytes = await generated_image_storage.download(image_filename)
-                original_size = Image.open(io.BytesIO(pattern_bytes)).size[0]
-            else:
-                if not image_filename:
-                    raise WorkerError(f"GeneratedDesign {generated_design_id} has no image path")
-                self.logger.info(f"Downloading pattern: {image_filename}")
-                pattern_bytes = await generated_image_storage.download(image_filename)
-                original_size = Image.open(io.BytesIO(pattern_bytes)).size[0]
-
-                upscaler = await self._get_upscaler()
-                self.logger.info(f"Upscaling pattern to {target_resolution}px")
-                try:
-                    upscaled_bytes = await upscaler.upscale_image(pattern_bytes, target_resolution)
-                except ProviderError as e:
-                    self.logger.error(
-                        f"Upscale failed, reverting status to completed: {e}", exc_info=True
-                    )
-                    await self._update_status(generated_design_id, "completed")
-                    raise WorkerError(f"Upscale failed: {e}") from e
-                self.logger.info(f"Upscaled: {len(pattern_bytes)} → {len(upscaled_bytes)} bytes")
-
-                unique_id = uuid.uuid4().hex[:8]
-                upscaled_filename = f"gen_{generated_design_id}_{unique_id}_upscaled.png"
-
-                await upscaled_storage.upload(upscaled_bytes, upscaled_filename)
-                self.logger.info(f"Saved upscaled image: {upscaled_filename}")
-
-                await self._save_upscaled_path(generated_design_id, upscaled_filename)
-
-            upscaled_size = Image.open(io.BytesIO(upscaled_bytes)).size[0]
+            upscaled_size = Image.open(io.BytesIO(upscaled.data)).size[0]
             export_dpi = 300
             self.logger.info(
-                f"Export: {original_size}px -> {upscaled_size}px, DPI={export_dpi}"
+                f"Export: {upscaled.original_size}px -> {upscaled_size}px, DPI={export_dpi}"
             )
 
             if export_format == "svg":
                 return await self._export_svg(
                     generated_design_id,
-                    upscaled_bytes,
-                    upscaled_filename,
+                    upscaled.data,
+                    upscaled.filename,
                     target_resolution,
                     color_space,
                 )
-            else:
-                return await self._export_tif(
-                    generated_design_id,
-                    upscaled_bytes,
-                    upscaled_filename,
-                    target_resolution,
-                    color_space,
-                    export_dpi,
-                )
+
+            return await self._export_tif(
+                generated_design_id,
+                upscaled.data,
+                upscaled.filename,
+                target_resolution,
+                color_space,
+                export_dpi,
+            )
 
         except WorkerError:
             raise
@@ -258,7 +312,7 @@ class ExportPatternHandler(TaskHandler):
         session_factory = await self._get_session_factory()
         async with session_factory() as session:
             result = await session.execute(
-                select(GeneratedDesign).where(GeneratedDesign.id == generated_design_id)
+                select(GeneratedDesign).where(col(GeneratedDesign.id) == generated_design_id)
             )
             record = result.scalar_one_or_none()
             if record:
@@ -302,7 +356,7 @@ class ExportPatternHandler(TaskHandler):
         session_factory = await self._get_session_factory()
         async with session_factory() as session:
             result = await session.execute(
-                select(GeneratedDesign).where(GeneratedDesign.id == generated_design_id)
+                select(GeneratedDesign).where(col(GeneratedDesign.id) == generated_design_id)
             )
             record = result.scalar_one_or_none()
             if record:

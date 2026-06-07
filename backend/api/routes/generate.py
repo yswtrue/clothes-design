@@ -1,17 +1,20 @@
 """Pattern generation API endpoints."""
 
-from typing import Annotated
+import base64
+from typing import Annotated, cast
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.sql.elements import ColumnElement
 
-from shared.ai.schemas import GenerationParams, StyleAnalysis
 from api.auth.dependencies import get_current_user
 from api.db.base import get_session
 from api.db.models import GeneratedDesign, Material, User
 from api.materials.schemas import MaterialMeta
+from api.storage.storages import material_storage
+from shared.ai.schemas import GenerationParams
 from shared.task_queue import enqueue_task, get_task_status
 
 router = APIRouter(prefix="/api/generate", tags=["generate"])
@@ -42,6 +45,20 @@ class TaskStatusResponse(BaseModel):
     error: str | None = None
 
 
+def _condition(value: object) -> ColumnElement[bool]:
+    return cast(ColumnElement[bool], value)
+
+
+async def _load_material_image_b64(material: Material) -> str | None:
+    if not material.file:
+        return None
+    if not material.stored_filename:
+        raise ValueError("Material has no stored filename")
+
+    image_bytes = await material_storage.download(material.stored_filename)
+    return base64.b64encode(image_bytes).decode("utf-8")
+
+
 @router.post("", response_model=GenerateResponse, status_code=status.HTTP_201_CREATED)
 async def generate_pattern(
     request: GenerateRequest,
@@ -50,7 +67,8 @@ async def generate_pattern(
 ):
     result = await session.execute(
         select(Material).where(
-            Material.id == request.material_id, Material.uploaded_by == current_user.id
+            _condition(Material.id == request.material_id),
+            _condition(Material.uploaded_by == current_user.id),
         )
     )
     material = result.scalar_one_or_none()
@@ -82,21 +100,19 @@ async def generate_pattern(
         colors = style_analysis.color_palette
 
     init_image_b64 = None
-    if request.use_img2img and material.file:
-        import base64
-
+    if request.use_img2img:
         try:
-            with material.file.open() as f:
-                image_bytes = f.read()
-            init_image_b64 = base64.b64encode(image_bytes).decode("utf-8")
+            init_image_b64 = await _load_material_image_b64(material)
         except Exception as e:
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail=f"Failed to load material image: {e}",
-            )
+            ) from e
 
     existing_count = await session.execute(
-        select(GeneratedDesign).where(GeneratedDesign.material_id == request.material_id)
+        select(GeneratedDesign).where(
+            _condition(GeneratedDesign.material_id == request.material_id)
+        )
     )
     next_version = len(existing_count.scalars().all())
 
@@ -109,6 +125,11 @@ async def generate_pattern(
     )
     session.add(generated_design)
     await session.flush()
+    if current_user.id is None or generated_design.id is None:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to initialize generation task",
+        )
 
     gen_params = GenerationParams(
         style=prompt,
@@ -133,7 +154,9 @@ async def generate_pattern(
 
     await session.commit()
 
-    return GenerateResponse(task_id=task_id, generated_design_id=generated_design.id, status="pending")
+    return GenerateResponse(
+        task_id=task_id, generated_design_id=generated_design.id, status="pending"
+    )
 
 
 @router.get("/tasks/{task_id}", response_model=TaskStatusResponse)

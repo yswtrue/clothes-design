@@ -16,9 +16,17 @@ class StorageSettings(BaseSettings):
     aws_secret_access_key: str = Field(default="", alias="AWS_SECRET_ACCESS_KEY")
     aws_s3_bucket: str = Field(default="", alias="AWS_S3_BUCKET")
     aws_s3_endpoint_url: str = Field(default="", alias="AWS_S3_ENDPOINT_URL")
+    aws_s3_custom_domain: str = Field(default="", alias="AWS_S3_CUSTOM_DOMAIN")
+    aws_s3_region_name: str = Field(default="", alias="AWS_S3_REGION_NAME")
+    aws_region: str = Field(default="", alias="AWS_REGION")
     aws_s3_use_ssl: bool = Field(default=True, alias="AWS_S3_USE_SSL")
     aws_default_acl: str = Field(default="", alias="AWS_DEFAULT_ACL")
     aws_querystring_auth: bool = Field(default=False, alias="AWS_QUERYSTRING_AUTH")
+
+    @computed_field
+    @property
+    def s3_region_name(self) -> str:
+        return self.aws_s3_region_name or self.aws_region
 
 
 class DatabaseSettings(BaseSettings):
@@ -93,9 +101,7 @@ class VectorizerSettings(BaseSettings):
 
     api_id: str = Field(default="", alias="VECTORIZER_API_ID")
     api_secret: str = Field(default="", alias="VECTORIZER_API_SECRET")
-    base_url: str = Field(
-        default="https://api.vectorizer.ai/api/v1", alias="VECTORIZER_BASE_URL"
-    )
+    base_url: str = Field(default="https://api.vectorizer.ai/api/v1", alias="VECTORIZER_BASE_URL")
     timeout: int = Field(default=300, alias="VECTORIZER_TIMEOUT")
 
 

@@ -1,11 +1,11 @@
-"""GPTProto provider for image generation and editing via Gemini models."""
+"""GPTProto provider for image generation and editing."""
 
 import asyncio
 import base64
 import json
 import logging
 import os
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import aiohttp
 
@@ -17,13 +17,20 @@ from shared.ai.exceptions import (
     ProviderTimeoutError,
 )
 from shared.ai.schemas import GenerationParams, Position, StyleAnalysis
-from shared.providers.config_loader import ProviderConfig
+
+if TYPE_CHECKING:
+    from shared.providers.config_loader import ProviderConfig
 
 logger = logging.getLogger(__name__)
 
 
 POLL_INTERVAL_SECONDS = 2
 MAX_POLL_ATTEMPTS = 150
+GPT_IMAGE_SIZE_MULTIPLE = 16
+GPT_IMAGE_MAX_EDGE = 3840
+GPT_IMAGE_MAX_ASPECT_RATIO = 3.0
+GPT_IMAGE_MIN_PIXELS = 655_360
+GPT_IMAGE_MAX_PIXELS = 8_294_400
 
 
 class GPTProtoProvider(AIProvider):
@@ -54,7 +61,7 @@ class GPTProtoProvider(AIProvider):
         self.sync_mode = sync_mode
 
     @classmethod
-    def from_config(cls, config: ProviderConfig) -> "GPTProtoProvider":
+    def from_config(cls, config: "ProviderConfig") -> "GPTProtoProvider":
         extra_config = config.config or {}
         return cls(
             api_key=config.api_key,
@@ -87,7 +94,13 @@ class GPTProtoProvider(AIProvider):
             return await self._generate_img2img(style, params)
         return await self._generate_text2img(style, params)
 
+    def _is_gpt_image_model(self) -> bool:
+        return "gpt-image-2" in self.model.lower()
+
     async def _generate_text2img(self, style: StyleAnalysis, params: GenerationParams) -> bytes:
+        if self._is_gpt_image_model():
+            return await self._generate_gpt_image_text2img(style, params)
+
         prompt = self._build_prompt(style, params)
         model_path = self.model.replace("google/", "")
         url = f"{self.base_url}/google/{model_path}/text-to-image"
@@ -106,6 +119,9 @@ class GPTProtoProvider(AIProvider):
     async def _generate_img2img(self, style: StyleAnalysis, params: GenerationParams) -> bytes:
         if not params.init_image_b64:
             raise ProviderError("init_image_b64 is required for image editing")
+
+        if self._is_gpt_image_model():
+            return await self._generate_gpt_image_img2img(style, params)
 
         prompt = self._build_prompt(style, params)
         model_path = self.model.replace("google/", "")
@@ -127,9 +143,127 @@ class GPTProtoProvider(AIProvider):
 
         return await self._make_request(url, payload)
 
-    async def _make_request(self, url: str, payload: dict[str, Any]) -> bytes:
+    async def _generate_gpt_image_text2img(
+        self, style: StyleAnalysis, params: GenerationParams
+    ) -> bytes:
+        prompt = self._build_prompt(style, params)
+        url = f"{self._openai_base_url()}/images/generations"
+        payload: dict[str, Any] = {
+            "model": self.model,
+            "prompt": prompt,
+            "n": 1,
+            "size": self._get_gpt_image_size(params.width, params.height),
+            "quality": "high",
+            "output_format": "png",
+            "response_format": "b64_json",
+        }
+
+        return await self._make_request(url, payload, bearer_auth=True)
+
+    async def _generate_gpt_image_img2img(
+        self, style: StyleAnalysis, params: GenerationParams
+    ) -> bytes:
+        if not params.init_image_b64:
+            raise ProviderError("init_image_b64 is required for image editing")
+
+        prompt = self._build_prompt(style, params)
+        url = f"{self._api_v3_base_url()}/openai/gpt-image-2/image-edit"
+        payload: dict[str, Any] = {
+            "prompt": prompt,
+            "n": 1,
+            "size": self._get_gpt_image_size(params.width, params.height),
+            "quality": "high",
+            "response_format": "b64_json",
+            "enable_sync_mode": self.sync_mode,
+        }
+        image_input = params.init_image_b64
+        if image_input.startswith(("http://", "https://")):
+            payload["images"] = [image_input]
+        else:
+            payload["base64_images"] = [self._as_data_uri(image_input)]
+
+        return await self._make_request(url, payload)
+
+    def _openai_base_url(self) -> str:
+        if self.base_url.endswith("/api/v3"):
+            return self.base_url[: -len("/api/v3")] + "/v1"
+        return self.base_url
+
+    def _api_v3_base_url(self) -> str:
+        if self.base_url.endswith("/v1"):
+            return self.base_url[: -len("/v1")] + "/api/v3"
+        return self.base_url
+
+    def _as_data_uri(self, image_input: str) -> str:
+        if image_input.startswith(("http://", "https://", "data:")):
+            return image_input
+        return f"data:image/png;base64,{image_input}"
+
+    def _get_gpt_image_size(self, width: int, height: int) -> str:
+        normalized_width = self._normalize_gpt_image_dimension(width)
+        normalized_height = self._normalize_gpt_image_dimension(height)
+
+        normalized_width, normalized_height = self._fit_gpt_image_aspect_ratio(
+            normalized_width, normalized_height
+        )
+        normalized_width, normalized_height = self._fit_gpt_image_pixel_count(
+            normalized_width, normalized_height
+        )
+        return f"{normalized_width}x{normalized_height}"
+
+    def _normalize_gpt_image_dimension(self, value: int) -> int:
+        clamped = min(max(value, GPT_IMAGE_SIZE_MULTIPLE), GPT_IMAGE_MAX_EDGE)
+        rounded = round(clamped / GPT_IMAGE_SIZE_MULTIPLE) * GPT_IMAGE_SIZE_MULTIPLE
+        return min(max(rounded, GPT_IMAGE_SIZE_MULTIPLE), GPT_IMAGE_MAX_EDGE)
+
+    def _fit_gpt_image_aspect_ratio(self, width: int, height: int) -> tuple[int, int]:
+        if width / height > GPT_IMAGE_MAX_ASPECT_RATIO:
+            height = self._normalize_gpt_image_dimension(
+                int(width / GPT_IMAGE_MAX_ASPECT_RATIO)
+            )
+        elif height / width > GPT_IMAGE_MAX_ASPECT_RATIO:
+            width = self._normalize_gpt_image_dimension(
+                int(height / GPT_IMAGE_MAX_ASPECT_RATIO)
+            )
+        return width, height
+
+    def _fit_gpt_image_pixel_count(self, width: int, height: int) -> tuple[int, int]:
+        pixels = width * height
+        if GPT_IMAGE_MIN_PIXELS <= pixels <= GPT_IMAGE_MAX_PIXELS:
+            return width, height
+
+        scale = (GPT_IMAGE_MIN_PIXELS / pixels) ** 0.5 if pixels < GPT_IMAGE_MIN_PIXELS else (
+            GPT_IMAGE_MAX_PIXELS / pixels
+        ) ** 0.5
+        scaled_width = self._normalize_gpt_image_dimension(int(width * scale))
+        scaled_height = self._normalize_gpt_image_dimension(int(height * scale))
+
+        if scaled_width * scaled_height < GPT_IMAGE_MIN_PIXELS:
+            if scaled_width <= scaled_height:
+                scaled_width += GPT_IMAGE_SIZE_MULTIPLE
+            else:
+                scaled_height += GPT_IMAGE_SIZE_MULTIPLE
+
+        while scaled_width * scaled_height > GPT_IMAGE_MAX_PIXELS:
+            if scaled_width >= scaled_height:
+                scaled_width -= GPT_IMAGE_SIZE_MULTIPLE
+            else:
+                scaled_height -= GPT_IMAGE_SIZE_MULTIPLE
+
+        scaled_width, scaled_height = self._fit_gpt_image_aspect_ratio(
+            scaled_width, scaled_height
+        )
+
+        return (
+            min(scaled_width, GPT_IMAGE_MAX_EDGE),
+            min(scaled_height, GPT_IMAGE_MAX_EDGE),
+        )
+
+    async def _make_request(
+        self, url: str, payload: dict[str, Any], *, bearer_auth: bool = False
+    ) -> bytes:
         headers = {
-            "Authorization": self.api_key,
+            "Authorization": f"Bearer {self.api_key}" if bearer_auth else self.api_key,
             "Content-Type": "application/json",
         }
 
@@ -165,7 +299,7 @@ class GPTProtoProvider(AIProvider):
                     raise
                 await asyncio.sleep(2**attempt)
 
-            except asyncio.TimeoutError as e:
+            except TimeoutError as e:
                 raise ProviderTimeoutError(f"Request timed out after {self.timeout}s") from e
 
             except aiohttp.ClientError as e:
@@ -187,6 +321,10 @@ class GPTProtoProvider(AIProvider):
         if "data" in data and isinstance(data["data"], dict):
             response_data = data["data"]
             status = response_data.get("status", "")
+
+            if status == "failed":
+                error = response_data.get("error", "Unknown error")
+                raise ProviderError(f"Generation failed: {error}")
 
             if status in ("processing", "starting", "pending", "created"):
                 return await self._poll_for_result(session, response_data, headers)
@@ -274,10 +412,18 @@ class GPTProtoProvider(AIProvider):
             elif isinstance(output, str):
                 if output.startswith("http"):
                     return await self._download_image(session, output)
+                if output.startswith("data:"):
+                    return self._decode_data_uri(output)
                 else:
                     return base64.b64decode(output)
 
         raise ProviderError("No image found in outputs")
+
+    def _decode_data_uri(self, data_uri: str) -> bytes:
+        _, separator, encoded = data_uri.partition(",")
+        if not separator:
+            raise ProviderError("Invalid data URI image output")
+        return base64.b64decode(encoded)
 
     async def _extract_image_legacy(
         self, session: aiohttp.ClientSession, data: dict[str, Any]

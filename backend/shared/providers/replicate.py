@@ -1,14 +1,24 @@
 """Unified Replicate provider for image generation and upscaling."""
 
+from __future__ import annotations
+
 import asyncio
 import base64
+import binascii
 import io
 import logging
 import os
-from typing import Any
+from collections.abc import Iterator
+from contextlib import contextmanager
+from pathlib import Path
+from tempfile import NamedTemporaryFile
+from typing import Any, BinaryIO, Protocol, runtime_checkable
 
 import aiohttp
+import httpx
 from PIL import Image
+from replicate.client import Client
+from replicate.exceptions import ModelError, ReplicateError, ReplicateException
 
 from shared.ai.base import AIProvider
 from shared.ai.exceptions import (
@@ -18,7 +28,23 @@ from shared.ai.exceptions import (
     ProviderTimeoutError,
 )
 from shared.ai.schemas import GenerationParams, Position, StyleAnalysis
-from shared.providers.config_loader import ProviderConfig
+
+
+class ProviderConfigData(Protocol):
+    api_key: str
+    base_url: str
+    model_name: str
+    config: dict[str, Any] | None
+
+
+@runtime_checkable
+class AsyncReadable(Protocol):
+    async def aread(self) -> bytes | bytearray: ...
+
+
+@runtime_checkable
+class SyncReadable(Protocol):
+    def read(self) -> bytes | bytearray: ...
 
 logger = logging.getLogger(__name__)
 
@@ -30,6 +56,8 @@ ESRGAN_MODEL = (
 SDXL_IMG2IMG_MODEL = (
     "stability-ai/sdxl:7762fd07cf82c948538e41f63f77d685e02b063e37e496e96eefd46c929f9bdc"
 )
+REPLICATE_REQUEST_TIMEOUT = 30
+IMAGE_DOWNLOAD_TIMEOUT = 300
 
 
 class ReplicateProvider(AIProvider):
@@ -56,97 +84,170 @@ class ReplicateProvider(AIProvider):
 
         self.base_url = (
             base_url or os.getenv("REPLICATE_BASE_URL") or "https://api.replicate.com/v1"
-        )
+        ).strip().rstrip("/")
+        self.sdk_base_url = self._sdk_base_url(self.base_url)
         self.timeout = timeout
         self.max_retries = max_retries
+        self._client = Client(
+            api_token=self.api_token,
+            base_url=self.sdk_base_url,
+            timeout=httpx.Timeout(
+                connect=REPLICATE_REQUEST_TIMEOUT,
+                read=float(self.timeout),
+                write=float(max(REPLICATE_REQUEST_TIMEOUT, self.timeout)),
+                pool=REPLICATE_REQUEST_TIMEOUT,
+            ),
+        )
 
         self.generation_model = FLUX_MODEL if generation_model == "flux" else SDXL_MODEL
 
     @classmethod
-    def from_config(cls, config: ProviderConfig) -> "ReplicateProvider":
+    def from_config(cls, config: ProviderConfigData) -> ReplicateProvider:
         generation_model = "flux"
+        timeout = 120
+        max_retries = 3
         if config.config and "generation_model" in config.config:
-            generation_model = config.config["generation_model"]
-        elif config.model_name:
-            generation_model = config.model_name
+            generation_model = str(config.config["generation_model"]).strip()
+        elif config.model_name.strip():
+            generation_model = config.model_name.strip()
+
+        if config.config and "timeout" in config.config:
+            timeout = int(config.config["timeout"])
+        if config.config and "max_retries" in config.config:
+            max_retries = int(config.config["max_retries"])
 
         return cls(
             api_token=config.api_key,
             base_url=config.base_url,
             generation_model=generation_model,
+            timeout=timeout,
+            max_retries=max_retries,
         )
+
+    def _sdk_base_url(self, base_url: str) -> str:
+        """Convert legacy `/v1` API base URLs into SDK root URLs.
+
+        The Replicate SDK appends `/v1/...` paths internally. Existing database
+        configuration for the old manual HTTP client may already include `/v1`,
+        so passing it through unchanged produces invalid `/v1/v1/...` requests.
+        """
+        if base_url.endswith("/v1"):
+            return base_url.removesuffix("/v1")
+        return base_url
 
     async def _run_prediction(
         self,
         model: str,
         input_data: dict[str, Any],
-        poll_interval: float = 1.0,
-    ) -> dict[str, Any]:
-        """Run a prediction on Replicate and wait for result."""
-        headers = {
-            "Authorization": f"Bearer {self.api_token}",
-            "Content-Type": "application/json",
-        }
-
-        async with aiohttp.ClientSession() as session:
-            async with session.post(
-                f"{self.base_url}/predictions",
-                headers=headers,
-                json={
-                    "version": model.split(":")[-1] if ":" in model else model,
-                    "input": input_data,
-                },
-                timeout=aiohttp.ClientTimeout(total=30),
-            ) as response:
-                if response.status == 401:
-                    raise ProviderConfigurationError("Invalid Replicate API token")
-                if response.status == 429:
-                    raise ProviderRateLimitError("Replicate rate limit exceeded")
-                if response.status >= 400:
-                    error_text = await response.text()
-                    raise ProviderError(f"Replicate API error: {error_text}")
-
-                prediction = await response.json()
-
-            prediction_id = prediction["id"]
-            get_url = f"{self.base_url}/predictions/{prediction_id}"
-
-            elapsed = 0.0
-            while elapsed < self.timeout:
-                await asyncio.sleep(poll_interval)
-                elapsed += poll_interval
-
-                async with session.get(
-                    get_url,
-                    headers=headers,
-                    timeout=aiohttp.ClientTimeout(total=30),
-                ) as response:
-                    result = await response.json()
-                    status = result.get("status")
-
-                    if status == "succeeded":
-                        return result
-                    elif status == "failed":
-                        error = result.get("error", "Unknown error")
-                        raise ProviderError(f"Prediction failed: {error}")
-                    elif status == "canceled":
-                        raise ProviderError("Prediction was canceled")
-
-            raise ProviderTimeoutError(f"Prediction timed out after {self.timeout}s")
+    ) -> Any:
+        """Run a Replicate model with the official Python SDK and wait for output."""
+        try:
+            return await asyncio.wait_for(
+                self._client.async_run(
+                    model,
+                    input=input_data,
+                    use_file_output=True,
+                ),
+                timeout=self.timeout,
+            )
+        except TimeoutError as e:
+            raise ProviderTimeoutError(f"Prediction timed out after {self.timeout}s") from e
+        except ModelError as e:
+            prediction = e.prediction
+            raise ProviderError(
+                f"Prediction failed: {prediction.error or 'Unknown Replicate model error'}"
+            ) from e
+        except ReplicateError as e:
+            if e.status == 401:
+                raise ProviderConfigurationError("Invalid Replicate API token") from e
+            if e.status == 429:
+                raise ProviderRateLimitError("Replicate rate limit exceeded") from e
+            detail = e.detail or e.title or str(e)
+            raise ProviderError(f"Replicate API error: {detail}") from e
+        except ReplicateException as e:
+            raise ProviderError(f"Replicate SDK error: {e}") from e
 
     async def _download_image(self, url: str) -> bytes:
         """Download image from URL."""
+        download_timeout = max(IMAGE_DOWNLOAD_TIMEOUT, self.timeout)
         async with aiohttp.ClientSession() as session:
-            async with session.get(url, timeout=aiohttp.ClientTimeout(total=60)) as response:
-                return await response.read()
+            try:
+                async with session.get(
+                    url,
+                    timeout=aiohttp.ClientTimeout(total=download_timeout),
+                ) as response:
+                    if response.status >= 400:
+                        error_text = await response.text()
+                        raise ProviderError(f"Image download failed: {error_text}")
+                    return await response.read()
+            except TimeoutError as e:
+                raise ProviderTimeoutError(
+                    f"Image download timed out after {download_timeout}s"
+                ) from e
 
-    async def _upload_image_data_uri(self, image: bytes) -> str:
-        """Convert image bytes to data URI for Replicate input."""
-        img = Image.open(io.BytesIO(image))
-        img_format = img.format or "PNG"
-        b64 = base64.b64encode(image).decode("utf-8")
-        mime = f"image/{img_format.lower()}"
-        return f"data:{mime};base64,{b64}"
+    async def _replicate_output_to_bytes(self, output: Any) -> bytes:
+        item = await self._first_replicate_output(output)
+
+        if isinstance(item, bytes | bytearray):
+            return bytes(item)
+        if isinstance(item, str):
+            return await self._download_image(item)
+
+        if isinstance(item, AsyncReadable):
+            data = await item.aread()
+            return self._coerce_output_bytes(data)
+
+        if isinstance(item, SyncReadable):
+            data = await asyncio.to_thread(item.read)
+            return self._coerce_output_bytes(data)
+
+        raise ProviderError(f"Unexpected Replicate output format: {type(item).__name__}")
+
+    async def _first_replicate_output(self, output: Any) -> Any:
+        if isinstance(output, list | tuple):
+            if not output:
+                raise ProviderError("Replicate returned no output")
+            return output[0]
+
+        if hasattr(output, "__aiter__") and not hasattr(output, "aread"):
+            async for item in output:
+                return item
+            raise ProviderError("Replicate returned no output")
+
+        return output
+
+    def _coerce_output_bytes(self, data: Any) -> bytes:
+        if isinstance(data, bytes | bytearray):
+            return bytes(data)
+        raise ProviderError(f"Unexpected Replicate file output type: {type(data).__name__}")
+
+    @contextmanager
+    def _image_file_input(self, image: bytes) -> Iterator[BinaryIO]:
+        suffix = self._image_file_suffix(image)
+        temp = NamedTemporaryFile(suffix=suffix, delete=False)
+        temp_path = Path(temp.name)
+        try:
+            temp.write(image)
+            temp.close()
+            with temp_path.open("rb") as image_file:
+                yield image_file
+        finally:
+            temp.close()
+            temp_path.unlink(missing_ok=True)
+
+    def _image_file_suffix(self, image: bytes) -> str:
+        with Image.open(io.BytesIO(image)) as img:
+            img_format = (img.format or "PNG").lower()
+        if img_format == "jpeg":
+            return ".jpg"
+        return f".{img_format}"
+
+    def _decode_init_image(self, image_b64: str) -> bytes:
+        encoded = image_b64.split(",", maxsplit=1)[-1]
+        try:
+            return base64.b64decode(encoded, validate=True)
+        except (binascii.Error, ValueError) as e:
+            raise ProviderError("Invalid base64 init image for Replicate img2img") from e
 
     async def generate_pattern(self, style: StyleAnalysis, params: GenerationParams) -> bytes:
         """Generate pattern using SDXL or Flux on Replicate."""
@@ -178,17 +279,8 @@ class ReplicateProvider(AIProvider):
 
         for attempt in range(self.max_retries):
             try:
-                result = await self._run_prediction(self.generation_model, input_data)
-                output = result.get("output")
-
-                if isinstance(output, list) and output:
-                    image_url = output[0]
-                elif isinstance(output, str):
-                    image_url = output
-                else:
-                    raise ProviderError(f"Unexpected output format: {output}")
-
-                image_bytes = await self._download_image(image_url)
+                output = await self._run_prediction(self.generation_model, input_data)
+                image_bytes = await self._replicate_output_to_bytes(output)
 
                 logger.info(
                     f"Pattern generated: {params.width}x{params.height}, seed={params.seed}"
@@ -202,7 +294,9 @@ class ReplicateProvider(AIProvider):
             except Exception as e:
                 logger.error(f"Generation attempt {attempt + 1} failed: {e}")
                 if attempt == self.max_retries - 1:
-                    raise ProviderError(f"Generation failed after {self.max_retries} attempts: {e}")
+                    raise ProviderError(
+                        f"Generation failed after {self.max_retries} attempts: {e}"
+                    ) from e
                 await asyncio.sleep(2**attempt)
 
         raise ProviderError("Generation failed")
@@ -224,25 +318,18 @@ class ReplicateProvider(AIProvider):
         else:
             scale = 8
 
-        image_uri = await self._upload_image_data_uri(image)
-
-        input_data = {
-            "image": image_uri,
-            "scale": scale,
-            "face_enhance": False,
-        }
-
         for attempt in range(self.max_retries):
             try:
-                result = await self._run_prediction(ESRGAN_MODEL, input_data)
-                output = result.get("output")
-
-                if isinstance(output, str):
-                    image_url = output
-                else:
-                    raise ProviderError(f"Unexpected output format: {output}")
-
-                upscaled_bytes = await self._download_image(image_url)
+                with self._image_file_input(image) as image_file:
+                    output = await self._run_prediction(
+                        ESRGAN_MODEL,
+                        {
+                            "image": image_file,
+                            "scale": scale,
+                            "face_enhance": False,
+                        },
+                    )
+                upscaled_bytes = await self._replicate_output_to_bytes(output)
 
                 logger.info(f"Image upscaled: {input_size}px -> {target_size}px (scale={scale})")
                 return upscaled_bytes
@@ -254,7 +341,9 @@ class ReplicateProvider(AIProvider):
             except Exception as e:
                 logger.error(f"Upscale attempt {attempt + 1} failed: {e}", exc_info=True)
                 if attempt == self.max_retries - 1:
-                    raise ProviderError(f"Upscaling failed after {self.max_retries} attempts: {e}")
+                    raise ProviderError(
+                        f"Upscaling failed after {self.max_retries} attempts: {e}"
+                    ) from e
                 await asyncio.sleep(2**attempt)
 
         raise ProviderError("Upscaling failed")
@@ -294,10 +383,11 @@ class ReplicateProvider(AIProvider):
         """Generate pattern using SDXL img2img on Replicate."""
         prompt = self._build_fabric_prompt(style, params)
 
-        init_image_uri = f"data:image/jpeg;base64,{params.init_image_b64}"
+        if params.init_image_b64 is None:
+            raise ProviderError("Missing init image for Replicate img2img")
+        init_image = self._decode_init_image(params.init_image_b64)
 
         input_data = {
-            "image": init_image_uri,
             "prompt": prompt,
             "negative_prompt": "blurry, low quality, distorted, watermark, text, unrealistic",
             "prompt_strength": params.strength,
@@ -310,17 +400,12 @@ class ReplicateProvider(AIProvider):
 
         for attempt in range(self.max_retries):
             try:
-                result = await self._run_prediction(SDXL_IMG2IMG_MODEL, input_data)
-                output = result.get("output")
-
-                if isinstance(output, list) and output:
-                    image_url = output[0]
-                elif isinstance(output, str):
-                    image_url = output
-                else:
-                    raise ProviderError(f"Unexpected output format: {output}")
-
-                image_bytes = await self._download_image(image_url)
+                with self._image_file_input(init_image) as image_file:
+                    output = await self._run_prediction(
+                        SDXL_IMG2IMG_MODEL,
+                        {**input_data, "image": image_file},
+                    )
+                image_bytes = await self._replicate_output_to_bytes(output)
 
                 logger.info(
                     f"img2img generated: model={SDXL_IMG2IMG_MODEL}, "

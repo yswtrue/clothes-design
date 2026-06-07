@@ -4,6 +4,7 @@ import json
 import logging
 import os
 import re
+from typing import TYPE_CHECKING, ClassVar
 
 import aiohttp
 
@@ -15,14 +16,22 @@ from shared.ai.exceptions import (
     ProviderTimeoutError,
 )
 from shared.ai.schemas import GenerationParams, Position, StyleAnalysis
-from shared.providers.config_loader import ProviderConfig
+
+if TYPE_CHECKING:
+    from shared.providers.config_loader import ProviderConfig
 
 logger = logging.getLogger(__name__)
 
+IMAGE_EDIT_SIZE_MIN = 64
+IMAGE_EDIT_SIZE_MAX = 2048
+IMAGE_EDIT_SIZE_MULTIPLE = 16
+
 
 class OpenAIImageProvider(AIProvider):
-    CHAT_IMAGE_MODELS = {"gpt-4o-image", "gpt-4o-image-vip", "gpt-image-1"}
-    GPT_IMAGE_MODELS = {"gpt-image-1", "gpt-image-2", "gpt-image-3"}
+    CHAT_IMAGE_MODELS: ClassVar[set[str]] = {"gpt-4o-image", "gpt-4o-image-vip", "gpt-image-1"}
+    GPT_IMAGE_MODELS: ClassVar[set[str]] = {"gpt-image-1", "gpt-image-2", "gpt-image-3"}
+    ASPECT_RATIO_IMAGE_EDIT_MODELS: ClassVar[set[str]] = {"gemini"}
+    ASPECT_RATIO_IMAGE_EDIT_BASE_URLS: ClassVar[set[str]] = {"gptproto.com"}
 
     def __init__(
         self,
@@ -45,7 +54,7 @@ class OpenAIImageProvider(AIProvider):
         self.base_url = self.base_url.rstrip("/")
 
     @classmethod
-    def from_config(cls, config: ProviderConfig) -> "OpenAIImageProvider":
+    def from_config(cls, config: "ProviderConfig") -> "OpenAIImageProvider":
         return cls(
             api_key=config.api_key,
             base_url=config.base_url,
@@ -59,6 +68,17 @@ class OpenAIImageProvider(AIProvider):
     def _is_gpt_image_model(self) -> bool:
         model_lower = self.model.lower()
         return any(gpt_model in model_lower for gpt_model in self.GPT_IMAGE_MODELS)
+
+    def _uses_aspect_ratio_image_edit_size(self) -> bool:
+        model_lower = self.model.lower()
+        base_url_lower = self.base_url.lower()
+        return any(
+            model_fragment in model_lower
+            for model_fragment in self.ASPECT_RATIO_IMAGE_EDIT_MODELS
+        ) or any(
+            base_url_fragment in base_url_lower
+            for base_url_fragment in self.ASPECT_RATIO_IMAGE_EDIT_BASE_URLS
+        )
 
     async def generate_pattern(self, style: StyleAnalysis, params: GenerationParams) -> bytes:
         if params.init_image_b64:
@@ -305,6 +325,19 @@ class OpenAIImageProvider(AIProvider):
         closest = min(valid_ratios, key=lambda r: abs(ratio_values[r] - aspect))
         return closest
 
+    def _get_image_edit_size(self, width: int, height: int) -> str:
+        if self._uses_aspect_ratio_image_edit_size():
+            return self._get_aspect_ratio(width, height)
+
+        normalized_width = self._normalize_image_edit_dimension(width)
+        normalized_height = self._normalize_image_edit_dimension(height)
+        return f"{normalized_width}x{normalized_height}"
+
+    def _normalize_image_edit_dimension(self, value: int) -> int:
+        clamped = min(max(value, IMAGE_EDIT_SIZE_MIN), IMAGE_EDIT_SIZE_MAX)
+        rounded = round(clamped / IMAGE_EDIT_SIZE_MULTIPLE) * IMAGE_EDIT_SIZE_MULTIPLE
+        return min(max(rounded, IMAGE_EDIT_SIZE_MIN), IMAGE_EDIT_SIZE_MAX)
+
     def _build_prompt(self, style: StyleAnalysis, params: GenerationParams) -> str:
         if params.prompt_override:
             return params.prompt_override
@@ -348,7 +381,7 @@ class OpenAIImageProvider(AIProvider):
         prompt = self._build_fabric_prompt(style, params)
         image_bytes = base64.b64decode(params.init_image_b64)
         url = f"{self.base_url}/images/edits"
-        size = self._get_aspect_ratio(params.width, params.height)
+        size = self._get_image_edit_size(params.width, params.height)
 
         logger.info(
             f"images/edits request: url={url}, model={self.model}, "
@@ -407,13 +440,14 @@ class OpenAIImageProvider(AIProvider):
                             continue
 
                         data = json.loads(response_text)
-                        if "data" in data and data["data"]:
-                            if "b64_json" in data["data"][0]:
+                        response_data = data.get("data")
+                        if response_data:
+                            if "b64_json" in response_data[0]:
                                 logger.info("images/edits success: got b64_json response")
-                                return base64.b64decode(data["data"][0]["b64_json"])
-                            elif "url" in data["data"][0]:
-                                logger.info(f"images/edits success: downloading from URL")
-                                return await self._download_image(session, data["data"][0]["url"])
+                                return base64.b64decode(response_data[0]["b64_json"])
+                            elif "url" in response_data[0]:
+                                logger.info("images/edits success: downloading from URL")
+                                return await self._download_image(session, response_data[0]["url"])
 
                         logger.error(f"images/edits unexpected format: {response_text}")
                         raise ProviderError(f"Unexpected response format: {response_text[:500]}")
