@@ -348,7 +348,10 @@ celery -A celery_app inspect registered
 **解决**:
 ```bash
 # 检查 .env 配置
-NEXT_PUBLIC_API_URL=http://localhost:8000
+BACKEND_API_URL=http://localhost:8000
+
+# Docker Compose 默认不启动前端容器；如需容器化前端：
+COMPOSE_PROFILES=frontend
 
 # 检查后端是否运行
 curl http://localhost:8000/health

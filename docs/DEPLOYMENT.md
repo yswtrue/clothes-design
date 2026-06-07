@@ -75,16 +75,37 @@ cp .env.example .env
    WORKER_CONCURRENCY=4  # Adjust based on CPU cores and task load
    ```
 
+6. **Optional Frontend Deployment** (disabled by default):
+   ```bash
+   # Leave empty to deploy backend, worker, databases, and Traefik only:
+   COMPOSE_PROFILES=
+
+   # Set this when this Compose stack should also run the frontend container:
+   COMPOSE_PROFILES=frontend
+   ```
+
+7. **Traefik Routing**:
+   ```bash
+   TRAEFIK_HTTP_PORT=80
+   TRAEFIK_BACKEND_HOST=api.example.com
+   TRAEFIK_FRONTEND_HOST=example.com
+   ```
+
 ### 3. Build Docker Images
 
 ```bash
 docker-compose build
 ```
 
-This builds three custom images:
-- `clothes-design-frontend` (Next.js 16.2 with React 19)
+This builds custom images for the enabled services. By default the frontend profile is disabled, so build it explicitly when needed:
+- `clothes-design-frontend` (Next.js 16.2 with React 19, only when `COMPOSE_PROFILES=frontend` or `--profile frontend` is used)
 - `clothes-design-backend` (FastAPI with Python 3.13)
 - `clothes-design-worker` (Celery worker with Python 3.13)
+
+```bash
+# Optional: build frontend image too
+COMPOSE_PROFILES=frontend docker-compose build frontend
+```
 
 ### 4. Initialize Database and Start Services
 
@@ -102,7 +123,8 @@ docker-compose up
 1. PostgreSQL, Redis, MinIO start first
 2. Backend starts and runs Alembic migrations automatically
 3. Worker starts and connects to Celery broker (Redis)
-4. Frontend starts last
+4. Traefik starts and routes only services with explicit Traefik labels
+5. Frontend starts last only when `COMPOSE_PROFILES=frontend` is set
 
 ### 5. Verify Services Are Running
 
@@ -119,6 +141,8 @@ clothes-design-redis        healthy
 clothes-design-minio        healthy
 clothes-design-backend      healthy
 clothes-design-worker       Up (no health check)
+clothes-design-traefik      Up
+# Only when COMPOSE_PROFILES=frontend:
 clothes-design-frontend     healthy
 ```
 
@@ -138,8 +162,12 @@ curl http://localhost:8000/health
 # Backend API documentation (Swagger UI)
 open http://localhost:8000/docs
 
-# Frontend web interface
+# Frontend web interface (only when COMPOSE_PROFILES=frontend)
 open http://localhost:3000
+
+# Traefik routes
+curl -H 'Host: api.localhost' http://localhost/health
+open http://localhost  # frontend route, only when frontend profile is enabled
 
 # MinIO Console (object storage management)
 open http://localhost:9001
@@ -164,7 +192,8 @@ docker-compose logs -f worker
 
 | Service | Port(s) | Purpose | Image | Health Check |
 |---------|---------|---------|-------|--------------|
-| **Frontend** | 3000 | Next.js 16.2 web app | Custom (Dockerfile.frontend) | HTTP /3000 |
+| **Traefik** | 80 | HTTP reverse proxy for app services | traefik:v3.3 | N/A |
+| **Frontend** | 3000 | Optional Next.js 16.2 web app (`COMPOSE_PROFILES=frontend`) | Custom (Dockerfile.frontend) | HTTP /3000 |
 | **Backend** | 8000 | FastAPI REST API | Custom (Dockerfile.backend) | HTTP /health |
 | **Worker** | N/A | Celery async task processor | Custom (Dockerfile.worker) | N/A (check logs) |
 | **PostgreSQL** | 5432 | Primary database (async driver) | postgres:17-alpine | pg_isready |
@@ -175,11 +204,12 @@ docker-compose logs -f worker
 
 ```
 ┌─────────────┐
-│  Frontend   │  (Next.js 16.2 + React 19)
-│  :3000      │
+│  Traefik    │  (:80, Host-based routing)
 └──────┬──────┘
-       │ REST API
-       ▼
+       │
+       ├── Optional frontend route → Frontend :3000 (COMPOSE_PROFILES=frontend)
+       │
+       ▼ Backend route
 ┌─────────────┐     Task Enqueue (Celery)     ┌─────────────┐
 │  Backend    │────────────────────────────────▶│   Worker    │
 │  (FastAPI)  │                                 │  (Celery)   │
@@ -203,7 +233,10 @@ docker-compose logs -f worker
 ### Service Dependencies
 
 ```
-frontend
+traefik
+  └── routes to labelled services only
+
+frontend (optional profile: frontend)
   └── depends_on: backend (healthy)
 
 backend
@@ -264,8 +297,8 @@ docker-compose up -d --build backend
 # Backend Python shell
 docker-compose exec backend bash
 
-# Frontend Node shell
-docker-compose exec frontend bash
+# Frontend Node shell (only when COMPOSE_PROFILES=frontend)
+COMPOSE_PROFILES=frontend docker-compose exec frontend bash
 
 # PostgreSQL shell
 docker-compose exec postgres psql -U postgres -d clothes_design_prod
@@ -401,6 +434,11 @@ docker-compose logs postgres
 
 ### Frontend Cannot Connect to Backend
 
+0. Confirm the optional frontend service is enabled:
+   ```bash
+   COMPOSE_PROFILES=frontend docker-compose ps frontend
+   ```
+
 1. Verify backend health:
    ```bash
    curl http://localhost:8000/health
@@ -408,9 +446,9 @@ docker-compose logs postgres
 
 2. Check frontend environment variables:
    ```bash
-   docker-compose exec frontend bash
+   COMPOSE_PROFILES=frontend docker-compose exec frontend bash
    # Inside container, check env:
-   env | grep NEXT_PUBLIC_API_URL
+env | grep BACKEND_API_URL
    ```
 
 3. Check backend logs for CORS issues:
@@ -838,8 +876,8 @@ docker-compose up -d backend worker
 **Frontend (Node.js):**
 ```bash
 # Update dependencies in frontend/package.json
-docker-compose build frontend
-docker-compose up -d frontend
+COMPOSE_PROFILES=frontend docker-compose build frontend
+COMPOSE_PROFILES=frontend docker-compose up -d frontend
 ```
 
 ### Updating Base Images

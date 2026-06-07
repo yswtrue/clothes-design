@@ -48,7 +48,7 @@ cd frontend
 Create a `.env.local` file in the `frontend/` directory (or use the root `.env`):
 
 ```bash
-NEXT_PUBLIC_API_URL=http://localhost:8000/api
+BACKEND_API_URL=http://localhost:8000
 ```
 
 ### 3. Install Dependencies
@@ -94,4 +94,3 @@ bun run test:headed
 
 - [Project Root README](../README.md)
 - [Backend Documentation](../backend/README.md)
-

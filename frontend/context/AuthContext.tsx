@@ -1,6 +1,6 @@
 'use client';
 
-import { createContext, useContext, useState, useEffect, ReactNode } from 'react';
+import { createContext, useContext, useState, ReactNode } from 'react';
 import type { UserResponse } from '@/types/auth';
 
 interface AuthContextType {
@@ -16,32 +16,43 @@ interface AuthContextType {
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
-export function AuthProvider({ children }: { children: ReactNode }) {
-  const [user, setUser] = useState<UserResponse | null>(null);
-  const [accessToken, setAccessToken] = useState<string | null>(null);
-  const [refreshToken, setRefreshToken] = useState<string | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
+function loadStoredAuth() {
+  if (typeof window === 'undefined') {
+    return {
+      user: null,
+      accessToken: null,
+      refreshToken: null,
+    };
+  }
 
-  // 初始化时从 localStorage 加载认证信息
-  useEffect(() => {
-    const storedAccessToken = localStorage.getItem('access_token');
-    const storedRefreshToken = localStorage.getItem('refresh_token');
-    const storedUser = localStorage.getItem('user');
+  const accessToken = localStorage.getItem('access_token') ?? sessionStorage.getItem('access_token');
+  const refreshToken = localStorage.getItem('refresh_token') ?? sessionStorage.getItem('refresh_token');
+  const storedUser = localStorage.getItem('user') ?? sessionStorage.getItem('user');
+  let user: UserResponse | null = null;
 
-    if (storedAccessToken && storedRefreshToken) {
-      setAccessToken(storedAccessToken);
-      setRefreshToken(storedRefreshToken);
-      if (storedUser) {
-        try {
-          setUser(JSON.parse(storedUser));
-        } catch {
-          // 解析失败，清除无效数据
-          localStorage.removeItem('user');
-        }
-      }
+  if (accessToken && refreshToken && storedUser) {
+    try {
+      user = JSON.parse(storedUser);
+    } catch {
+      // 解析失败，清除无效数据
+      localStorage.removeItem('user');
+      sessionStorage.removeItem('user');
     }
-    setIsLoading(false);
-  }, []);
+  }
+
+  return {
+    user,
+    accessToken,
+    refreshToken,
+  };
+}
+
+export function AuthProvider({ children }: { children: ReactNode }) {
+  const [storedAuth] = useState(loadStoredAuth);
+  const [user, setUser] = useState<UserResponse | null>(storedAuth.user);
+  const [accessToken, setAccessToken] = useState<string | null>(storedAuth.accessToken);
+  const [refreshToken, setRefreshToken] = useState<string | null>(storedAuth.refreshToken);
+  const isLoading = false;
 
   const login = (newAccessToken: string, newRefreshToken: string, rememberMe: boolean = false) => {
     setAccessToken(newAccessToken);

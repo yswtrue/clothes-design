@@ -25,7 +25,7 @@ Centralized API client library providing typed request helpers, auth flows, and 
 
 ## ANTI-PATTERNS
 - **NO Direct fetch() in Components**: Always use `apiRequest()` or specific helpers (uploadFile, submitGeneration, etc.).
-- **NO Hardcoded API URLs**: Use environment variable `NEXT_PUBLIC_API_URL` or rely on server-side proxy (`/api/*`).
+- **NO Hardcoded API URLs**: Use environment variable `BACKEND_API_URL` or rely on server-side proxy (`/api/*`).
 - **NO Token Manipulation**: Never manually set/read access_token cookie from client. Use server routes for auth.
 - **NO Infinite Polling**: All polling functions have max attempts and timeout limits.
 

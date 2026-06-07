@@ -1,6 +1,6 @@
 import { expect, type Page, type APIRequestContext } from '@playwright/test';
 
-export const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+export const API_BASE = process.env.BACKEND_API_URL || 'http://localhost:8000';
 export const AUTH_STATE_PATH = 'tests/.auth/user.json';
 export const DOWNLOAD_DIR = 'tests/.downloads';
 export const AUTH_DIR = 'tests/.auth';
