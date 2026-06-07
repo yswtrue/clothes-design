@@ -12,8 +12,9 @@ logger = logging.getLogger(__name__)
 
 ColorSpace = Literal["RGB", "CMYK"]
 
+DEFAULT_CMYK_PROFILE_PATH = Path(__file__).resolve().parents[2] / "USWebCoatedSWOP.icc"
 SRGB_PROFILE_PATH = os.getenv("ICC_SRGB_PROFILE")
-CMYK_PROFILE_PATH = os.getenv("ICC_CMYK_PROFILE")
+CMYK_PROFILE_PATH = os.getenv("ICC_CMYK_PROFILE") or str(DEFAULT_CMYK_PROFILE_PATH)
 
 _profile_cache: dict[str, Any] = {}
 
