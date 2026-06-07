@@ -71,10 +71,12 @@ class OpenAIImageProvider(AIProvider):
 
     def _uses_aspect_ratio_image_edit_size(self) -> bool:
         model_lower = self.model.lower()
+        if self._is_gpt_image_model():
+            return False
+
         base_url_lower = self.base_url.lower()
         return any(
-            model_fragment in model_lower
-            for model_fragment in self.ASPECT_RATIO_IMAGE_EDIT_MODELS
+            model_fragment in model_lower for model_fragment in self.ASPECT_RATIO_IMAGE_EDIT_MODELS
         ) or any(
             base_url_fragment in base_url_lower
             for base_url_fragment in self.ASPECT_RATIO_IMAGE_EDIT_BASE_URLS

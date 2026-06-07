@@ -66,3 +66,13 @@ def test_gemini_image_edit_size_uses_aspect_ratio_for_custom_base_url() -> None:
     )
 
     assert provider._get_image_edit_size(1200, 900) == "4:3"
+
+
+def test_gpt_image_edit_size_uses_pixel_dimensions_for_gptproto_base_url() -> None:
+    provider = OpenAIImageProvider(
+        api_key="test-key",
+        base_url="https://gptproto.com/v1",
+        model="gpt-image-2",
+    )
+
+    assert provider._get_image_edit_size(1024, 1024) == "1024x1024"
