@@ -87,9 +87,13 @@ cp .env.example .env
 7. **Traefik Routing**:
    ```bash
    TRAEFIK_HTTP_PORT=80
+   TRAEFIK_HTTPS_PORT=443
+   TRAEFIK_ACME_EMAIL=admin@example.com
    TRAEFIK_BACKEND_HOST=api.example.com
    TRAEFIK_FRONTEND_HOST=example.com
    ```
+
+   The Docker stack enables Traefik's Let's Encrypt HTTP-01 challenge on port 80 and stores issued certificates in the `traefik_letsencrypt` Docker volume. Make sure both `TRAEFIK_BACKEND_HOST` and `TRAEFIK_FRONTEND_HOST` resolve to this server, and that inbound ports 80 and 443 are open before starting Traefik.
 
 ### 3. Build Docker Images
 
@@ -169,6 +173,10 @@ open http://localhost:3000
 curl -H 'Host: api.localhost' http://localhost/health
 open http://localhost  # frontend route, only when frontend profile is enabled
 
+# Production HTTPS routes issue Let's Encrypt certificates automatically
+curl https://api.example.com/health
+open https://example.com  # frontend route, only when frontend profile is enabled
+
 # MinIO Console (object storage management)
 open http://localhost:9001
 # Login: minioadmin / minioadmin (or your configured credentials)
@@ -192,7 +200,7 @@ docker-compose logs -f worker
 
 | Service | Port(s) | Purpose | Image | Health Check |
 |---------|---------|---------|-------|--------------|
-| **Traefik** | 80 | HTTP reverse proxy for app services | traefik:v3.3 | N/A |
+| **Traefik** | 80, 443 | HTTP/HTTPS reverse proxy with Let's Encrypt certificates | traefik:v3.3 | N/A |
 | **Frontend** | 3000 | Optional Next.js 16.2 web app (`COMPOSE_PROFILES=frontend`) | Custom (Dockerfile.frontend) | HTTP /3000 |
 | **Backend** | 8000 | FastAPI REST API | Custom (Dockerfile.backend) | HTTP /health |
 | **Worker** | N/A | Celery async task processor | Custom (Dockerfile.worker) | N/A (check logs) |
@@ -204,7 +212,7 @@ docker-compose logs -f worker
 
 ```
 ┌─────────────┐
-│  Traefik    │  (:80, Host-based routing)
+│  Traefik    │  (:80/:443, Host-based routing + TLS)
 └──────┬──────┘
        │
        ├── Optional frontend route → Frontend :3000 (COMPOSE_PROFILES=frontend)
@@ -663,25 +671,10 @@ Add to crontab for daily backups:
    ```
 
 4. **Reverse proxy with SSL/TLS** (production requirement):
-   - Use nginx or Traefik for HTTPS termination
-   - Example nginx config:
-   ```nginx
-   server {
-       listen 443 ssl http2;
-       server_name api.yourdomain.com;
-       
-       ssl_certificate /etc/ssl/certs/your_cert.pem;
-       ssl_certificate_key /etc/ssl/private/your_key.pem;
-       
-       location / {
-           proxy_pass http://localhost:8000;
-           proxy_set_header Host $host;
-           proxy_set_header X-Real-IP $remote_addr;
-           proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-           proxy_set_header X-Forwarded-Proto $scheme;
-       }
-   }
-   ```
+   - The bundled Traefik service listens on ports 80 and 443 and requests Let's Encrypt certificates automatically through the HTTP-01 challenge.
+   - Set `TRAEFIK_ACME_EMAIL`, `TRAEFIK_BACKEND_HOST`, and `TRAEFIK_FRONTEND_HOST` to real public DNS names before production startup.
+   - Keep port 80 reachable from the public internet because Let's Encrypt uses it to validate domain ownership.
+   - Issued certificates are persisted in the `traefik_letsencrypt` Docker volume so container recreation does not trigger unnecessary re-issuance.
 
 5. **CORS configuration**:
    ```bash
