@@ -60,6 +60,29 @@ services:
       timeout: 5s
       retries: 5
 
+  db-maintenance:
+    <<: *service-defaults
+    profiles:
+      - maintenance
+    image: postgres:17-alpine
+    container_name: clothes-design-db-maintenance
+    restart: "no"
+    entrypoint: ["/bin/sh", "/usr/local/bin/db-maintenance"]
+    command: ["help"]
+    environment:
+      PGHOST: postgres
+      PGPORT: 5432
+      PGUSER: ${POSTGRES_USER:-postgres}
+      PGPASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      PGDATABASE: ${POSTGRES_DB:-clothes_design}
+      BACKUP_DIR: /backups
+    volumes:
+      - db_backups:/backups
+      - ./docker/db-maintenance.sh:/usr/local/bin/db-maintenance:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+
   traefik:
     <<: *service-defaults
     image: traefik:v3
@@ -170,5 +193,6 @@ networks:
 
 volumes:
   postgres_data:
+  db_backups:
   redis_data:
   traefik_letsencrypt:
