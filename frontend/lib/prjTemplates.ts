@@ -7,6 +7,11 @@ export interface PrjTemplatePreviewResponse {
   preview_url: string;
 }
 
+export interface ModelPreviewResponse {
+  preview_url: string;
+  status: 'completed';
+}
+
 export async function fetchPrjTemplateDetail(templateId: number): Promise<PrjTemplateDetail> {
   return apiRequest<PrjTemplateDetail>(`/api/prj-templates/${templateId}`);
 }
@@ -32,4 +37,17 @@ export async function createPrjTemplatePreview(
       body: JSON.stringify({ generated_design_id: generatedDesignId }),
     }
   );
+}
+
+export async function createModelPreview(
+  imageDataUrl: string,
+  templateId?: number
+): Promise<ModelPreviewResponse> {
+  return apiRequest<ModelPreviewResponse>('/api/model-previews', {
+    method: 'POST',
+    body: JSON.stringify({
+      image_data_url: imageDataUrl,
+      template_id: templateId,
+    }),
+  });
 }

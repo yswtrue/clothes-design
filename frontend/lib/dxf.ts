@@ -36,6 +36,18 @@ type DxfArc = {
 
 type DxfEntity = DxfLine | DxfPolyline | DxfCircle | DxfArc;
 
+export type DxfRenderedRegion = {
+  label: string;
+  points: Array<[number, number]>;
+};
+
+export type DxfRenderResult = {
+  dataUrl: string;
+  width: number;
+  height: number;
+  regions: DxfRenderedRegion[];
+};
+
 type Bounds = {
   minX: number;
   minY: number;
@@ -272,7 +284,23 @@ function degreesToRadians(degrees: number): number {
   return degrees * Math.PI / 180;
 }
 
-export function renderDxfToDataUrl(text: string): string {
+function circleRegionPoints(center: DxfPoint, radius: number, project: (point: DxfPoint) => DxfPoint): Array<[number, number]> {
+  const points: Array<[number, number]> = [];
+  const segments = 64;
+
+  for (let index = 0; index < segments; index += 1) {
+    const angle = (Math.PI * 2 * index) / segments;
+    const projected = project({
+      x: center.x + Math.cos(angle) * radius,
+      y: center.y + Math.sin(angle) * radius,
+    });
+    points.push([projected.x, projected.y]);
+  }
+
+  return points;
+}
+
+export function renderDxfPreview(text: string): DxfRenderResult {
   const entities = parseDxfEntities(text);
   if (entities.length === 0) {
     throw new Error('DXF 中没有可渲染的 2D 图元（支持 LINE、LWPOLYLINE、POLYLINE、CIRCLE、ARC）');
@@ -310,10 +338,11 @@ export function renderDxfToDataUrl(text: string): string {
     x: CANVAS_PADDING + (point.x - bounds.minX) * scale,
     y: canvas.height - CANVAS_PADDING - (point.y - bounds.minY) * scale,
   });
+  const regions: DxfRenderedRegion[] = [];
 
   context.save();
   context.beginPath();
-  for (const entity of entities) {
+  for (const [index, entity] of entities.entries()) {
     if (entity.type === 'line') {
       const start = project(entity.start);
       const end = project(entity.end);
@@ -328,11 +357,22 @@ export function renderDxfToDataUrl(text: string): string {
       }
       if (entity.closed) {
         context.closePath();
+        regions.push({
+          label: `DXF 区域 ${regions.length + 1}`,
+          points: entity.points.map((point) => {
+            const projected = project(point);
+            return [projected.x, projected.y];
+          }),
+        });
       }
     } else if (entity.type === 'circle') {
       const center = project(entity.center);
       context.moveTo(center.x + entity.radius * scale, center.y);
       context.arc(center.x, center.y, entity.radius * scale, 0, Math.PI * 2);
+      regions.push({
+        label: `DXF 圆形区域 ${index + 1}`,
+        points: circleRegionPoints(entity.center, entity.radius, project),
+      });
     } else {
       const center = project(entity.center);
       context.moveTo(center.x, center.y);
@@ -348,5 +388,14 @@ export function renderDxfToDataUrl(text: string): string {
   context.stroke();
   context.restore();
 
-  return canvas.toDataURL('image/png');
+  return {
+    dataUrl: canvas.toDataURL('image/png'),
+    width: canvas.width,
+    height: canvas.height,
+    regions,
+  };
+}
+
+export function renderDxfToDataUrl(text: string): string {
+  return renderDxfPreview(text).dataUrl;
 }
