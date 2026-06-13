@@ -13,6 +13,24 @@ export interface ModelPreviewResponse {
   method: 'ai' | 'fallback';
 }
 
+export interface ModelPreviewSubmitResponse {
+  task_id: string;
+  status: 'pending';
+}
+
+export interface ModelPreviewTaskResult {
+  status?: string;
+  preview_url?: string;
+  method?: 'ai' | 'fallback';
+}
+
+export interface ModelPreviewTaskStatus {
+  task_id: string;
+  status: 'pending' | 'processing' | 'completed' | 'failed';
+  result: ModelPreviewTaskResult | null;
+  error: string | null;
+}
+
 export async function fetchPrjTemplateDetail(templateId: number): Promise<PrjTemplateDetail> {
   return apiRequest<PrjTemplateDetail>(`/api/prj-templates/${templateId}`);
 }
@@ -47,8 +65,8 @@ export async function createModelPreview(
   imageDataUrl: string,
   templateId?: number,
   prompt?: string
-): Promise<ModelPreviewResponse> {
-  return apiRequest<ModelPreviewResponse>('/api/model-previews', {
+): Promise<ModelPreviewSubmitResponse> {
+  return apiRequest<ModelPreviewSubmitResponse>('/api/model-previews', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -59,4 +77,38 @@ export async function createModelPreview(
       prompt,
     }),
   });
+}
+
+export async function fetchModelPreviewTaskStatus(taskId: string): Promise<ModelPreviewTaskStatus> {
+  return apiRequest<ModelPreviewTaskStatus>(`/api/model-previews/tasks/${taskId}`);
+}
+
+export async function pollModelPreviewTask(
+  taskId: string,
+  onProgress?: (task: ModelPreviewTaskStatus) => void,
+  maxAttempts: number = 90,
+  intervalMs: number = 2000
+): Promise<ModelPreviewTaskStatus> {
+  let attempts = 0;
+
+  while (attempts < maxAttempts) {
+    const task = await fetchModelPreviewTaskStatus(taskId);
+
+    if (onProgress) {
+      onProgress(task);
+    }
+
+    if (task.status === 'completed') {
+      return task;
+    }
+
+    if (task.status === 'failed') {
+      throw new Error(task.error || 'AI 模特预览生成失败');
+    }
+
+    attempts++;
+    await new Promise((resolve) => setTimeout(resolve, intervalMs));
+  }
+
+  return { task_id: taskId, status: 'pending', result: null, error: null };
 }

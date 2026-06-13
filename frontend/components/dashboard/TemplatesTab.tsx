@@ -7,7 +7,13 @@ import { renderDxfPreview } from '@/lib/dxf';
 import type { DxfRenderedRegion } from '@/lib/dxf';
 import { apiRequest } from '@/lib/api';
 import { fetchHistory } from '@/lib/history';
-import { createModelPreview, createPrjTemplatePreview, fetchDxfTemplateFile, fetchPrjTemplateDetail } from '@/lib/prjTemplates';
+import {
+  createModelPreview,
+  createPrjTemplatePreview,
+  fetchDxfTemplateFile,
+  fetchPrjTemplateDetail,
+  pollModelPreviewTask,
+} from '@/lib/prjTemplates';
 import type { GeneratedDesign, MaterialWithDesigns } from '@/types/history';
 import type { PrjTemplateDetail, Template } from '@/types/preview';
 
@@ -68,7 +74,7 @@ const MIN_PREVIEW_ZOOM = 0.5;
 const MAX_PREVIEW_ZOOM = 3;
 const PREVIEW_ZOOM_STEP = 0.25;
 const MODEL_PREVIEW_PROMPT =
-  'Generate a realistic fashion model try-on image from this filled garment preview. Preserve the garment silhouette, print placement, artwork colors, and textile pattern. Use a clean studio catalog background and natural lighting.';
+  'Generate a realistic front-facing fashion model try-on image from this filled garment preview. Use a clean straight-on studio catalog pose, front view only, with the model standing naturally and facing the camera. Preserve the garment silhouette, print placement, artwork colors, and textile pattern identity. The cloth and printed pattern must wrap around the body and deform naturally with torso shape, shoulders, arms, folds, wrinkles, drape, and fabric tension; do not keep the artwork flat or pasted on. Do not use side view, back view, or three-quarter view.';
 
 function designImageUrl(design: GeneratedDesign): string | null {
   return design.thumbnail_url || design.upscaled_url || design.image_url;
@@ -895,9 +901,14 @@ export default function TemplatesTab() {
         selectedTemplate?.id,
         MODEL_PREVIEW_PROMPT
       );
-      setModelPreviewUrl(response.preview_url);
+      const task = await pollModelPreviewTask(response.task_id);
+      const previewUrl = task.result?.preview_url;
+      if (!previewUrl) {
+        throw new Error('AI 模特预览任务完成但没有返回预览图');
+      }
+      setModelPreviewUrl(previewUrl);
       setModelPreviewState('ready');
-      setModelPreviewError(response.method === 'fallback' ? 'AI 暂不可用，已使用后端兜底生成预览。' : null);
+      setModelPreviewError(task.result?.method === 'fallback' ? 'AI 暂不可用，已使用后端兜底生成预览。' : null);
     } catch (err) {
       setModelPreviewError(err instanceof Error ? err.message : '生成模特预览图失败');
       setModelPreviewState('error');
@@ -1390,7 +1401,7 @@ export default function TemplatesTab() {
                     <div>
                       <p className="text-sm font-medium text-zinc-950 dark:text-zinc-50">模特预览图</p>
                       <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
-                        使用 AI 处理当前右侧服装预览图，生成模特穿着效果图；AI 不可用时自动兜底。
+                        异步提交 AI 任务生成正面模特穿着效果图；AI 不可用时自动兜底。
                       </p>
                     </div>
                     <button
@@ -1399,7 +1410,7 @@ export default function TemplatesTab() {
                       disabled={!currentPreviewSourceUrl || modelPreviewState === 'generating'}
                       className="shrink-0 rounded-md bg-blue-600 px-3 py-2 text-xs font-medium text-white hover:bg-blue-500 disabled:cursor-not-allowed disabled:opacity-50"
                     >
-                      {modelPreviewState === 'generating' ? 'AI 生成中...' : 'AI 生成模特预览'}
+                      {modelPreviewState === 'generating' ? 'AI 任务生成中...' : 'AI 生成正面模特预览'}
                     </button>
                   </div>
 
