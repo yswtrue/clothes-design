@@ -29,6 +29,7 @@ from .routes.files import router as files_router
 from .routes.generate import router as generate_router
 from .routes.history import router as history_router
 from .routes.materials import router as materials_router
+from .routes.model_previews import router as model_previews_router
 from .routes.prj_templates import router as prj_templates_router
 from .routes.prompt_features import router as prompt_features_router
 from .routes.prompt_templates import router as prompt_templates_router
@@ -65,8 +66,7 @@ async def lifespan(app: FastAPI):
                 logger.error("Seeding failed: %s", exc, exc_info=True)
                 await session.rollback()
                 raise
-            finally:
-                break
+            break
     except Exception as exc:
         logger.error("Lifespan startup failed: %s", exc, exc_info=True)
         raise
@@ -122,6 +122,7 @@ app.include_router(users_router)
 app.include_router(roles_router)
 app.include_router(upload_router)
 app.include_router(materials_router)
+app.include_router(model_previews_router)
 app.include_router(prj_templates_router)
 app.include_router(prompt_templates_router)
 app.include_router(prompt_features_router)
