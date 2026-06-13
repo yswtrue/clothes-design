@@ -3,10 +3,11 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
 import type { ChangeEvent } from 'react';
 import Image from 'next/image';
-import { renderDxfToDataUrl } from '@/lib/dxf';
+import { renderDxfPreview } from '@/lib/dxf';
+import type { DxfRenderedRegion } from '@/lib/dxf';
 import { apiRequest } from '@/lib/api';
 import { fetchHistory } from '@/lib/history';
-import { createPrjTemplatePreview, fetchDxfTemplateFile, fetchPrjTemplateDetail } from '@/lib/prjTemplates';
+import { createModelPreview, createPrjTemplatePreview, fetchDxfTemplateFile, fetchPrjTemplateDetail } from '@/lib/prjTemplates';
 import type { GeneratedDesign, MaterialWithDesigns } from '@/types/history';
 import type { PrjTemplateDetail, Template } from '@/types/preview';
 
@@ -22,20 +23,50 @@ type PageState = 'loading' | 'idle' | 'error';
 type ModalState = 'idle' | 'loading' | 'generating' | 'error';
 type CanvasState = 'idle' | 'rendering' | 'ready' | 'error';
 type DxfFileState = 'idle' | 'loading' | 'ready' | 'error';
+type ModelPreviewState = 'idle' | 'generating' | 'ready' | 'error';
 type BitmapSourceKind = 'dxf' | 'preview' | 'upload';
 
 type CanvasPoint = [number, number];
 type CanvasRectangle = [number, number, number, number];
 type CanvasRegion = Record<string, unknown>;
 
+interface DrawableRegion {
+  id: string;
+  label: string;
+  region: CanvasRegion;
+}
+
+type RegionShape =
+  | {
+      id: string;
+      label: string;
+      kind: 'polygon';
+      points: CanvasPoint[];
+    }
+  | {
+      id: string;
+      label: string;
+      kind: 'rectangle';
+      rectangle: CanvasRectangle;
+    };
+
+interface RegionPatternAssignment {
+  regionId: string;
+  patternUrl: string;
+}
+
 interface BitmapSource {
   id: string;
   kind: BitmapSourceKind;
   label: string;
   url: string;
+  regions?: CanvasRegion[];
 }
 
 const HISTORY_PAGE_SIZE = 6;
+const MIN_PREVIEW_ZOOM = 0.5;
+const MAX_PREVIEW_ZOOM = 3;
+const PREVIEW_ZOOM_STEP = 0.25;
 
 function designImageUrl(design: GeneratedDesign): string | null {
   return design.thumbnail_url || design.upscaled_url || design.image_url;
@@ -84,11 +115,20 @@ async function renderDxfBlobToBitmapSource(
   label: string
 ): Promise<BitmapSource> {
   const text = await blob.text();
+  const preview = renderDxfPreview(text);
   return {
     id,
     kind: 'dxf',
     label,
-    url: renderDxfToDataUrl(text),
+    url: preview.dataUrl,
+    regions: preview.regions.map(dxfRegionToCanvasRegion),
+  };
+}
+
+function dxfRegionToCanvasRegion(region: DxfRenderedRegion): CanvasRegion {
+  return {
+    name: region.label,
+    points: region.points,
   };
 }
 
@@ -137,13 +177,67 @@ function polygonFromRegion(region: CanvasRegion, canvasWidth: number, canvasHeig
   return points.length >= 3 ? points : [];
 }
 
+function getDrawableRegions(regionsPayload: unknown, canvasWidth: number, canvasHeight: number): DrawableRegion[] {
+  const regions = regionsFromPayload(regionsPayload);
+  const drawableRegions = regions.length > 0
+    ? regions
+    : [{ x: 0, y: 0, width: canvasWidth, height: canvasHeight }];
+
+  return drawableRegions.map((region, index) => ({
+    id: `region-${index}`,
+    label: typeof region.name === 'string' && region.name.trim().length > 0
+      ? region.name.trim()
+      : `区域 ${index + 1}`,
+    region,
+  }));
+}
+
+function buildRegionShapes(regionsPayload: unknown, canvasWidth: number, canvasHeight: number): RegionShape[] {
+  const shapes: RegionShape[] = [];
+
+  for (const item of getDrawableRegions(regionsPayload, canvasWidth, canvasHeight)) {
+    const polygon = polygonFromRegion(item.region, canvasWidth, canvasHeight);
+    if (polygon.length > 0) {
+      shapes.push({ id: item.id, label: item.label, kind: 'polygon', points: polygon });
+      continue;
+    }
+
+    const rectangle = rectangleFromRegion(item.region, canvasWidth, canvasHeight);
+    if (rectangle) {
+      shapes.push({ id: item.id, label: item.label, kind: 'rectangle', rectangle });
+    }
+  }
+
+  return shapes;
+}
+
+function canvasSafeImageUrl(src: string): string {
+  if (src.startsWith('data:') || src.startsWith('blob:')) {
+    return src;
+  }
+
+  if (src.startsWith('/')) {
+    return src;
+  }
+
+  try {
+    const url = new URL(src);
+    if (typeof window !== 'undefined' && url.origin === window.location.origin) {
+      return src;
+    }
+    return `/api/image-proxy?url=${encodeURIComponent(src)}`;
+  } catch {
+    return src;
+  }
+}
+
 function loadCanvasImage(src: string): Promise<HTMLImageElement> {
   return new Promise((resolve, reject) => {
     const image = new window.Image();
     image.crossOrigin = 'anonymous';
     image.onload = () => resolve(image);
     image.onerror = () => reject(new Error('图片加载失败'));
-    image.src = src;
+    image.src = canvasSafeImageUrl(src);
   });
 }
 
@@ -171,13 +265,14 @@ function drawTiledPattern(
 
 async function renderTemplatePreviewInBrowser(
   templateUrl: string,
-  patternUrl: string,
+  assignments: RegionPatternAssignment[],
   regionsPayload: unknown
 ): Promise<string> {
-  const [templateImage, patternImage] = await Promise.all([
-    loadCanvasImage(templateUrl),
-    loadCanvasImage(patternUrl),
-  ]);
+  const templateImage = await loadCanvasImage(templateUrl);
+  const patternEntries = await Promise.all(
+    assignments.map(async (assignment) => [assignment.regionId, await loadCanvasImage(assignment.patternUrl)] as const)
+  );
+  const patternImages = new Map(patternEntries);
 
   const canvas = document.createElement('canvas');
   canvas.width = templateImage.naturalWidth;
@@ -189,15 +284,16 @@ async function renderTemplatePreviewInBrowser(
   }
 
   context.drawImage(templateImage, 0, 0, canvas.width, canvas.height);
-  const regions = regionsFromPayload(regionsPayload);
-  const drawableRegions = regions.length > 0
-    ? regions
-    : [{ x: 0, y: 0, width: canvas.width, height: canvas.height }];
+  const drawableRegions = getDrawableRegions(regionsPayload, canvas.width, canvas.height);
 
-  for (const region of drawableRegions) {
+  for (const item of drawableRegions) {
+    const patternImage = patternImages.get(item.id);
+    if (!patternImage) {
+      continue;
+    }
     context.save();
     context.beginPath();
-    const polygon = polygonFromRegion(region, canvas.width, canvas.height);
+    const polygon = polygonFromRegion(item.region, canvas.width, canvas.height);
     if (polygon.length > 0) {
       context.moveTo(polygon[0][0], polygon[0][1]);
       for (const [x, y] of polygon.slice(1)) {
@@ -205,7 +301,7 @@ async function renderTemplatePreviewInBrowser(
       }
       context.closePath();
     } else {
-      const rectangle = rectangleFromRegion(region, canvas.width, canvas.height);
+      const rectangle = rectangleFromRegion(item.region, canvas.width, canvas.height);
       if (!rectangle) {
         context.restore();
         continue;
@@ -218,6 +314,25 @@ async function renderTemplatePreviewInBrowser(
     context.restore();
   }
 
+  return canvas.toDataURL('image/png');
+}
+
+async function imageUrlToPngDataUrl(sourceUrl: string): Promise<string> {
+  if (sourceUrl.startsWith('data:image/png;')) {
+    return sourceUrl;
+  }
+
+  const image = await loadCanvasImage(sourceUrl);
+  const canvas = document.createElement('canvas');
+  canvas.width = image.naturalWidth;
+  canvas.height = image.naturalHeight;
+
+  const context = canvas.getContext('2d');
+  if (!context) {
+    throw new Error('浏览器不支持 Canvas 导出');
+  }
+
+  context.drawImage(image, 0, 0, canvas.width, canvas.height);
   return canvas.toDataURL('image/png');
 }
 
@@ -243,26 +358,16 @@ export default function TemplatesTab() {
   const [selectedBitmapSourceId, setSelectedBitmapSourceId] = useState<string | null>(null);
   const [localDxfFileName, setLocalDxfFileName] = useState<string | null>(null);
   const [uploadedBitmapSource, setUploadedBitmapSource] = useState<BitmapSource | null>(null);
-
-  const selectedDesign = useMemo(() => {
-    if (selectedDesignId === null) {
-      return null;
-    }
-
-    for (const material of historyMaterials) {
-      const design = material.designs.find((item) => item.id === selectedDesignId);
-      if (design) {
-        return design;
-      }
-    }
-
-    return null;
-  }, [historyMaterials, selectedDesignId]);
+  const [selectedRegionId, setSelectedRegionId] = useState<string | null>(null);
+  const [regionDesignIds, setRegionDesignIds] = useState<Record<string, number>>({});
+  const [selectedBitmapSize, setSelectedBitmapSize] = useState<{ width: number; height: number } | null>(null);
+  const [previewZoom, setPreviewZoom] = useState(1);
+  const [modelPreviewState, setModelPreviewState] = useState<ModelPreviewState>('idle');
+  const [modelPreviewError, setModelPreviewError] = useState<string | null>(null);
+  const [modelPreviewUrl, setModelPreviewUrl] = useState<string | null>(null);
 
   const bitmapSources = useMemo(() => {
     const sources: BitmapSource[] = [];
-    sources.push(...dxfBitmapSources);
-
     const templatePreviewUrl = selectedTemplateDetail?.preview_url ?? selectedTemplate?.preview_url ?? null;
     if (templatePreviewUrl) {
       sources.push({
@@ -272,6 +377,8 @@ export default function TemplatesTab() {
         url: templatePreviewUrl,
       });
     }
+
+    sources.push(...dxfBitmapSources);
 
     if (uploadedBitmapSource) {
       sources.push(uploadedBitmapSource);
@@ -287,6 +394,60 @@ export default function TemplatesTab() {
 
     return bitmapSources.find((source) => source.id === selectedBitmapSourceId) ?? bitmapSources[0] ?? null;
   }, [bitmapSources, selectedBitmapSourceId]);
+
+  const activeRegionPayload = useMemo(() => {
+    const templateRegions = selectedTemplateDetail?.regions;
+    if (regionsFromPayload(templateRegions).length > 0) {
+      return templateRegions;
+    }
+
+    return selectedBitmapSource?.regions ?? templateRegions;
+  }, [selectedBitmapSource?.regions, selectedTemplateDetail?.regions]);
+
+  const regionShapes = useMemo(() => {
+    if (!selectedBitmapSize) {
+      return [];
+    }
+
+    return buildRegionShapes(
+      activeRegionPayload,
+      selectedBitmapSize.width,
+      selectedBitmapSize.height
+    );
+  }, [activeRegionPayload, selectedBitmapSize]);
+
+  const selectedRegion = useMemo(() => {
+    if (!selectedRegionId) {
+      return null;
+    }
+
+    return regionShapes.find((region) => region.id === selectedRegionId) ?? null;
+  }, [regionShapes, selectedRegionId]);
+
+  const regionAssignments = useMemo(() => {
+    return Object.entries(regionDesignIds).flatMap(([regionId, designId]) => {
+      for (const material of historyMaterials) {
+        const design = material.designs.find((item) => item.id === designId);
+        const patternUrl = design ? designImageUrl(design) : null;
+        if (patternUrl) {
+          return [{ regionId, patternUrl } satisfies RegionPatternAssignment];
+        }
+      }
+
+      return [];
+    });
+  }, [historyMaterials, regionDesignIds]);
+
+  const fallbackDesignId = useMemo(() => {
+    if (selectedDesignId !== null) {
+      return selectedDesignId;
+    }
+
+    const assignedDesignIds = Object.values(regionDesignIds);
+    return assignedDesignIds.length > 0 ? assignedDesignIds[0] : null;
+  }, [regionDesignIds, selectedDesignId]);
+
+  const currentPreviewSourceUrl = previewUrl ?? selectedBitmapSource?.url ?? null;
 
   useEffect(() => {
     async function loadTemplates() {
@@ -395,6 +556,10 @@ export default function TemplatesTab() {
           setDxfBitmapSources([source]);
           setSelectedBitmapSourceId(source.id);
           setDxfFileState('ready');
+          setRegionDesignIds({});
+          setSelectedRegionId(null);
+          setSelectedDesignId(null);
+          setPreviewZoom(1);
         }
       } catch (err) {
         if (!cancelled) {
@@ -431,16 +596,52 @@ export default function TemplatesTab() {
   }, [dxfBitmapSources]);
 
   useEffect(() => {
-    const templateImageUrl = selectedBitmapSource?.url ?? null;
-    const patternUrl = selectedDesign ? designImageUrl(selectedDesign) : null;
+    const sourceUrl = selectedBitmapSource?.url ?? null;
+    if (!sourceUrl) {
+      setSelectedBitmapSize(null);
+      setSelectedRegionId(null);
+      return;
+    }
 
-    if (!templateImageUrl || !patternUrl) {
+    let cancelled = false;
+
+    async function loadBitmapSize() {
+      try {
+        const image = await loadCanvasImage(sourceUrl);
+        if (!cancelled) {
+          setSelectedBitmapSize({ width: image.naturalWidth, height: image.naturalHeight });
+        }
+      } catch {
+        if (!cancelled) {
+          setSelectedBitmapSize(null);
+        }
+      }
+    }
+
+    loadBitmapSize();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedBitmapSource?.url]);
+
+  useEffect(() => {
+    if (selectedRegionId && !regionShapes.some((region) => region.id === selectedRegionId)) {
+      setSelectedRegionId(null);
+    }
+  }, [regionShapes, selectedRegionId]);
+
+  useEffect(() => {
+    const templateImageUrl = selectedBitmapSource?.url ?? null;
+
+    if (!templateImageUrl || regionAssignments.length === 0) {
+      setPreviewUrl(null);
+      setCanvasState('idle');
       return;
     }
 
     let cancelled = false;
     const templateSrc: string = templateImageUrl;
-    const patternSrc: string = patternUrl;
 
     async function renderPreview() {
       setCanvasState('rendering');
@@ -449,8 +650,8 @@ export default function TemplatesTab() {
       try {
         const renderedUrl = await renderTemplatePreviewInBrowser(
           templateSrc,
-          patternSrc,
-          selectedTemplateDetail?.regions
+          regionAssignments,
+          activeRegionPayload
         );
         if (!cancelled) {
           setPreviewUrl(renderedUrl);
@@ -470,13 +671,29 @@ export default function TemplatesTab() {
     return () => {
       cancelled = true;
     };
-  }, [selectedDesign, selectedBitmapSource, selectedTemplateDetail]);
+  }, [activeRegionPayload, regionAssignments, selectedBitmapSource]);
+
+  function resetModelPreview() {
+    setModelPreviewState('idle');
+    setModelPreviewError(null);
+    setModelPreviewUrl(null);
+  }
+
+  function selectRegion(regionId: string) {
+    setSelectedRegionId(regionId);
+    const assignedDesignId = regionDesignIds[regionId];
+    setSelectedDesignId(assignedDesignId ?? null);
+  }
 
   function selectDesign(designId: number) {
     setSelectedDesignId(designId);
+    if (selectedRegionId) {
+      setRegionDesignIds((current) => ({ ...current, [selectedRegionId]: designId }));
+    }
     setPreviewUrl(null);
     setCanvasState('idle');
     setCanvasError(null);
+    resetModelPreview();
   }
 
   function selectBitmapSource(sourceId: string) {
@@ -484,6 +701,43 @@ export default function TemplatesTab() {
     setPreviewUrl(null);
     setCanvasState('idle');
     setCanvasError(null);
+    setPreviewZoom(1);
+    resetModelPreview();
+  }
+
+  function removeSelectedRegionFill() {
+    if (!selectedRegionId) {
+      return;
+    }
+
+    setRegionDesignIds((current) => {
+      const next = { ...current };
+      delete next[selectedRegionId];
+      return next;
+    });
+    setSelectedDesignId(null);
+    setPreviewUrl(null);
+    setCanvasState('idle');
+    setCanvasError(null);
+    resetModelPreview();
+  }
+
+  function resetAllRegionFills() {
+    setRegionDesignIds({});
+    setSelectedDesignId(null);
+    setSelectedRegionId(null);
+    setPreviewUrl(null);
+    setCanvasState('idle');
+    setCanvasError(null);
+    resetModelPreview();
+  }
+
+  function zoomPreview(delta: number) {
+    setPreviewZoom((current) => Math.max(MIN_PREVIEW_ZOOM, Math.min(MAX_PREVIEW_ZOOM, current + delta)));
+  }
+
+  function resetPreviewZoom() {
+    setPreviewZoom(1);
   }
 
   async function handleDxfUpload(event: ChangeEvent<HTMLInputElement>) {
@@ -513,6 +767,11 @@ export default function TemplatesTab() {
       setDxfBitmapSources([source]);
       setSelectedBitmapSourceId(source.id);
       setDxfFileState('ready');
+      setRegionDesignIds({});
+      setSelectedRegionId(null);
+      setSelectedDesignId(null);
+      setPreviewZoom(1);
+      resetModelPreview();
     } catch (err) {
       setDxfBitmapSources([]);
       setDxfFileError(err instanceof Error ? err.message : '读取本地 DXF 文件失败');
@@ -544,9 +803,14 @@ export default function TemplatesTab() {
 
     setUploadedBitmapSource(source);
     setSelectedBitmapSourceId(source.id);
+    setRegionDesignIds({});
+    setSelectedRegionId(null);
+    setSelectedDesignId(null);
     setPreviewUrl(null);
     setCanvasState('idle');
     setCanvasError(null);
+    setPreviewZoom(1);
+    resetModelPreview();
     event.target.value = '';
   }
 
@@ -556,6 +820,8 @@ export default function TemplatesTab() {
     setHistoryPage(1);
     setHistoryPages(0);
     setSelectedDesignId(null);
+    setSelectedRegionId(null);
+    setRegionDesignIds({});
     setPreviewUrl(null);
     setModalError(null);
     setCanvasState('idle');
@@ -566,12 +832,17 @@ export default function TemplatesTab() {
     setSelectedBitmapSourceId(null);
     setLocalDxfFileName(null);
     setUploadedBitmapSource(null);
+    setSelectedBitmapSize(null);
+    setPreviewZoom(1);
+    resetModelPreview();
   }
 
   function closeTemplateModal() {
     setSelectedTemplate(null);
     setSelectedTemplateDetail(null);
     setSelectedDesignId(null);
+    setSelectedRegionId(null);
+    setRegionDesignIds({});
     setPreviewUrl(null);
     setModalError(null);
     setCanvasState('idle');
@@ -582,11 +853,14 @@ export default function TemplatesTab() {
     setSelectedBitmapSourceId(null);
     setLocalDxfFileName(null);
     setUploadedBitmapSource(null);
+    setSelectedBitmapSize(null);
+    setPreviewZoom(1);
     setHistoryMaterials([]);
+    resetModelPreview();
   }
 
   async function handleGeneratePreview() {
-    if (!selectedTemplate || selectedDesignId === null) {
+    if (!selectedTemplate || fallbackDesignId === null) {
       return;
     }
 
@@ -594,15 +868,35 @@ export default function TemplatesTab() {
     setModalError(null);
 
     try {
-      const response = await createPrjTemplatePreview(selectedTemplate.id, selectedDesignId);
+      const response = await createPrjTemplatePreview(selectedTemplate.id, fallbackDesignId);
       setPreviewUrl(response.preview_url);
+      resetModelPreview();
       setModalState('idle');
     } catch (err) {
       setModalError(err instanceof Error ? err.message : '生成服装预览失败');
       setModalState('error');
     }
   }
-  
+
+  async function handleCreateModelPreview() {
+    if (!currentPreviewSourceUrl) {
+      return;
+    }
+
+    setModelPreviewState('generating');
+    setModelPreviewError(null);
+
+    try {
+      const imageDataUrl = await imageUrlToPngDataUrl(currentPreviewSourceUrl);
+      const response = await createModelPreview(imageDataUrl, selectedTemplate?.id);
+      setModelPreviewUrl(response.preview_url);
+      setModelPreviewState('ready');
+    } catch (err) {
+      setModelPreviewError(err instanceof Error ? err.message : '生成模特预览图失败');
+      setModelPreviewState('error');
+    }
+  }
+   
   return (
     <div className="py-8 px-4 sm:px-6 lg:px-8">
       <div className="max-w-7xl mx-auto">
@@ -712,7 +1006,14 @@ export default function TemplatesTab() {
             <div className="grid max-h-[calc(90vh-82px)] grid-cols-1 overflow-y-auto lg:grid-cols-[1.3fr_0.9fr]">
               <div className="border-b border-zinc-200 dark:border-zinc-800 p-6 lg:border-b-0 lg:border-r">
                 <div className="mb-4 flex items-center justify-between gap-3">
-                  <h3 className="font-medium text-zinc-950 dark:text-zinc-50">设计历史</h3>
+                  <div>
+                    <h3 className="font-medium text-zinc-950 dark:text-zinc-50">设计历史</h3>
+                    <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
+                      {selectedRegion
+                        ? `当前填充：${selectedRegion.label}，请选择一个素材。`
+                        : '点击右侧区域可局部填充；未选区域时选择素材会用于服务端兜底。'}
+                    </p>
+                  </div>
                   {historyPages > 1 && (
                     <div className="flex items-center gap-2 text-sm text-zinc-600 dark:text-zinc-400">
                       <button
@@ -770,15 +1071,19 @@ export default function TemplatesTab() {
                           {material.designs.map((design) => {
                             const imageUrl = designImageUrl(design);
                             const selectable = isDesignSelectable(design);
-                            const selected = selectedDesignId === design.id;
+                            const selected = selectedRegionId
+                              ? regionDesignIds[selectedRegionId] === design.id
+                              : selectedDesignId === design.id;
+                            const canAssign = selectable;
 
                             return (
                               <button
                                 key={design.id}
                                 type="button"
-                                onClick={() => selectable && selectDesign(design.id)}
-                                disabled={!selectable}
-                                className={`overflow-hidden rounded-lg border text-left transition ${selected ? 'border-blue-500 ring-2 ring-blue-500' : 'border-zinc-200 dark:border-zinc-700'} ${selectable ? 'hover:border-blue-400' : 'cursor-not-allowed opacity-50'}`}
+                                onClick={() => canAssign && selectDesign(design.id)}
+                                disabled={!canAssign}
+                                title={selectedRegionId ? '填充当前选中区域' : '未选区域时作为服务端兜底素材'}
+                                className={`overflow-hidden rounded-lg border text-left transition ${selected ? 'border-blue-500 ring-2 ring-blue-500' : 'border-zinc-200 dark:border-zinc-700'} ${canAssign ? 'hover:border-blue-400' : 'cursor-not-allowed opacity-50'}`}
                               >
                                 <div className="aspect-square bg-zinc-100 dark:bg-zinc-800">
                                   {imageUrl ? (
@@ -800,7 +1105,9 @@ export default function TemplatesTab() {
                                 </div>
                                 <div className="flex items-center justify-between gap-2 p-2 text-xs">
                                   <span className="text-zinc-700 dark:text-zinc-300">#{design.variant_index + 1}</span>
-                                  <span className="text-zinc-500 dark:text-zinc-400">{design.status}</span>
+                                  <span className="text-zinc-500 dark:text-zinc-400">
+                                    {selected ? '已选' : design.status}
+                                  </span>
                                 </div>
                               </button>
                             );
@@ -885,6 +1192,11 @@ export default function TemplatesTab() {
                       选择模板底图来源
                     </p>
                     <div className="grid grid-cols-1 gap-2">
+                      {bitmapSources.length === 0 && (
+                        <div className="rounded-md border border-dashed border-zinc-300 px-3 py-2 text-xs text-zinc-500 dark:border-zinc-700 dark:text-zinc-400">
+                          当前模板没有可用底图。请上传 DXF、上传本地位图，或在后台为模板配置预览图。
+                        </div>
+                      )}
                       {bitmapSources.map((source) => (
                         <button
                           key={source.id}
@@ -917,24 +1229,121 @@ export default function TemplatesTab() {
                     </label>
                   </div>
                 </div>
-                <div className="mb-4 overflow-hidden rounded-lg border border-zinc-200 bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-900">
-                  <div className="relative aspect-[4/5]">
-                    {previewUrl ? (
-                      <Image
-                        src={previewUrl}
-                        alt={`${selectedTemplate.name} 预览`}
-                        fill
-                        unoptimized
-                        className="object-contain"
-                        sizes="(max-width: 1024px) 100vw, 420px"
-                      />
-                    ) : selectedBitmapSource ? (
+                <div className="mb-3 rounded-lg border border-zinc-200 bg-white p-3 text-xs dark:border-zinc-800 dark:bg-zinc-950">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div className="text-zinc-600 dark:text-zinc-400">
+                      {selectedRegion
+                        ? `已选中 ${selectedRegion.label}`
+                        : regionShapes.length > 0
+                        ? '点击下方 DXF 区域后选择素材填充'
+                        : '等待 DXF 区域信息'}
+                    </div>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => zoomPreview(-PREVIEW_ZOOM_STEP)}
+                        disabled={previewZoom <= MIN_PREVIEW_ZOOM}
+                        className="rounded border border-zinc-200 px-2 py-1 disabled:opacity-50 dark:border-zinc-700"
+                      >
+                        缩小
+                      </button>
+                      <span className="min-w-12 text-center text-zinc-500 dark:text-zinc-400">
+                        {Math.round(previewZoom * 100)}%
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => zoomPreview(PREVIEW_ZOOM_STEP)}
+                        disabled={previewZoom >= MAX_PREVIEW_ZOOM}
+                        className="rounded border border-zinc-200 px-2 py-1 disabled:opacity-50 dark:border-zinc-700"
+                      >
+                        放大
+                      </button>
+                      <button
+                        type="button"
+                        onClick={resetPreviewZoom}
+                        className="rounded border border-zinc-200 px-2 py-1 hover:bg-zinc-50 dark:border-zinc-700 dark:hover:bg-zinc-800"
+                      >
+                        重置缩放
+                      </button>
+                      <button
+                        type="button"
+                        onClick={removeSelectedRegionFill}
+                        disabled={!selectedRegionId || !regionDesignIds[selectedRegionId]}
+                        className="rounded border border-zinc-200 px-2 py-1 hover:bg-zinc-50 disabled:opacity-50 dark:border-zinc-700 dark:hover:bg-zinc-800"
+                      >
+                        清除当前区域
+                      </button>
+                      <button
+                        type="button"
+                        onClick={resetAllRegionFills}
+                        disabled={Object.keys(regionDesignIds).length === 0}
+                        className="rounded border border-zinc-200 px-2 py-1 hover:bg-zinc-50 disabled:opacity-50 dark:border-zinc-700 dark:hover:bg-zinc-800"
+                      >
+                        重置填充
+                      </button>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="mb-4 overflow-auto rounded-lg border border-zinc-200 bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-900">
+                  <div
+                    className="relative min-w-full"
+                    style={{
+                      width: `${previewZoom * 100}%`,
+                      aspectRatio: selectedBitmapSize ? `${selectedBitmapSize.width} / ${selectedBitmapSize.height}` : '4 / 5',
+                    }}
+                  >
+                    {previewUrl || selectedBitmapSource ? (
                       <>
                         <div
-                          aria-label={selectedBitmapSource.label}
-                          className="absolute inset-0 bg-contain bg-center bg-no-repeat opacity-70"
-                          style={{ backgroundImage: `url(${selectedBitmapSource.url})` }}
+                          aria-label={previewUrl ? `${selectedTemplate.name} 预览` : selectedBitmapSource?.label}
+                          className={`absolute inset-0 bg-contain bg-center bg-no-repeat ${previewUrl ? '' : 'opacity-70'}`}
+                          style={{ backgroundImage: `url(${previewUrl ?? selectedBitmapSource?.url})` }}
                         />
+                        {selectedBitmapSize && regionShapes.length > 0 && (
+                          <svg
+                            className="absolute inset-0 h-full w-full"
+                            viewBox={`0 0 ${selectedBitmapSize.width} ${selectedBitmapSize.height}`}
+                            role="img"
+                            aria-label="可点击填充区域"
+                          >
+                            {regionShapes.map((region) => {
+                              const isSelected = selectedRegionId === region.id;
+                              const isAssigned = Boolean(regionDesignIds[region.id]);
+                              const fill = isSelected
+                                ? 'rgba(37, 99, 235, 0.28)'
+                                : isAssigned
+                                ? 'rgba(16, 185, 129, 0.2)'
+                                : 'rgba(245, 158, 11, 0.12)';
+                              const stroke = isSelected ? '#2563eb' : isAssigned ? '#10b981' : '#f59e0b';
+
+                              return region.kind === 'polygon' ? (
+                                <polygon
+                                  key={region.id}
+                                  points={region.points.map(([x, y]) => `${x},${y}`).join(' ')}
+                                  fill={fill}
+                                  stroke={stroke}
+                                  strokeWidth={isSelected ? 4 : 2}
+                                  className="cursor-pointer transition hover:fill-blue-500/25"
+                                  onClick={() => selectRegion(region.id)}
+                                />
+                              ) : (
+                                <rect
+                                  key={region.id}
+                                  x={region.rectangle[0]}
+                                  y={region.rectangle[1]}
+                                  width={region.rectangle[2] - region.rectangle[0]}
+                                  height={region.rectangle[3] - region.rectangle[1]}
+                                  fill={fill}
+                                  stroke={stroke}
+                                  strokeWidth={isSelected ? 4 : 2}
+                                  className="cursor-pointer transition hover:fill-blue-500/25"
+                                  onClick={() => selectRegion(region.id)}
+                                />
+                              );
+                            })}
+                          </svg>
+                        )}
                         {canvasState === 'rendering' && (
                           <div className="absolute inset-0 flex items-center justify-center bg-white/70 text-sm text-zinc-600 dark:bg-zinc-950/70 dark:text-zinc-300">
                             浏览器渲染中...
@@ -951,7 +1360,7 @@ export default function TemplatesTab() {
 
                 {canvasState === 'ready' && (
                   <div className="mb-3 rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-xs text-emerald-700 dark:border-emerald-800 dark:bg-emerald-900/20 dark:text-emerald-300">
-                    已在浏览器中根据模板 regions 完成预览渲染。
+                    已在浏览器中按已选择区域完成填充预览。
                   </div>
                 )}
 
@@ -964,14 +1373,53 @@ export default function TemplatesTab() {
                 <button
                   type="button"
                   onClick={handleGeneratePreview}
-                  disabled={selectedDesignId === null || modalState === 'generating'}
+                  disabled={fallbackDesignId === null || modalState === 'generating'}
                   className="w-full rounded-lg bg-zinc-950 px-4 py-2.5 text-sm font-medium text-white hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-zinc-50 dark:text-zinc-950 dark:hover:bg-zinc-200"
                 >
                   {modalState === 'generating' ? '服务端生成中...' : '服务端兜底生成预览'}
                 </button>
+                <div className="mt-3 rounded-lg border border-zinc-200 bg-white p-3 dark:border-zinc-800 dark:bg-zinc-950">
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <p className="text-sm font-medium text-zinc-950 dark:text-zinc-50">模特预览图</p>
+                      <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
+                        使用当前右侧服装预览图生成一张模特穿着效果图。
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={handleCreateModelPreview}
+                      disabled={!currentPreviewSourceUrl || modelPreviewState === 'generating'}
+                      className="shrink-0 rounded-md bg-blue-600 px-3 py-2 text-xs font-medium text-white hover:bg-blue-500 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      {modelPreviewState === 'generating' ? '生成中...' : '生成模特预览'}
+                    </button>
+                  </div>
+
+                  {modelPreviewState === 'error' && modelPreviewError && (
+                    <div className="mt-3 rounded-md border border-red-200 bg-red-50 p-2 text-xs text-red-700 dark:border-red-800 dark:bg-red-900/20 dark:text-red-300">
+                      {modelPreviewError}
+                    </div>
+                  )}
+
+                  {modelPreviewUrl && (
+                    <div className="mt-3 overflow-hidden rounded-md border border-zinc-200 bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-900">
+                      <div className="relative aspect-[3/4] w-full">
+                        <Image
+                          src={modelPreviewUrl}
+                          alt="模特预览图"
+                          fill
+                          unoptimized
+                          className="object-contain"
+                          sizes="(max-width: 1024px) 100vw, 360px"
+                        />
+                      </div>
+                    </div>
+                  )}
+                </div>
                 <p className="mt-3 text-xs leading-5 text-zinc-500 dark:text-zinc-400">
                   浏览器会先下载 DXF 文件并直接渲染成模板底图；你也可以改用模板预览图或上传本地位图。
-                  填充区域仍来自模板详情的 regions；若模板没有区域配置，则默认填充整张所选位图。服务端按钮用于浏览器图片跨域或 Canvas 不可用时兜底。
+                  先点击预览里的区域，再在左侧选择设计历史素材填充；区域优先使用模板 regions，没有配置时会使用 DXF 闭合轮廓，仍无法识别时才把整张底图作为一个区域。缩放只影响当前预览视图。
                 </p>
               </div>
             </div>
