@@ -2,6 +2,7 @@
 
 import base64
 import io
+import logging
 import re
 import uuid
 from typing import Annotated, Literal
@@ -15,13 +16,24 @@ from api.auth.dependencies import get_current_user
 from api.db.base import get_session
 from api.db.models import User
 from api.storage.storages import model_preview_storage
+from shared.ai.exceptions import AIProviderError
+from shared.ai.factory import get_provider_for_image_generation
+from shared.ai.schemas import GenerationParams, StyleAnalysis
 
 router = APIRouter(prefix="/api/model-previews", tags=["model-previews"])
+logger = logging.getLogger(__name__)
 
 _session_dep = Annotated[AsyncSession, Depends(get_session)]
 _user_dep = Annotated[User, Depends(get_current_user)]
 
 _DATA_URL_PATTERN = re.compile(r"^data:image/(?P<format>png|jpeg|jpg|webp);base64,(?P<data>.+)$", re.DOTALL)
+_DEFAULT_MODEL_PREVIEW_PROMPT = (
+    "Create a realistic fashion catalog try-on image using the provided garment preview as the "
+    "source clothing design. Place the garment on a clean full-body studio model or mannequin, "
+    "preserving the fabric print, colors, layout, and silhouette as much as possible. Use a neutral "
+    "studio background, natural lighting, high quality product photography, and do not invent new "
+    "patterns or change the design artwork."
+)
 
 
 def _soft_shadow_alpha(value: int) -> int:
@@ -37,6 +49,7 @@ class ModelPreviewRequest(BaseModel):
 class ModelPreviewResponse(BaseModel):
     preview_url: str
     status: Literal["completed"] = "completed"
+    method: Literal["ai", "fallback"] = "fallback"
 
 
 def _decode_image_data_url(data_url: str) -> bytes:
@@ -60,6 +73,67 @@ def _fit_image(image: Image.Image, max_width: int, max_height: int) -> Image.Ima
     fitted = image.copy()
     fitted.thumbnail((max_width, max_height), Image.Resampling.LANCZOS)
     return fitted
+
+
+def _preview_dimensions(image_bytes: bytes) -> tuple[int, int]:
+    try:
+        image = Image.open(io.BytesIO(image_bytes))
+    except OSError:
+        return 1024, 1024
+
+    width, height = image.size
+    if width <= 0 or height <= 0:
+        return 1024, 1024
+
+    scale = min(1024 / width, 1024 / height, 1)
+    return max(64, int(width * scale)), max(64, int(height * scale))
+
+
+def _normalize_png(image_bytes: bytes) -> bytes:
+    try:
+        image = Image.open(io.BytesIO(image_bytes)).convert("RGB")
+    except OSError as exc:
+        raise AIProviderError("AI provider returned an unreadable image") from exc
+
+    output = io.BytesIO()
+    image.save(output, format="PNG", optimize=True)
+    return output.getvalue()
+
+
+async def _generate_ai_model_preview(garment_bytes: bytes, prompt: str | None) -> bytes | None:
+    provider_result = await get_provider_for_image_generation()
+    if provider_result is None:
+        logger.info("No active image-generation provider configured for model preview")
+        return None
+
+    provider, provider_type = provider_result
+    width, height = _preview_dimensions(garment_bytes)
+    source_b64 = base64.b64encode(garment_bytes).decode("ascii")
+    final_prompt = prompt.strip() if prompt and prompt.strip() else _DEFAULT_MODEL_PREVIEW_PROMPT
+
+    style = StyleAnalysis(
+        style_description="fashion model try-on preview generated from a filled garment template",
+        color_palette=[],
+        pattern_type="full",
+        suggested_params={},
+    )
+    params = GenerationParams(
+        style="model_preview",
+        tiling="clamp",
+        width=width,
+        height=height,
+        seed=42,
+        init_image_b64=source_b64,
+        strength=0.55,
+        prompt_override=final_prompt,
+    )
+
+    try:
+        logger.info("Generating AI model preview with provider=%s", provider_type)
+        return _normalize_png(await provider.generate_pattern(style, params))
+    except AIProviderError:
+        logger.warning("AI model preview failed; falling back to deterministic compositor", exc_info=True)
+        return None
 
 
 def _compose_model_preview(garment_bytes: bytes) -> bytes:
@@ -122,8 +196,13 @@ async def create_model_preview(
         )
 
     garment_bytes = _decode_image_data_url(request.image_data_url)
-    preview_bytes = _compose_model_preview(garment_bytes)
+    preview_method: Literal["ai", "fallback"] = "ai"
+    preview_bytes = await _generate_ai_model_preview(garment_bytes, request.prompt)
+    if preview_bytes is None:
+        preview_method = "fallback"
+        preview_bytes = _compose_model_preview(garment_bytes)
+
     template_suffix = f"template_{request.template_id}_" if request.template_id is not None else ""
     filename = f"user_{current_user.id}_{template_suffix}{uuid.uuid4().hex}.png"
     preview_url = await model_preview_storage.upload(preview_bytes, filename)
-    return ModelPreviewResponse(preview_url=preview_url)
+    return ModelPreviewResponse(preview_url=preview_url, method=preview_method)
