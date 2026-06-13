@@ -25,7 +25,6 @@ _user_dep = Annotated[User, Depends(get_current_user)]
 
 class GenerateRequest(BaseModel):
     material_id: int
-    pattern_type: str  # seamless, standalone, full
     prompt: str | None = None
     colors: list[str] | None = None
     use_img2img: bool = True
@@ -121,7 +120,7 @@ async def generate_pattern(
         status="generating",
         variant_index=next_version,
         prompt_used=prompt,
-        generation_params={"pattern_type": request.pattern_type, "strength": request.strength},
+        generation_params={"strength": request.strength},
     )
     session.add(generated_design)
     await session.flush()
@@ -133,7 +132,7 @@ async def generate_pattern(
 
     gen_params = GenerationParams(
         style=prompt,
-        tiling="tile" if request.pattern_type == "seamless" else "clamp",
+        tiling="tile",
         width=1024,
         height=1024,
         seed=42,
@@ -145,7 +144,6 @@ async def generate_pattern(
     task_data = {
         "material_id": request.material_id,
         "generated_design_id": generated_design.id,
-        "pattern_type": request.pattern_type,
         "style": style_analysis.model_dump() if style_analysis else {"style_description": prompt},
         "params": gen_params.model_dump(),
     }

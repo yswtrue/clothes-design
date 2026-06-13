@@ -1,6 +1,5 @@
 export interface GenerateRequest {
   material_id: number;
-  pattern_type: 'seamless' | 'standalone' | 'full';
   prompt?: string;
   colors?: string[];
 }
