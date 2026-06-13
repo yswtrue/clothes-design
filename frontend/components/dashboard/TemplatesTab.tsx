@@ -67,6 +67,8 @@ const HISTORY_PAGE_SIZE = 6;
 const MIN_PREVIEW_ZOOM = 0.5;
 const MAX_PREVIEW_ZOOM = 3;
 const PREVIEW_ZOOM_STEP = 0.25;
+const MODEL_PREVIEW_PROMPT =
+  'Generate a realistic fashion model try-on image from this filled garment preview. Preserve the garment silhouette, print placement, artwork colors, and textile pattern. Use a clean studio catalog background and natural lighting.';
 
 function designImageUrl(design: GeneratedDesign): string | null {
   return design.thumbnail_url || design.upscaled_url || design.image_url;
@@ -888,9 +890,14 @@ export default function TemplatesTab() {
 
     try {
       const imageDataUrl = await imageUrlToPngDataUrl(currentPreviewSourceUrl);
-      const response = await createModelPreview(imageDataUrl, selectedTemplate?.id);
+      const response = await createModelPreview(
+        imageDataUrl,
+        selectedTemplate?.id,
+        MODEL_PREVIEW_PROMPT
+      );
       setModelPreviewUrl(response.preview_url);
       setModelPreviewState('ready');
+      setModelPreviewError(response.method === 'fallback' ? 'AI 暂不可用，已使用后端兜底生成预览。' : null);
     } catch (err) {
       setModelPreviewError(err instanceof Error ? err.message : '生成模特预览图失败');
       setModelPreviewState('error');
@@ -1383,7 +1390,7 @@ export default function TemplatesTab() {
                     <div>
                       <p className="text-sm font-medium text-zinc-950 dark:text-zinc-50">模特预览图</p>
                       <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
-                        使用当前右侧服装预览图生成一张模特穿着效果图。
+                        使用 AI 处理当前右侧服装预览图，生成模特穿着效果图；AI 不可用时自动兜底。
                       </p>
                     </div>
                     <button
@@ -1392,9 +1399,15 @@ export default function TemplatesTab() {
                       disabled={!currentPreviewSourceUrl || modelPreviewState === 'generating'}
                       className="shrink-0 rounded-md bg-blue-600 px-3 py-2 text-xs font-medium text-white hover:bg-blue-500 disabled:cursor-not-allowed disabled:opacity-50"
                     >
-                      {modelPreviewState === 'generating' ? '生成中...' : '生成模特预览'}
+                      {modelPreviewState === 'generating' ? 'AI 生成中...' : 'AI 生成模特预览'}
                     </button>
                   </div>
+
+                  {modelPreviewState === 'ready' && modelPreviewError && (
+                    <div className="mt-3 rounded-md border border-amber-200 bg-amber-50 p-2 text-xs text-amber-700 dark:border-amber-800 dark:bg-amber-900/20 dark:text-amber-200">
+                      {modelPreviewError}
+                    </div>
+                  )}
 
                   {modelPreviewState === 'error' && modelPreviewError && (
                     <div className="mt-3 rounded-md border border-red-200 bg-red-50 p-2 text-xs text-red-700 dark:border-red-800 dark:bg-red-900/20 dark:text-red-300">
