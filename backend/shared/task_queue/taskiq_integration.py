@@ -6,6 +6,16 @@ from taskiq import TaskiqResult
 from taskiq_redis.exceptions import ResultIsMissingError
 
 from taskiq_app import broker
+from worker.tasks import (
+    analyze_task,
+    export_pattern_task,
+    generate_task,
+    mockup_task,
+    model_preview_task,
+    upscale_task,
+    vectorize_task,
+)
+
 from .redis_client import get_redis_client
 from .schemas import TaskStatus
 
@@ -14,21 +24,13 @@ class QueueError(Exception):
     pass
 
 
-from worker.tasks import (
-    analyze_task,
-    export_pattern_task,
-    generate_task,
-    mockup_task,
-    upscale_task,
-    vectorize_task,
-)
-
 TASK_MAP = {
     "analyze": analyze_task,
     "generate": generate_task,
     "upscale": upscale_task,
     "vectorize": vectorize_task,
     "mockup": mockup_task,
+    "model_preview": model_preview_task,
     "export_pattern": export_pattern_task,
 }
 

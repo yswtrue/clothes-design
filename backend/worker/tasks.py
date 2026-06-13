@@ -43,6 +43,14 @@ async def mockup_task(task_data: dict[str, Any]) -> dict[str, Any]:
     return await handler.handle(task_data)
 
 
+@broker.task(task_name="worker.tasks.model_preview")
+async def model_preview_task(task_data: dict[str, Any]) -> dict[str, Any]:
+    from worker.handlers.model_preview import ModelPreviewHandler
+
+    handler = ModelPreviewHandler()
+    return await handler.handle(task_data)
+
+
 @broker.task(task_name="worker.tasks.export_pattern")
 async def export_pattern_task(task_data: dict[str, Any]) -> dict[str, Any]:
     from worker.handlers.export_pattern import ExportPatternHandler
@@ -53,9 +61,10 @@ async def export_pattern_task(task_data: dict[str, Any]) -> dict[str, Any]:
 
 __all__ = [
     "analyze_task",
+    "export_pattern_task",
     "generate_task",
+    "mockup_task",
+    "model_preview_task",
     "upscale_task",
     "vectorize_task",
-    "mockup_task",
-    "export_pattern_task",
 ]
