@@ -1,5 +1,6 @@
-from contextlib import asynccontextmanager
 import logging
+from contextlib import asynccontextmanager
+from typing import cast
 
 from fastapi import FastAPI
 from fastapi.exceptions import RequestValidationError
@@ -7,22 +8,13 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi_pagination import add_pagination
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.middleware.sessions import SessionMiddleware
+from starlette.types import ExceptionHandler
 
-from .routes.auth import router as auth_router
-from .routes.ai_providers import router as ai_providers_router
-from .routes.export import router as export_router
-from .routes.files import router as files_router
-from .routes.generate import router as generate_router
-from .routes.history import router as history_router
-from .routes.materials import router as materials_router
-from .routes.prj_templates import router as prj_templates_router
-from .routes.prompt_templates import router as prompt_templates_router
-from .routes.roles import router as roles_router
-from .routes.upload import router as upload_router
-from .routes.users import router as users_router
+from .admin import create_admin
 from .db.base import get_session
-from .db.seed_users import seed_test_users
+from .db.seed_prompt_features import seed_prompt_features
 from .db.seed_prompt_templates import seed_prompt_templates
+from .db.seed_users import seed_test_users
 from .middleware.errors import (
     generic_exception_handler,
     http_exception_handler,
@@ -30,19 +22,31 @@ from .middleware.errors import (
 )
 from .middleware.logging import RequestLoggingMiddleware, configure_logging
 from .rbac.seed import seed_default_roles
-from .admin import create_admin
+from .routes.ai_providers import router as ai_providers_router
+from .routes.auth import router as auth_router
+from .routes.export import router as export_router
+from .routes.files import router as files_router
+from .routes.generate import router as generate_router
+from .routes.history import router as history_router
+from .routes.materials import router as materials_router
+from .routes.prj_templates import router as prj_templates_router
+from .routes.prompt_features import router as prompt_features_router
+from .routes.prompt_templates import router as prompt_templates_router
+from .routes.roles import router as roles_router
+from .routes.upload import router as upload_router
+from .routes.users import router as users_router
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     from taskiq_app import broker
-    
+
     configure_logging(level=logging.DEBUG)
     logger = logging.getLogger(__name__)
     logger.info("Starting Clothes Design API...")
-    
+
     await broker.startup()
-    
+
     try:
         async for session in get_session():
             try:
@@ -52,6 +56,8 @@ async def lifespan(app: FastAPI):
                 await seed_test_users(session)
                 logger.info("Seeding prompt templates...")
                 await seed_prompt_templates(session)
+                logger.info("Seeding prompt features...")
+                await seed_prompt_features(session)
                 logger.info("Committing seeds...")
                 await session.commit()
                 logger.info("Database seeding complete")
@@ -88,9 +94,12 @@ app.add_middleware(
 
 app.add_middleware(RequestLoggingMiddleware)
 
-app.add_exception_handler(RequestValidationError, validation_exception_handler)
-app.add_exception_handler(StarletteHTTPException, http_exception_handler)
-app.add_exception_handler(Exception, generic_exception_handler)
+app.add_exception_handler(
+    RequestValidationError,
+    cast(ExceptionHandler, validation_exception_handler),
+)
+app.add_exception_handler(StarletteHTTPException, cast(ExceptionHandler, http_exception_handler))
+app.add_exception_handler(Exception, cast(ExceptionHandler, generic_exception_handler))
 
 add_pagination(app)
 
@@ -115,6 +124,7 @@ app.include_router(upload_router)
 app.include_router(materials_router)
 app.include_router(prj_templates_router)
 app.include_router(prompt_templates_router)
+app.include_router(prompt_features_router)
 app.include_router(generate_router)
 app.include_router(export_router)
 app.include_router(ai_providers_router)

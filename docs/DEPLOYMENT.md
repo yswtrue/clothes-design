@@ -118,10 +118,11 @@ docker compose up
 Startup order:
 
 1. PostgreSQL and Redis start and become healthy.
-2. Backend starts and runs Alembic migrations automatically.
-3. Worker starts and connects to Redis and PostgreSQL.
-4. Traefik starts and routes only services with explicit Traefik labels.
-5. Frontend starts only when the `frontend` profile is enabled.
+2. `backend-migrate` runs Alembic migrations once and exits successfully.
+3. Backend starts with `BACKEND_REPLICAS` replicas, defaulting to 2.
+4. Worker starts and connects to Redis and PostgreSQL.
+5. Traefik starts and routes only services with explicit Traefik labels.
+6. Frontend starts only when the `frontend` profile is enabled.
 
 ### 5. Verify Services
 
@@ -135,7 +136,9 @@ Expected containers:
 NAME                        STATUS
 clothes-design-postgres     healthy
 clothes-design-redis        healthy
-clothes-design-backend      healthy
+clothes-design-backend-1    healthy
+clothes-design-backend-2    healthy
+clothes-design-backend-migrate-1 exited (0)
 clothes-design-worker       Up
 clothes-design-traefik      Up
 # Only with COMPOSE_PROFILES=frontend:
@@ -186,7 +189,8 @@ Provider records store the provider type, base URL, token, model name, active fl
 | --- | --- | --- | --- | --- |
 | Traefik | 80, 443 | HTTP/HTTPS reverse proxy with Let's Encrypt certificates | `traefik:v3.3` | N/A |
 | Frontend | 3000 | Optional Next.js web app (`frontend` profile) | Custom (`Dockerfile.frontend`) | HTTP `/` |
-| Backend | 8000 | FastAPI REST API and migrations on startup | Custom (`Dockerfile.backend`) | HTTP `/health` |
+| Backend | 8000 | FastAPI REST API, scaled by `BACKEND_REPLICAS` | Custom (`Dockerfile.backend`) | HTTP `/health` |
+| backend-migrate | N/A | One-off Alembic migration job before backend replicas start | Custom (`Dockerfile.backend`) | N/A |
 | Worker | N/A | Celery async task processor | Custom (`Dockerfile.worker`) | Check logs |
 | PostgreSQL | 5432 | Primary database | `postgres:17-alpine` | `pg_isready` |
 | Redis | 6379 | Cache and Celery broker | `redis:7-alpine` | `redis-cli ping` |
@@ -231,7 +235,10 @@ frontend (optional profile: frontend)
   └── depends_on: backend (healthy)
 
 backend
-  └── depends_on: postgres (healthy), redis (healthy)
+  └── depends_on: backend-migrate (completed), postgres (healthy), redis (healthy)
+
+backend-migrate
+  └── depends_on: postgres (healthy)
 
 worker
   └── depends_on: backend (healthy), redis (healthy), postgres (healthy)
@@ -270,6 +277,24 @@ docker compose restart
 docker compose up -d --build backend
 ```
 
+### Approximate Rolling Backend Update
+
+Ordinary Docker Compose does not provide orchestrated rolling updates, but the backend defaults to two replicas (`BACKEND_REPLICAS=2`) so Traefik can keep routing to a healthy replica while Compose recreates the service.
+
+```bash
+# Build the new backend image and run migrations once.
+docker compose build backend backend-migrate
+docker compose run --rm backend-migrate
+
+# Recreate backend replicas behind Traefik.
+docker compose up -d --no-deps backend
+
+# Verify both backend replicas are healthy.
+docker compose ps backend
+```
+
+Use immutable image tags in production and watch `docker compose logs -f backend` during the update. This is still a best-effort Compose workflow, not Swarm/Kubernetes-style health-gated rolling deployment with automatic rollback.
+
 ### Shell Access
 
 ```bash
@@ -282,10 +307,9 @@ docker compose exec redis redis-cli
 ### Database Migrations
 
 ```bash
-# Backend auto-runs migrations on startup. Manual commands:
-docker compose exec backend alembic upgrade head
-docker compose exec backend alembic revision --autogenerate -m "description"
-docker compose exec backend alembic downgrade -1
+# backend-migrate auto-runs migrations before backend replicas start. Manual commands:
+docker compose run --rm backend-migrate
+docker compose run --rm backend-migrate alembic downgrade -1
 docker compose exec postgres psql -U postgres -d clothes_design
 ```
 
@@ -328,7 +352,7 @@ docker compose run --rm -e CONFIRM_RESTORE=yes db-maintenance restore before-rel
 
 # 4. Restart application services and verify
 docker compose up -d backend worker
-docker compose exec backend alembic upgrade head
+docker compose run --rm backend-migrate
 curl http://localhost:8000/health
 ```
 
@@ -742,7 +766,7 @@ docker compose exec postgres psql -U postgres -d clothes_design -c "SELECT pg_si
 - [ ] `.env` contains database, JWT, Redis, Traefik, and storage settings.
 - [ ] Ports 80, 443, 3000, 8000, 5432, and 6379 are not already in use.
 - [ ] Docker has sufficient resources.
-- [ ] Database migrations are current: `docker compose exec backend alembic current`.
+- [ ] Database migrations are current: `docker compose run --rm backend-migrate alembic current`.
 - [ ] Worker registered tasks: `docker compose logs worker | grep "registered"`.
 - [ ] AI provider records are active in `/admin` or `/api/ai-providers`.
 - [ ] Logs have no errors: `docker compose logs | grep -E "ERROR|FATAL"`.

@@ -204,6 +204,29 @@ class AIProviderConfig(SoftDeleteMixin, table=True):
     )
 
 
+class PromptFeature(SoftDeleteMixin, table=True):
+    """Reusable prompt feature snippets for pattern generation."""
+
+    @declared_attr.directive
+    def __tablename__(cls) -> str:
+        return "prompt_features"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    key: str = Field(max_length=100, unique=True, index=True)
+    label: str = Field(max_length=100)
+    description: Optional[str] = Field(default=None, max_length=500)
+    prompt: str = Field(sa_column=Column("prompt", Text, nullable=False))
+    sort_order: int = Field(default=0, index=True)
+    is_default: int = Field(default=0, index=True)
+    is_active: int = Field(default=1, index=True)
+    created_at: Optional[datetime] = Field(
+        default=None, sa_column_kwargs={"server_default": func.now()}
+    )
+    updated_at: Optional[datetime] = Field(
+        default=None, sa_column_kwargs={"server_default": func.now(), "onupdate": datetime.utcnow}
+    )
+
+
 class PromptTemplate(SoftDeleteMixin, table=True):
     """Prompt templates for AI generation tasks.
     

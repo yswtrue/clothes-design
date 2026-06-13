@@ -108,7 +108,8 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.backend
-    container_name: clothes-design-backend
+    command: ["python", "-m", "api", "--host", "0.0.0.0", "--port", "8000"]
+    scale: ${BACKEND_REPLICAS:-2}
     environment:
       <<: *app-env
       JWT_SECRET: ${JWT_SECRET:-change-this-secret-in-production}
@@ -129,6 +130,8 @@ services:
       - "traefik.http.middlewares.redirect-to-https.redirectscheme.permanent=true"
       - "traefik.http.services.backend.loadbalancer.server.port=8000"
     depends_on:
+      backend-migrate:
+        condition: service_completed_successfully
       postgres:
         condition: service_healthy
       redis:
@@ -139,6 +142,19 @@ services:
       timeout: 10s
       retries: 3
       start_period: 40s
+
+  backend-migrate:
+    <<: *service-defaults
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    restart: "no"
+    command: ["alembic", "upgrade", "head"]
+    environment:
+      <<: *app-env
+    depends_on:
+      postgres:
+        condition: service_healthy
 
   worker:
     <<: *service-defaults

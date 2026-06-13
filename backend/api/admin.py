@@ -1,17 +1,6 @@
 from enum import Enum
-from typing import Any, Optional
+from typing import Any, ClassVar, Optional
 
-from api.auth.security import verify_password
-from api.db.base import AsyncSessionLocal, engine
-from api.db.models import (
-    AIProviderConfig,
-    Material,
-    PrjTemplate,
-    PromptTemplate,
-    Role,
-    User,
-    UserRole,
-)
 from sqlalchemy import select
 from starlette.requests import Request
 from starlette.responses import Response
@@ -28,6 +17,19 @@ from starlette_admin.fields import (
     JSONField,
     PasswordField,
     StringField,
+)
+
+from api.auth.security import verify_password
+from api.db.base import AsyncSessionLocal, engine
+from api.db.models import (
+    AIProviderConfig,
+    Material,
+    PrjTemplate,
+    PromptFeature,
+    PromptTemplate,
+    Role,
+    User,
+    UserRole,
 )
 
 
@@ -287,6 +289,73 @@ class PromptTemplateView(ModelView):
             obj.is_default = data["is_default"]
 
 
+class PromptFeatureView(ModelView):
+    name = "Prompt Feature"
+    label = "Prompt Features"
+
+    fields: ClassVar[list[Any]] = [
+        IntegerField("id", exclude_from_create=True, exclude_from_edit=True),
+        StringField("key", required=True, help_text="唯一标识, 例如 preserve_style"),
+        StringField("label", required=True, help_text="前端展示名称"),
+        StringField("description", help_text="前端展示说明"),
+        StringField(
+            "prompt",
+            required=True,
+            maxlength=5000,
+            help_text="勾选该功能后追加到最终生成提示词的内容",
+        ),
+        IntegerField("sort_order", help_text="排序值, 越小越靠前"),
+        BooleanField("is_default", help_text="前端默认勾选"),
+        BooleanField("is_active", help_text="启用/禁用"),
+        StringField("created_at", exclude_from_create=True, exclude_from_edit=True),
+        StringField("updated_at", exclude_from_create=True, exclude_from_edit=True),
+    ]
+
+    exclude_fields_from_list: ClassVar[list[str]] = [
+        "prompt",
+        "created_at",
+        "updated_at",
+        "deleted_at",
+    ]
+    searchable_fields: ClassVar[list[str]] = ["key", "label", "description"]
+    sortable_fields: ClassVar[list[str]] = [
+        "id",
+        "key",
+        "label",
+        "sort_order",
+        "is_default",
+        "is_active",
+    ]
+
+    async def before_create(self, request: Request, data: dict[str, Any], obj: Any) -> None:
+        if "sort_order" not in data or data["sort_order"] is None:
+            data["sort_order"] = 0
+            obj.sort_order = 0
+
+        if "is_active" not in data or data["is_active"] is None:
+            data["is_active"] = 1
+            obj.is_active = 1
+        else:
+            data["is_active"] = 1 if data["is_active"] else 0
+            obj.is_active = data["is_active"]
+
+        if "is_default" not in data or data["is_default"] is None:
+            data["is_default"] = 0
+            obj.is_default = 0
+        else:
+            data["is_default"] = 1 if data["is_default"] else 0
+            obj.is_default = data["is_default"]
+
+    async def before_edit(self, request: Request, data: dict[str, Any], obj: Any) -> None:
+        if "is_active" in data:
+            data["is_active"] = 1 if data["is_active"] else 0
+            obj.is_active = data["is_active"]
+
+        if "is_default" in data:
+            data["is_default"] = 1 if data["is_default"] else 0
+            obj.is_default = data["is_default"]
+
+
 def create_admin() -> Admin:
     admin = Admin(
         engine,
@@ -302,6 +371,7 @@ def create_admin() -> Admin:
     admin.add_view(MaterialView(Material, icon="fa fa-image"))
     admin.add_view(PrjTemplateView(PrjTemplate, icon="fa fa-file-code"))
     admin.add_view(PromptTemplateView(PromptTemplate, icon="fa fa-comment-alt"))
+    admin.add_view(PromptFeatureView(PromptFeature, icon="fa fa-list-check"))
     admin.add_view(AIProviderConfigView(AIProviderConfig, icon="fa fa-key"))
 
     return admin

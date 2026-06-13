@@ -1,7 +1,14 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { submitGeneration, pollTaskStatus, getPromptTemplates, PromptTemplateResponse } from '@/lib/generate';
+import {
+  submitGeneration,
+  pollTaskStatus,
+  getPromptTemplates,
+  getPromptFeatures,
+  PromptTemplateResponse,
+  PromptFeatureResponse,
+} from '@/lib/generate';
 import { Material } from '@/types/upload';
 import { GenerateRequest, TaskStatusResponse } from '@/types/generate';
 import MaterialSelector from '@/components/generate/MaterialSelector';
@@ -11,12 +18,35 @@ import { apiRequest } from '@/lib/api';
 
 type GenerateState = 'idle' | 'loading_materials' | 'ready' | 'generating' | 'complete' | 'error' | 'pending_background';
 
+function getDefaultPromptFeatureIds(promptFeatures: PromptFeatureResponse[]) {
+  return promptFeatures.filter((feature) => feature.is_default).map((feature) => feature.id);
+}
+
+function buildGenerationPrompt(
+  basePrompt: string,
+  promptFeatures: PromptFeatureResponse[],
+  selectedFeatureIds: number[],
+  customPrompt: string
+) {
+  const selectedFeaturePrompts = promptFeatures
+    .filter((feature) => selectedFeatureIds.includes(feature.id))
+    .map((feature) => feature.prompt.trim())
+    .filter(Boolean);
+
+  return [basePrompt.trim(), ...selectedFeaturePrompts, customPrompt.trim()]
+    .filter(Boolean)
+    .join('\n');
+}
+
 export default function GenerateTab() {
   const [state, setState] = useState<GenerateState>('idle');
   const [materials, setMaterials] = useState<Material[]>([]);
   const [selectedMaterial, setSelectedMaterial] = useState<Material | null>(null);
   const [printType, setPrintType] = useState<'seamless' | 'standalone' | 'full'>('seamless');
   const [prompt, setPrompt] = useState('');
+  const [promptFeatures, setPromptFeatures] = useState<PromptFeatureResponse[]>([]);
+  const [selectedPromptFeatureIds, setSelectedPromptFeatureIds] = useState<number[]>([]);
+  const [customPrompt, setCustomPrompt] = useState('');
   const [promptTemplates, setPromptTemplates] = useState<PromptTemplateResponse[]>([]);
   const [selectedTemplateId, setSelectedTemplateId] = useState<number | null>(null);
   const [isLoadingPrompt, setIsLoadingPrompt] = useState(false);
@@ -24,11 +54,22 @@ export default function GenerateTab() {
   const [error, setError] = useState<string | null>(null);
   const [resultPatternUrl, setResultPatternUrl] = useState<string | null>(null);
   const [resultFileName, setResultFileName] = useState<string>('');
-  const [designId, setDesignId] = useState<number | null>(null);
 
   useEffect(() => {
     loadMaterials();
+
+    const loadInitialPromptFeatures = async () => {
+      const features = await getPromptFeatures();
+      setPromptFeatures(features);
+      setSelectedPromptFeatureIds(getDefaultPromptFeatureIds(features));
+    };
+
+    void loadInitialPromptFeatures();
   }, []);
+
+  const resetPromptFeaturesToDefaults = (features: PromptFeatureResponse[] = promptFeatures) => {
+    setSelectedPromptFeatureIds(getDefaultPromptFeatureIds(features));
+  };
 
   const loadMaterials = async () => {
     setState('loading_materials');
@@ -49,12 +90,16 @@ export default function GenerateTab() {
     if (selectedMaterial?.id === materialId) {
       setSelectedMaterial(null);
       setPrompt('');
+      setCustomPrompt('');
+      resetPromptFeaturesToDefaults();
     }
   };
 
   const handleSelectMaterial = async (material: Material) => {
     setSelectedMaterial(material);
     setIsLoadingPrompt(true);
+    setCustomPrompt('');
+    resetPromptFeaturesToDefaults();
     try {
       const templates = await getPromptTemplates('img2img');
       setPromptTemplates(templates);
@@ -67,6 +112,9 @@ export default function GenerateTab() {
         setPrompt(templates[0].template);
       }
     } catch {
+      setPromptTemplates([]);
+      setSelectedTemplateId(null);
+      setPrompt('');
     } finally {
       setIsLoadingPrompt(false);
     }
@@ -80,6 +128,14 @@ export default function GenerateTab() {
     }
   };
 
+  const togglePromptFeature = (featureId: number) => {
+    setSelectedPromptFeatureIds((current) =>
+      current.includes(featureId)
+        ? current.filter((id) => id !== featureId)
+        : [...current, featureId]
+    );
+  };
+
   const handleGenerate = async () => {
     if (!selectedMaterial) return;
 
@@ -91,11 +147,15 @@ export default function GenerateTab() {
       const request: GenerateRequest = {
         material_id: selectedMaterial.id,
         pattern_type: printType,
-        prompt: prompt || undefined,
+        prompt: buildGenerationPrompt(
+          prompt,
+          promptFeatures,
+          selectedPromptFeatureIds,
+          customPrompt
+        ) || undefined,
       };
 
       const response = await submitGeneration(request);
-      setDesignId(response.design_id);
       setTaskStatus(response);
 
       const completedTask = await pollTaskStatus(response.task_id, (task) => {
@@ -139,17 +199,24 @@ export default function GenerateTab() {
     setSelectedMaterial(null);
     setPrintType('seamless');
     setPrompt('');
+    resetPromptFeaturesToDefaults();
+    setCustomPrompt('');
     setPromptTemplates([]);
     setSelectedTemplateId(null);
     setTaskStatus(null);
     setError(null);
     setResultPatternUrl(null);
     setResultFileName('');
-    setDesignId(null);
     setState('ready');
   };
 
   const suggestedPrintType = selectedMaterial?.meta?.style_analysis?.pattern_type || 'seamless';
+  const finalPromptPreview = buildGenerationPrompt(
+    prompt,
+    promptFeatures,
+    selectedPromptFeatureIds,
+    customPrompt
+  );
 
   return (
     <div>
@@ -212,10 +279,10 @@ export default function GenerateTab() {
                   suggestedType={suggestedPrintType}
                 />
 
-                <div className="space-y-3">
+                <div className="space-y-4">
                   <div className="flex items-center justify-between">
-                    <label htmlFor="prompt" className="block text-sm font-medium text-zinc-700 dark:text-zinc-300">
-                      提示词
+                    <label className="block text-sm font-medium text-zinc-700 dark:text-zinc-300">
+                      生成提示词
                     </label>
                     {promptTemplates.length > 0 && (
                       <select
@@ -236,17 +303,76 @@ export default function GenerateTab() {
                       <div className="h-5 w-5 rounded-full border-2 border-zinc-300 dark:border-zinc-600 border-t-zinc-950 dark:border-t-zinc-50 animate-spin"></div>
                     </div>
                   ) : (
-                    <textarea
-                      id="prompt"
-                      value={prompt}
-                      onChange={(e) => setPrompt(e.target.value)}
-                      rows={5}
-                      className="w-full rounded-md border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 px-3 py-2 text-sm text-zinc-900 dark:text-zinc-100 placeholder-zinc-400 dark:placeholder-zinc-500 focus:border-zinc-500 focus:outline-none focus:ring-1 focus:ring-zinc-500"
-                      placeholder="输入生成提示词，或使用默认模板..."
-                    />
+                    <div className="rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 p-4 space-y-4">
+                      <div>
+                        <p className="text-sm font-medium text-zinc-950 dark:text-zinc-50 mb-2">
+                          按功能勾选
+                        </p>
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                          {promptFeatures.map((feature) => {
+                            const isChecked = selectedPromptFeatureIds.includes(feature.id);
+                            return (
+                              <label
+                                key={feature.id}
+                                className={`
+                                  flex cursor-pointer gap-3 rounded-lg border p-3 transition-colors
+                                  ${isChecked
+                                    ? 'border-zinc-950 dark:border-zinc-50 bg-zinc-100 dark:bg-zinc-800'
+                                    : 'border-zinc-200 dark:border-zinc-800 hover:border-zinc-400 dark:hover:border-zinc-600'
+                                  }
+                                `}
+                              >
+                                <input
+                                  type="checkbox"
+                                  checked={isChecked}
+                                  onChange={() => togglePromptFeature(feature.id)}
+                                  className="mt-0.5 h-4 w-4 rounded border-zinc-300 dark:border-zinc-700 text-zinc-950 dark:text-zinc-50 focus:ring-2 focus:ring-zinc-950 dark:focus:ring-zinc-50"
+                                />
+                                <span>
+                                  <span className="block text-sm font-medium text-zinc-950 dark:text-zinc-50">
+                                    {feature.label}
+                                  </span>
+                                  <span className="mt-1 block text-xs text-zinc-600 dark:text-zinc-400">
+                                    {feature.description}
+                                  </span>
+                                </span>
+                              </label>
+                            );
+                          })}
+                        </div>
+                        {promptFeatures.length === 0 && (
+                          <p className="rounded-md bg-zinc-50 dark:bg-zinc-950/50 p-3 text-xs text-zinc-500 dark:text-zinc-400">
+                            暂无可用功能项，可在后台 Prompt Features 中启用或新增。
+                          </p>
+                        )}
+                      </div>
+
+                      <div className="space-y-2">
+                        <label htmlFor="custom-prompt" className="block text-sm font-medium text-zinc-700 dark:text-zinc-300">
+                          自定义提示词
+                        </label>
+                        <textarea
+                          id="custom-prompt"
+                          value={customPrompt}
+                          onChange={(e) => setCustomPrompt(e.target.value)}
+                          rows={3}
+                          className="w-full rounded-md border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 px-3 py-2 text-sm text-zinc-900 dark:text-zinc-100 placeholder-zinc-400 dark:placeholder-zinc-500 focus:border-zinc-500 focus:outline-none focus:ring-1 focus:ring-zinc-500"
+                          placeholder="例如：加入复古花卉、降低饱和度、面向童装系列..."
+                        />
+                      </div>
+
+                      <details className="rounded-md bg-zinc-50 dark:bg-zinc-950/50 p-3">
+                        <summary className="cursor-pointer text-xs font-medium text-zinc-600 dark:text-zinc-400">
+                          查看最终提交提示词
+                        </summary>
+                        <pre className="mt-3 whitespace-pre-wrap text-xs leading-5 text-zinc-600 dark:text-zinc-400">
+                          {finalPromptPreview || '未选择功能，也未填写自定义提示词，将使用后端默认提示词。'}
+                        </pre>
+                      </details>
+                    </div>
                   )}
                   <p className="text-xs text-zinc-500 dark:text-zinc-400">
-                    支持变量: {'{style_description}'}, {'{color_palette}'}, {'{pattern_type}'}, {'{width}'}, {'{height}'}
+                    可先选择基础模板，再通过功能勾选和自定义提示词补充生成要求。支持变量: {'{style_description}'}, {'{color_palette}'}, {'{pattern_type}'}, {'{width}'}, {'{height}'}
                   </p>
                 </div>
 

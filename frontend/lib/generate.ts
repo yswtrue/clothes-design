@@ -12,6 +12,17 @@ export interface PromptTemplateResponse {
   is_active: boolean;
 }
 
+export interface PromptFeatureResponse {
+  id: number;
+  key: string;
+  label: string;
+  description: string | null;
+  prompt: string;
+  sort_order: number;
+  is_default: boolean;
+  is_active: boolean;
+}
+
 export async function getDefaultPromptTemplate(
   taskType: string,
   providerType?: string
@@ -38,6 +49,17 @@ export async function getPromptTemplates(
   
   try {
     const response = await apiRequest<{ items: PromptTemplateResponse[] }>(url);
+    return response.items || [];
+  } catch {
+    return [];
+  }
+}
+
+export async function getPromptFeatures(): Promise<PromptFeatureResponse[]> {
+  try {
+    const response = await apiRequest<{ items: PromptFeatureResponse[] }>(
+      '/api/prompt-features?size=100'
+    );
     return response.items || [];
   } catch {
     return [];
