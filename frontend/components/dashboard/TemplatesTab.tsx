@@ -1,10 +1,12 @@
 'use client';
 
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
+import type { ChangeEvent } from 'react';
 import Image from 'next/image';
+import { renderDxfToDataUrl } from '@/lib/dxf';
 import { apiRequest } from '@/lib/api';
 import { fetchHistory } from '@/lib/history';
-import { createPrjTemplatePreview, fetchPrjTemplateDetail } from '@/lib/prjTemplates';
+import { createPrjTemplatePreview, fetchDxfTemplateFile, fetchPrjTemplateDetail } from '@/lib/prjTemplates';
 import type { GeneratedDesign, MaterialWithDesigns } from '@/types/history';
 import type { PrjTemplateDetail, Template } from '@/types/preview';
 
@@ -19,10 +21,19 @@ interface PaginatedResponse<T> {
 type PageState = 'loading' | 'idle' | 'error';
 type ModalState = 'idle' | 'loading' | 'generating' | 'error';
 type CanvasState = 'idle' | 'rendering' | 'ready' | 'error';
+type DxfFileState = 'idle' | 'loading' | 'ready' | 'error';
+type BitmapSourceKind = 'dxf' | 'preview' | 'upload';
 
 type CanvasPoint = [number, number];
 type CanvasRectangle = [number, number, number, number];
 type CanvasRegion = Record<string, unknown>;
+
+interface BitmapSource {
+  id: string;
+  kind: BitmapSourceKind;
+  label: string;
+  url: string;
+}
 
 const HISTORY_PAGE_SIZE = 6;
 
@@ -65,6 +76,20 @@ function regionsFromPayload(payload: unknown): CanvasRegion[] {
   }
 
   return [payload];
+}
+
+async function renderDxfBlobToBitmapSource(
+  blob: Blob,
+  id: string,
+  label: string
+): Promise<BitmapSource> {
+  const text = await blob.text();
+  return {
+    id,
+    kind: 'dxf',
+    label,
+    url: renderDxfToDataUrl(text),
+  };
 }
 
 function rectangleFromRegion(region: CanvasRegion, canvasWidth: number, canvasHeight: number): CanvasRectangle | null {
@@ -197,6 +222,7 @@ async function renderTemplatePreviewInBrowser(
 }
 
 export default function TemplatesTab() {
+  const dxfFileInputRef = useRef<HTMLInputElement>(null);
   const [state, setState] = useState<PageState>('loading');
   const [templates, setTemplates] = useState<Template[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -211,6 +237,12 @@ export default function TemplatesTab() {
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [canvasState, setCanvasState] = useState<CanvasState>('idle');
   const [canvasError, setCanvasError] = useState<string | null>(null);
+  const [dxfFileState, setDxfFileState] = useState<DxfFileState>('idle');
+  const [dxfFileError, setDxfFileError] = useState<string | null>(null);
+  const [dxfBitmapSources, setDxfBitmapSources] = useState<BitmapSource[]>([]);
+  const [selectedBitmapSourceId, setSelectedBitmapSourceId] = useState<string | null>(null);
+  const [localDxfFileName, setLocalDxfFileName] = useState<string | null>(null);
+  const [uploadedBitmapSource, setUploadedBitmapSource] = useState<BitmapSource | null>(null);
 
   const selectedDesign = useMemo(() => {
     if (selectedDesignId === null) {
@@ -226,6 +258,35 @@ export default function TemplatesTab() {
 
     return null;
   }, [historyMaterials, selectedDesignId]);
+
+  const bitmapSources = useMemo(() => {
+    const sources: BitmapSource[] = [];
+    sources.push(...dxfBitmapSources);
+
+    const templatePreviewUrl = selectedTemplateDetail?.preview_url ?? selectedTemplate?.preview_url ?? null;
+    if (templatePreviewUrl) {
+      sources.push({
+        id: 'template-preview',
+        kind: 'preview',
+        label: '模板预览图',
+        url: templatePreviewUrl,
+      });
+    }
+
+    if (uploadedBitmapSource) {
+      sources.push(uploadedBitmapSource);
+    }
+
+    return sources;
+  }, [dxfBitmapSources, selectedTemplate, selectedTemplateDetail, uploadedBitmapSource]);
+
+  const selectedBitmapSource = useMemo(() => {
+    if (!selectedBitmapSourceId) {
+      return bitmapSources[0] ?? null;
+    }
+
+    return bitmapSources.find((source) => source.id === selectedBitmapSourceId) ?? bitmapSources[0] ?? null;
+  }, [bitmapSources, selectedBitmapSourceId]);
 
   useEffect(() => {
     async function loadTemplates() {
@@ -309,7 +370,68 @@ export default function TemplatesTab() {
   }, [selectedTemplate]);
 
   useEffect(() => {
-    const templateImageUrl = selectedTemplateDetail?.preview_url ?? selectedTemplate?.preview_url ?? null;
+    if (localDxfFileName) {
+      return;
+    }
+
+    const dxfPath = selectedTemplateDetail?.dxf_path ?? selectedTemplateDetail?.prj_path;
+    if (typeof dxfPath !== 'string' || dxfPath.length === 0) {
+      return;
+    }
+
+    let cancelled = false;
+    const dxfUrl = dxfPath;
+
+    async function loadDxfFile() {
+      setDxfFileState('loading');
+      setDxfFileError(null);
+      setDxfBitmapSources([]);
+
+      try {
+        const dxfFile = await fetchDxfTemplateFile(dxfUrl);
+        const source = await renderDxfBlobToBitmapSource(dxfFile, 'remote-dxf', '远程 DXF 图纸');
+
+        if (!cancelled) {
+          setDxfBitmapSources([source]);
+          setSelectedBitmapSourceId(source.id);
+          setDxfFileState('ready');
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setDxfBitmapSources([]);
+          setDxfFileError(err instanceof Error ? err.message : '读取 DXF 文件失败');
+          setDxfFileState('error');
+        }
+      }
+    }
+
+    loadDxfFile();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [localDxfFileName, selectedTemplateDetail?.dxf_path, selectedTemplateDetail?.prj_path]);
+
+  useEffect(() => {
+    return () => {
+      if (uploadedBitmapSource?.url.startsWith('blob:')) {
+        URL.revokeObjectURL(uploadedBitmapSource.url);
+      }
+    };
+  }, [uploadedBitmapSource]);
+
+  useEffect(() => {
+    return () => {
+      for (const source of dxfBitmapSources) {
+        if (source.url.startsWith('blob:')) {
+          URL.revokeObjectURL(source.url);
+        }
+      }
+    };
+  }, [dxfBitmapSources]);
+
+  useEffect(() => {
+    const templateImageUrl = selectedBitmapSource?.url ?? null;
     const patternUrl = selectedDesign ? designImageUrl(selectedDesign) : null;
 
     if (!templateImageUrl || !patternUrl) {
@@ -348,13 +470,84 @@ export default function TemplatesTab() {
     return () => {
       cancelled = true;
     };
-  }, [selectedDesign, selectedTemplate, selectedTemplateDetail]);
+  }, [selectedDesign, selectedBitmapSource, selectedTemplateDetail]);
 
   function selectDesign(designId: number) {
     setSelectedDesignId(designId);
     setPreviewUrl(null);
     setCanvasState('idle');
     setCanvasError(null);
+  }
+
+  function selectBitmapSource(sourceId: string) {
+    setSelectedBitmapSourceId(sourceId);
+    setPreviewUrl(null);
+    setCanvasState('idle');
+    setCanvasError(null);
+  }
+
+  async function handleDxfUpload(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    if (!file) {
+      return;
+    }
+
+    if (!file.name.toLowerCase().endsWith('.dxf')) {
+      setDxfFileState('error');
+      setDxfFileError('请选择 .dxf 模板文件');
+      event.target.value = '';
+      return;
+    }
+
+    setDxfFileState('loading');
+    setDxfFileError(null);
+    setDxfBitmapSources([]);
+    setLocalDxfFileName(file.name);
+    setPreviewUrl(null);
+    setCanvasState('idle');
+    setCanvasError(null);
+
+    try {
+      const source = await renderDxfBlobToBitmapSource(file, 'local-dxf', `本地 DXF：${file.name}`);
+
+      setDxfBitmapSources([source]);
+      setSelectedBitmapSourceId(source.id);
+      setDxfFileState('ready');
+    } catch (err) {
+      setDxfBitmapSources([]);
+      setDxfFileError(err instanceof Error ? err.message : '读取本地 DXF 文件失败');
+      setDxfFileState('error');
+    } finally {
+      event.target.value = '';
+    }
+  }
+
+  function handleBitmapUpload(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    if (!file) {
+      return;
+    }
+
+    if (!file.type.startsWith('image/')) {
+      setCanvasError('请选择 PNG、JPG、WebP 等图片文件作为模板位图');
+      event.target.value = '';
+      return;
+    }
+
+    const uploadedUrl = URL.createObjectURL(file);
+    const source: BitmapSource = {
+      id: 'uploaded-bitmap',
+      kind: 'upload',
+      label: `本地位图：${file.name}`,
+      url: uploadedUrl,
+    };
+
+    setUploadedBitmapSource(source);
+    setSelectedBitmapSourceId(source.id);
+    setPreviewUrl(null);
+    setCanvasState('idle');
+    setCanvasError(null);
+    event.target.value = '';
   }
 
   function openTemplateModal(template: Template) {
@@ -367,6 +560,12 @@ export default function TemplatesTab() {
     setModalError(null);
     setCanvasState('idle');
     setCanvasError(null);
+    setDxfFileState('idle');
+    setDxfFileError(null);
+    setDxfBitmapSources([]);
+    setSelectedBitmapSourceId(null);
+    setLocalDxfFileName(null);
+    setUploadedBitmapSource(null);
   }
 
   function closeTemplateModal() {
@@ -377,6 +576,12 @@ export default function TemplatesTab() {
     setModalError(null);
     setCanvasState('idle');
     setCanvasError(null);
+    setDxfFileState('idle');
+    setDxfFileError(null);
+    setDxfBitmapSources([]);
+    setSelectedBitmapSourceId(null);
+    setLocalDxfFileName(null);
+    setUploadedBitmapSource(null);
     setHistoryMaterials([]);
   }
 
@@ -609,6 +814,109 @@ export default function TemplatesTab() {
 
               <div className="p-6">
                 <h3 className="mb-4 font-medium text-zinc-950 dark:text-zinc-50">浏览器预览</h3>
+                <div className="mb-4 space-y-3 rounded-lg border border-zinc-200 bg-white p-3 text-sm dark:border-zinc-800 dark:bg-zinc-950">
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <p className="font-medium text-zinc-900 dark:text-zinc-100">DXF 文件</p>
+                      <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
+                        {localDxfFileName
+                          ? `已读取本地 DXF：${localDxfFileName}`
+                          : selectedTemplateDetail?.dxf_path ?? selectedTemplateDetail?.prj_path
+                          ? dxfFileState === 'loading'
+                            ? '正在下载并渲染 DXF 文件...'
+                            : dxfBitmapSources.length > 0
+                            ? '已渲染 DXF 图纸'
+                            : 'DXF 图纸尚未渲染'
+                          : '该模板没有上传 DXF 文件'}
+                      </p>
+                    </div>
+                    {(selectedTemplateDetail?.dxf_path ?? selectedTemplateDetail?.prj_path) && (
+                      <a
+                        href={selectedTemplateDetail.dxf_path ?? selectedTemplateDetail.prj_path ?? undefined}
+                        download
+                        className="shrink-0 rounded-md border border-zinc-200 px-2.5 py-1.5 text-xs font-medium text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800"
+                      >
+                        下载 DXF
+                      </a>
+                    )}
+                  </div>
+
+                  <div className="space-y-2">
+                    <button
+                      type="button"
+                      onClick={() => dxfFileInputRef.current?.click()}
+                      className="flex w-full items-center justify-center rounded-md border border-dashed border-zinc-300 px-3 py-2 text-xs text-zinc-600 hover:border-blue-400 hover:text-blue-600 dark:border-zinc-700 dark:text-zinc-400 dark:hover:border-blue-500 dark:hover:text-blue-300"
+                    >
+                      选择本地 DXF 文件并直接渲染
+                    </button>
+                    <input
+                      ref={dxfFileInputRef}
+                      type="file"
+                      accept=".dxf,application/dxf,application/x-dxf,text/plain,application/octet-stream"
+                      onChange={handleDxfUpload}
+                      className="hidden"
+                    />
+                    {dxfFileState === 'loading' && (
+                      <p className="text-xs text-blue-600 dark:text-blue-300">
+                        正在渲染 DXF：{localDxfFileName ?? '本地文件'}...
+                      </p>
+                    )}
+                    {localDxfFileName && dxfFileState !== 'loading' && (
+                      <p className="text-xs text-zinc-500 dark:text-zinc-400">
+                        当前本地 DXF：{localDxfFileName}
+                      </p>
+                    )}
+                  </div>
+
+                  {dxfFileState === 'error' && dxfFileError && (
+                    <div className="rounded-md border border-amber-200 bg-amber-50 p-2 text-xs text-amber-700 dark:border-amber-800 dark:bg-amber-900/20 dark:text-amber-300">
+                      {dxfFileError}。仍可使用模板预览图或上传本地位图。
+                    </div>
+                  )}
+
+                  {dxfFileState === 'ready' && dxfFileError && (
+                    <div className="rounded-md border border-amber-200 bg-amber-50 p-2 text-xs text-amber-700 dark:border-amber-800 dark:bg-amber-900/20 dark:text-amber-300">
+                      {dxfFileError}。可以改用模板预览图或上传本地位图作为模板底图。
+                    </div>
+                  )}
+
+                  <div>
+                    <p className="mb-2 text-xs font-medium uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
+                      选择模板底图来源
+                    </p>
+                    <div className="grid grid-cols-1 gap-2">
+                      {bitmapSources.map((source) => (
+                        <button
+                          key={source.id}
+                          type="button"
+                          onClick={() => selectBitmapSource(source.id)}
+                          className={`flex items-center justify-between rounded-md border px-3 py-2 text-left text-xs transition ${selectedBitmapSource?.id === source.id ? 'border-blue-500 bg-blue-50 text-blue-700 dark:bg-blue-900/20 dark:text-blue-200' : 'border-zinc-200 text-zinc-700 hover:border-blue-300 dark:border-zinc-700 dark:text-zinc-300'}`}
+                        >
+                          <span className="flex min-w-0 items-center gap-2">
+                            <span
+                              aria-hidden="true"
+                              className="h-10 w-10 shrink-0 rounded border border-zinc-200 bg-zinc-100 bg-cover bg-center dark:border-zinc-700 dark:bg-zinc-800"
+                              style={{ backgroundImage: `url(${source.url})` }}
+                            />
+                            <span className="truncate">{source.label}</span>
+                          </span>
+                          <span className="rounded bg-zinc-100 px-1.5 py-0.5 text-[10px] uppercase text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400">
+                            {source.kind === 'dxf' ? 'DXF' : source.kind === 'upload' ? '本地' : '预览'}
+                          </span>
+                        </button>
+                      ))}
+                    </div>
+                    <label className="mt-2 flex cursor-pointer items-center justify-center rounded-md border border-dashed border-zinc-300 px-3 py-2 text-xs text-zinc-600 hover:border-blue-400 hover:text-blue-600 dark:border-zinc-700 dark:text-zinc-400 dark:hover:border-blue-500 dark:hover:text-blue-300">
+                      上传本地位图作为模板底图
+                      <input
+                        type="file"
+                        accept="image/*"
+                        onChange={handleBitmapUpload}
+                        className="sr-only"
+                      />
+                    </label>
+                  </div>
+                </div>
                 <div className="mb-4 overflow-hidden rounded-lg border border-zinc-200 bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-900">
                   <div className="relative aspect-[4/5]">
                     {previewUrl ? (
@@ -620,15 +928,12 @@ export default function TemplatesTab() {
                         className="object-contain"
                         sizes="(max-width: 1024px) 100vw, 420px"
                       />
-                    ) : selectedTemplate.preview_url ? (
+                    ) : selectedBitmapSource ? (
                       <>
-                        <Image
-                          src={selectedTemplate.preview_url}
-                          alt={selectedTemplate.name}
-                          fill
-                          unoptimized
-                          className="object-contain opacity-70"
-                          sizes="(max-width: 1024px) 100vw, 420px"
+                        <div
+                          aria-label={selectedBitmapSource.label}
+                          className="absolute inset-0 bg-contain bg-center bg-no-repeat opacity-70"
+                          style={{ backgroundImage: `url(${selectedBitmapSource.url})` }}
                         />
                         {canvasState === 'rendering' && (
                           <div className="absolute inset-0 flex items-center justify-center bg-white/70 text-sm text-zinc-600 dark:bg-zinc-950/70 dark:text-zinc-300">
@@ -665,8 +970,8 @@ export default function TemplatesTab() {
                   {modalState === 'generating' ? '服务端生成中...' : '服务端兜底生成预览'}
                 </button>
                 <p className="mt-3 text-xs leading-5 text-zinc-500 dark:text-zinc-400">
-                  浏览器会读取模板位图并按照详情接口的 regions 区域填充图案；若模板没有区域配置，则默认填充整张模板预览图。
-                  服务端按钮用于浏览器图片跨域或 Canvas 不可用时兜底。
+                  浏览器会先下载 DXF 文件并直接渲染成模板底图；你也可以改用模板预览图或上传本地位图。
+                  填充区域仍来自模板详情的 regions；若模板没有区域配置，则默认填充整张所选位图。服务端按钮用于浏览器图片跨域或 Canvas 不可用时兜底。
                 </p>
               </div>
             </div>

@@ -202,14 +202,20 @@ class MaterialView(ModelView):
 
 
 class PrjTemplateView(ModelView):
-    name = "PRJ Template"
-    label = "PRJ Templates"
+    name = "DXF Template"
+    label = "DXF Templates"
 
     fields = [
         IntegerField("id", exclude_from_create=True, exclude_from_edit=True),
         StringField("name", required=True, help_text="模板名称"),
         StringField("category", required=True, help_text="分类: T恤, 卫衣, 裤子 等"),
-        FileField("prj_file", label="PRJ 文件", exclude_from_list=True),
+        FileField(
+            "prj_file",
+            label="DXF 文件",
+            accept=".dxf,application/dxf,application/x-dxf,application/octet-stream,text/plain",
+            help_text="请选择 .dxf 模板文件",
+            exclude_from_list=True,
+        ),
         ImageField("preview_image", label="预览图", exclude_from_list=True),
         BooleanField("is_builtin", help_text="内置模板"),
         StringField("created_at", exclude_from_create=True, exclude_from_edit=True),

@@ -11,6 +11,16 @@ export async function fetchPrjTemplateDetail(templateId: number): Promise<PrjTem
   return apiRequest<PrjTemplateDetail>(`/api/prj-templates/${templateId}`);
 }
 
+export async function fetchDxfTemplateFile(dxfUrl: string): Promise<Blob> {
+  const response = await fetch(dxfUrl, { credentials: 'omit' });
+
+  if (!response.ok) {
+    throw new Error(`下载 DXF 文件失败：HTTP ${response.status}`);
+  }
+
+  return response.blob();
+}
+
 export async function createPrjTemplatePreview(
   templateId: number,
   generatedDesignId: number

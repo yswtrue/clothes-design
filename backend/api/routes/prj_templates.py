@@ -44,6 +44,7 @@ class PrjTemplateResponse(BaseModel):
 
 class PrjTemplateDetailResponse(PrjTemplateResponse):
     prj_path: str | None = None
+    dxf_path: str | None = None
     regions: dict | None = None
 
 
@@ -273,6 +274,7 @@ async def get_prj_template(
         name=template.name,
         category=template.category,
         prj_path=prj_path,
+        dxf_path=prj_path,
         preview_url=preview_url,
         regions=template.regions,
         is_builtin=bool(template.is_builtin),
@@ -320,6 +322,7 @@ async def create_prj_template(
         name=template.name,
         category=template.category,
         prj_path=prj_path,
+        dxf_path=prj_path,
         preview_url=preview_url,
         regions=template.regions,
         is_builtin=bool(template.is_builtin),

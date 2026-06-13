@@ -22,5 +22,6 @@ export interface Template {
 
 export interface PrjTemplateDetail extends Template {
   prj_path: string | null;
+  dxf_path?: string | null;
   regions: unknown;
 }
