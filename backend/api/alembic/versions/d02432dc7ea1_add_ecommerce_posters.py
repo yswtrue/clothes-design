@@ -32,7 +32,6 @@ def upgrade() -> None:
         sa.Column("image_count", sa.Integer(), nullable=False, server_default=sa.text("1")),
         sa.Column("width", sa.Integer(), nullable=False, server_default=sa.text("1024")),
         sa.Column("height", sa.Integer(), nullable=False, server_default=sa.text("768")),
-        sa.Column("language", sa.String(length=10), nullable=False, server_default=sa.text("'en'")),
         sa.Column("status", sa.String(length=50), nullable=False, server_default=sa.text("'generating'")),
         sa.Column("result_images", sa.JSON(), nullable=True),
         sa.Column("generation_params", sa.JSON(), nullable=True),
@@ -54,9 +53,6 @@ def upgrade() -> None:
             batch_op.f("ix_ecommerce_posters_status"), ["status"], unique=False
         )
         batch_op.create_index(
-            batch_op.f("ix_ecommerce_posters_language"), ["language"], unique=False
-        )
-        batch_op.create_index(
             batch_op.f("ix_ecommerce_posters_created_at"), ["created_at"], unique=False
         )
 
@@ -64,7 +60,6 @@ def upgrade() -> None:
 def downgrade() -> None:
     with op.batch_alter_table("ecommerce_posters", schema=None) as batch_op:
         batch_op.drop_index(batch_op.f("ix_ecommerce_posters_created_at"))
-        batch_op.drop_index(batch_op.f("ix_ecommerce_posters_language"))
         batch_op.drop_index(batch_op.f("ix_ecommerce_posters_status"))
         batch_op.drop_index(batch_op.f("ix_ecommerce_posters_product_type"))
         batch_op.drop_index(batch_op.f("ix_ecommerce_posters_user_id"))
