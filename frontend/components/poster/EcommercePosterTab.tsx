@@ -2,11 +2,12 @@
 
 import { useState, useEffect } from 'react';
 import { Material } from '@/types/upload';
-import { PosterGenerateRequest, PosterGenerateResponse, PosterTaskStatusResponse } from '@/types/poster';
+import { PosterGenerateRequest, PosterGenerateResponse, PosterTaskStatusResponse, PosterHistoryItem, PosterHistoryResponse } from '@/types/poster';
 import { submitPosterGeneration, pollPosterTask } from '@/lib/poster';
 import { apiRequest } from '@/lib/api';
 
 type PosterState = 'loading_materials' | 'ready' | 'generating' | 'complete' | 'error';
+type ViewMode = 'generate' | 'history';
 
 const PRODUCT_TYPES = [
   { id: 'tops', label: '上衣', icon: '👕' },
@@ -48,6 +49,7 @@ function Spinner({ className = 'h-12 w-12' }: { className?: string }) {
 }
 
 export default function EcommercePosterTab() {
+  const [viewMode, setViewMode] = useState<ViewMode>('generate');
   const [state, setState] = useState<PosterState>('loading_materials');
   const [materials, setMaterials] = useState<Material[]>([]);
   const [selectedMaterialIds, setSelectedMaterialIds] = useState<number[]>([]);
@@ -63,6 +65,13 @@ export default function EcommercePosterTab() {
   const [resultImages, setResultImages] = useState<string[]>([]);
   const [showMaterialModal, setShowMaterialModal] = useState(false);
   const [pendingMaterialIds, setPendingMaterialIds] = useState<number[]>([]);
+
+  // History
+  const [historyItems, setHistoryItems] = useState<PosterHistoryItem[]>([]);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [historyPage, setHistoryPage] = useState(1);
+  const [historyTotal, setHistoryTotal] = useState(0);
+  const HISTORY_SIZE = 20;
 
   useEffect(() => {
     let isMounted = true;
@@ -83,6 +92,31 @@ export default function EcommercePosterTab() {
       isMounted = false;
     };
   }, []);
+
+  // ── history ──
+
+  const loadHistory = async (page: number = 1) => {
+    setHistoryLoading(true);
+    try {
+      const data = await apiRequest<PosterHistoryResponse>(
+        `/api/posters?page=${page}&size=${HISTORY_SIZE}`
+      );
+      setHistoryItems(data.items || []);
+      setHistoryTotal(data.total || 0);
+      setHistoryPage(data.page || 1);
+    } catch (err) {
+      console.error('加载历史记录失败:', err);
+    } finally {
+      setHistoryLoading(false);
+    }
+  };
+
+  const switchToHistory = () => {
+    setViewMode('history');
+    loadHistory(1);
+  };
+
+  // ── generation ──
 
   const openMaterialModal = () => {
     setPendingMaterialIds([...selectedMaterialIds]);
@@ -183,6 +217,41 @@ export default function EcommercePosterTab() {
 
   return (
     <div>
+      {/* ── View Toggle ── */}
+      <div className="flex gap-2 mb-6">
+        {([
+          { id: 'generate' as ViewMode, label: '生成', icon: '✨' },
+          { id: 'history' as ViewMode, label: '历史', icon: '📋' },
+        ]).map((tab) => (
+          <button
+            key={tab.id}
+            onClick={() => tab.id === 'history' ? switchToHistory() : setViewMode('generate')}
+            className={`
+              flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors
+              ${viewMode === tab.id
+                ? 'bg-zinc-950 dark:bg-zinc-50 text-white dark:text-zinc-950'
+                : 'text-zinc-600 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-800'
+              }
+            `}
+          >
+            <span>{tab.icon}</span>
+            <span>{tab.label}</span>
+          </button>
+        ))}
+      </div>
+
+      {/* ── History View ── */}
+      {viewMode === 'history' && <PosterHistoryPanel
+        items={historyItems}
+        total={historyTotal}
+        page={historyPage}
+        size={HISTORY_SIZE}
+        loading={historyLoading}
+        onPageChange={(p) => loadHistory(p)}
+      />}
+
+      {/* ── Generate View ── */}
+      {viewMode === 'generate' && (<>
       {/* Loading State */}
       {state === 'loading_materials' && <Spinner />}
 
@@ -655,6 +724,175 @@ export default function EcommercePosterTab() {
               </div>
             </div>
           </div>
+        </div>
+      )}
+      </>)}
+    </div>
+  );
+}
+
+// ── Poster History Panel ──
+
+function PosterHistoryPanel({
+  items, total, page, size, loading, onPageChange,
+}: {
+  items: PosterHistoryItem[];
+  total: number;
+  page: number;
+  size: number;
+  loading: boolean;
+  onPageChange: (page: number) => void;
+}) {
+  const totalPages = Math.max(1, Math.ceil(total / size));
+  const PRODUCT_LABELS: Record<string, string> = {
+    tops: '上衣', pants: '裤子', skirts: '裙子', outerwear: '外套',
+    shoes: '鞋类', bags: '包包', accessories: '配饰', other: '其他',
+  };
+  const STYLE_LABELS: Record<string, string> = {
+    studio: '工作室白底', lifestyle: 'lifestyle/场景', minimalist: '极简风格',
+    luxury: '奢华高级', vintage: '复古胶片', outdoor: '自然户外', editorial: '时尚杂志',
+  };
+  const STATUS_LABELS: Record<string, { label: string; color: string }> = {
+    generating: { label: '生成中', color: 'text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-900/20' },
+    completed: { label: '已完成', color: 'text-green-600 dark:text-green-400 bg-green-50 dark:bg-green-900/20' },
+    failed: { label: '失败', color: 'text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-900/20' },
+  };
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center py-12">
+        <div className="relative h-12 w-12">
+          <div className="absolute inset-0 rounded-full border-4 border-zinc-200 dark:border-zinc-800"></div>
+          <div className="absolute inset-0 rounded-full border-4 border-zinc-950 dark:border-zinc-50 border-t-transparent animate-spin"></div>
+        </div>
+      </div>
+    );
+  }
+
+  if (items.length === 0) {
+    return (
+      <div className="text-center py-12 text-zinc-500 dark:text-zinc-400">
+        <p className="text-lg">暂无生成记录</p>
+        <p className="text-sm mt-1">生成电商海报后，记录将显示在这里</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-4">
+      {items.map((item) => {
+        const status = STATUS_LABELS[item.status] || { label: item.status, color: 'text-zinc-500' };
+        const thumbnail = item.result_images?.[0] || null;
+        const [expanded, setExpanded] = useState(false);
+
+        return (
+          <div key={item.id} className="rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 overflow-hidden">
+            {/* Header */}
+            <div
+              className="flex items-center gap-4 p-4 cursor-pointer hover:bg-zinc-50 dark:hover:bg-zinc-800/50 transition-colors"
+              onClick={() => setExpanded(!expanded)}
+            >
+              {/* Thumbnail */}
+              <div className="w-16 h-16 rounded-lg bg-zinc-100 dark:bg-zinc-800 flex-shrink-0 overflow-hidden">
+                {thumbnail ? (
+                  <img src={thumbnail} alt="" className="w-full h-full object-cover" />
+                ) : (
+                  <div className="w-full h-full flex items-center justify-center text-zinc-400">
+                    <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                    </svg>
+                  </div>
+                )}
+              </div>
+
+              {/* Info */}
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="text-sm font-medium text-zinc-950 dark:text-zinc-50">
+                    {PRODUCT_LABELS[item.product_type] || item.product_type}
+                  </span>
+                  <span className="text-xs text-zinc-500 dark:text-zinc-400">
+                    {STYLE_LABELS[item.style] || item.style}
+                  </span>
+                  <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${status.color}`}>
+                    {status.label}
+                  </span>
+                </div>
+                <div className="flex items-center gap-3 mt-1 text-xs text-zinc-500 dark:text-zinc-400">
+                  <span>{item.width}×{item.height}</span>
+                  <span>{item.image_count} 张</span>
+                  <span>{item.language === 'zh' ? '中文' : 'EN'}</span>
+                  {item.created_at && (
+                    <span>{new Date(item.created_at).toLocaleString('zh-CN')}</span>
+                  )}
+                </div>
+              </div>
+
+              {/* Expand arrow */}
+              <svg
+                className={`w-5 h-5 text-zinc-400 transition-transform flex-shrink-0 ${expanded ? 'rotate-180' : ''}`}
+                fill="none" viewBox="0 0 24 24" stroke="currentColor"
+              >
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+              </svg>
+            </div>
+
+            {/* Expanded: all images */}
+            {expanded && item.result_images && item.result_images.length > 0 && (
+              <div className="border-t border-zinc-200 dark:border-zinc-800 p-4">
+                <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
+                  {item.result_images.map((url, idx) => (
+                    <div key={idx} className="rounded-lg border border-zinc-200 dark:border-zinc-800 overflow-hidden">
+                      <div className="aspect-square bg-zinc-100 dark:bg-zinc-800">
+                        <img src={url} alt={`海报 ${idx + 1}`} className="w-full h-full object-contain" />
+                      </div>
+                      <div className="p-2 flex justify-between items-center">
+                        <span className="text-xs text-zinc-500 dark:text-zinc-400">#{idx + 1}</span>
+                        <a
+                          href={url}
+                          download={`poster-${item.id}-${idx + 1}.png`}
+                          className="text-xs text-zinc-950 dark:text-zinc-50 hover:underline"
+                        >
+                          下载
+                        </a>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Expanded: prompt info */}
+            {expanded && item.custom_prompt && (
+              <div className="border-t border-zinc-200 dark:border-zinc-800 px-4 py-3 bg-zinc-50 dark:bg-zinc-800/50">
+                <span className="text-xs font-medium text-zinc-500 dark:text-zinc-400">自定义提示词：</span>
+                <span className="text-xs text-zinc-700 dark:text-zinc-300 ml-1">{item.custom_prompt}</span>
+              </div>
+            )}
+          </div>
+        );
+      })}
+
+      {/* Pagination */}
+      {totalPages > 1 && (
+        <div className="flex items-center justify-center gap-2 pt-4">
+          <button
+            onClick={() => onPageChange(page - 1)}
+            disabled={page <= 1}
+            className="px-3 py-1.5 text-sm border border-zinc-300 dark:border-zinc-700 rounded-md disabled:opacity-30 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors"
+          >
+            上一页
+          </button>
+          <span className="text-sm text-zinc-600 dark:text-zinc-400">
+            {page} / {totalPages}
+          </span>
+          <button
+            onClick={() => onPageChange(page + 1)}
+            disabled={page >= totalPages}
+            className="px-3 py-1.5 text-sm border border-zinc-300 dark:border-zinc-700 rounded-md disabled:opacity-30 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors"
+          >
+            下一页
+          </button>
         </div>
       )}
     </div>

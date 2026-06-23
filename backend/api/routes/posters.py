@@ -2,9 +2,9 @@
 
 from typing import Annotated, cast
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel
-from sqlalchemy import select
+from sqlalchemy import desc, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql.elements import ColumnElement
 
@@ -41,6 +41,27 @@ class TaskStatusResponse(BaseModel):
     status: str  # pending, processing, completed, failed
     result: dict | None = None
     error: str | None = None
+
+
+class PosterHistoryItem(BaseModel):
+    id: int
+    product_type: str
+    style: str
+    language: str
+    status: str
+    image_count: int
+    width: int
+    height: int
+    custom_prompt: str | None = None
+    result_images: list | None = None
+    created_at: str | None = None
+
+
+class PosterHistoryResponse(BaseModel):
+    items: list[PosterHistoryItem]
+    total: int
+    page: int
+    size: int
 
 
 def _condition(value: object) -> ColumnElement[bool]:
@@ -137,6 +158,54 @@ async def generate_poster(
     return PosterGenerateResponse(
         task_id=task_id, poster_id=poster.id, status="pending"
     )
+
+
+@router.get("", response_model=PosterHistoryResponse)
+async def list_posters(
+    session: _session_dep,
+    current_user: _user_dep,
+    page: int = Query(1, ge=1),
+    size: int = Query(20, ge=1, le=100),
+):
+    """List user's poster generation history."""
+    offset = (page - 1) * size
+
+    # Total count
+    count_result = await session.execute(
+        select(func.count()).select_from(EcommercePoster).where(
+            _condition(EcommercePoster.user_id == current_user.id)
+        )
+    )
+    total = count_result.scalar() or 0
+
+    # Fetch items
+    result = await session.execute(
+        select(EcommercePoster)
+        .where(_condition(EcommercePoster.user_id == current_user.id))
+        .order_by(desc(EcommercePoster.created_at))
+        .offset(offset)
+        .limit(size)
+    )
+    posters = result.scalars().all()
+
+    items = [
+        PosterHistoryItem(
+            id=p.id,
+            product_type=p.product_type,
+            style=p.style,
+            language=p.language,
+            status=p.status,
+            image_count=p.image_count,
+            width=p.width,
+            height=p.height,
+            custom_prompt=p.custom_prompt,
+            result_images=p.result_images,
+            created_at=p.created_at.isoformat() if p.created_at else None,
+        )
+        for p in posters
+    ]
+
+    return PosterHistoryResponse(items=items, total=total, page=page, size=size)
 
 
 @router.get("/tasks/{task_id}", response_model=TaskStatusResponse)
