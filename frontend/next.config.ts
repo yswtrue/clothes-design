@@ -1,10 +1,8 @@
 import type { NextConfig } from "next";
+import { initOpenNextCloudflareForDev } from "@opennextjs/cloudflare";
 
 const nextConfig: NextConfig = {
-  experimental: {
-    // 增加中间件/代理的请求体大小限制到 50MB
-    proxyClientMaxBodySize: '50mb',
-  },
+  output: 'standalone',
   images: {
     remotePatterns: [
       {
@@ -27,4 +25,4 @@ const nextConfig: NextConfig = {
 
 export default nextConfig;
 
-import('@opennextjs/cloudflare').then(m => m.initOpenNextCloudflareForDev());
+initOpenNextCloudflareForDev();
