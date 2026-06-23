@@ -56,24 +56,34 @@ jobs:
     needs: build-and-push
     runs-on: ubuntu-latest
     steps:
-      - name: Verify secrets
-        env:
-          HOST_SET: ${{ secrets.SSH_HOST != '' }}
+      - name: Setup SSH key and verify
         run: |
-          if [ -z "${HOST_SET}" ] || [ "${HOST_SET}" = "false" ]; then
-            echo "::error::SSH_HOST secret is empty or not set. Check Settings → Secrets → Actions."
-            exit 1
-          fi
-          echo "Secrets verified OK."
+          mkdir -p ~/.ssh
+          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          echo "Private key fingerprint:"
+          ssh-keygen -lf ~/.ssh/deploy_key
+          echo "Key type and length:"
+          head -1 ~/.ssh/deploy_key
+          echo "Number of lines:"
+          wc -l < ~/.ssh/deploy_key
+
+      - name: Test SSH connection
+        run: |
+          ssh -o StrictHostKeyChecking=accept-new \
+              -o ConnectTimeout=10 \
+              -i ~/.ssh/deploy_key \
+              -p ${{ secrets.SSH_PORT || '22' }} \
+              -v \
+              ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} 'echo "SSH OK"' 2>&1 | tail -30
 
       - name: Deploy to production
-        uses: appleboy/ssh-action@v1.2.1
-        with:
-          host: ${{ secrets.SSH_HOST }}
-          username: ${{ secrets.SSH_USERNAME }}
-          key: ${{ secrets.SSH_PRIVATE_KEY }}
-          port: ${{ secrets.SSH_PORT || '22' }}
-          script: |
+        run: |
+          ssh -o StrictHostKeyChecking=accept-new \
+              -o ConnectTimeout=10 \
+              -i ~/.ssh/deploy_key \
+              -p ${{ secrets.SSH_PORT || '22' }} \
+              ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} '
             set -e
             cd Code/clothes-design/
             echo ">>> git pull..."
@@ -85,3 +95,4 @@ jobs:
             echo ">>> Restarting backend + worker..."
             docker compose up -d backend worker
             echo ">>> Done."
+          '
