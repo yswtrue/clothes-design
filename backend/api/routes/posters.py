@@ -1,0 +1,172 @@
+"""E-commerce poster generation API endpoints."""
+
+from typing import Annotated, cast
+
+from fastapi import APIRouter, Depends, HTTPException, status
+from pydantic import BaseModel
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.sql.elements import ColumnElement
+
+from api.auth.dependencies import get_current_user
+from api.db.base import get_session
+from api.db.models import EcommercePoster, Material, User
+from shared.task_queue import enqueue_task, get_task_status
+
+router = APIRouter(prefix="/api/posters", tags=["posters"])
+
+_session_dep = Annotated[AsyncSession, Depends(get_session)]
+_user_dep = Annotated[User, Depends(get_current_user)]
+
+
+class PosterGenerateRequest(BaseModel):
+    material_ids: list[int]
+    product_type: str
+    style: str
+    custom_prompt: str | None = None
+    image_count: int = 1
+    width: int = 1024
+    height: int = 768
+
+
+class PosterGenerateResponse(BaseModel):
+    task_id: str
+    poster_id: int
+    status: str = "pending"
+
+
+class TaskStatusResponse(BaseModel):
+    task_id: str
+    status: str  # pending, processing, completed, failed
+    result: dict | None = None
+    error: str | None = None
+
+
+def _condition(value: object) -> ColumnElement[bool]:
+    return cast(ColumnElement[bool], value)
+
+
+@router.post("/generate", response_model=PosterGenerateResponse, status_code=status.HTTP_201_CREATED)
+async def generate_poster(
+    request: PosterGenerateRequest,
+    session: _session_dep,
+    current_user: _user_dep,
+):
+    """Generate e-commerce poster images.
+
+    Uploads multiple material photos and uses AI to generate styled
+    e-commerce poster images based on product type, style, and prompt.
+    """
+    if request.image_count < 1 or request.image_count > 10:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="image_count must be between 1 and 10",
+        )
+
+    if request.width < 64 or request.width > 4096:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="width must be between 64 and 4096",
+        )
+
+    if request.height < 64 or request.height > 4096:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="height must be between 64 and 4096",
+        )
+
+    # Validate all materials belong to user
+    for mid in request.material_ids:
+        result = await session.execute(
+            select(Material).where(
+                _condition(Material.id == mid),
+                _condition(Material.uploaded_by == current_user.id),
+            )
+        )
+        material = result.scalar_one_or_none()
+        if not material:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Material {mid} not found or access denied",
+            )
+
+    poster = EcommercePoster(
+        user_id=current_user.id,
+        product_type=request.product_type,
+        style=request.style,
+        custom_prompt=request.custom_prompt,
+        material_ids=request.material_ids,
+        image_count=request.image_count,
+        width=request.width,
+        height=request.height,
+        status="generating",
+    )
+    session.add(poster)
+    await session.flush()
+
+    if poster.id is None or current_user.id is None:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to initialize poster generation task",
+        )
+
+    task_data = {
+        "poster_id": poster.id,
+        "user_id": current_user.id,
+        "material_ids": request.material_ids,
+        "product_type": request.product_type,
+        "style": request.style,
+        "custom_prompt": request.custom_prompt,
+        "image_count": request.image_count,
+        "width": request.width,
+        "height": request.height,
+    }
+
+    task_id = await enqueue_task(task_type="ecommerce_poster", user_id=current_user.id, data=task_data)
+    await session.commit()
+
+    return PosterGenerateResponse(
+        task_id=task_id, poster_id=poster.id, status="pending"
+    )
+
+
+@router.get("/tasks/{task_id}", response_model=TaskStatusResponse)
+async def get_task_status_endpoint(
+    task_id: str,
+    session: _session_dep,
+    current_user: _user_dep,
+):
+    """Get poster generation task status and result.
+
+    Args:
+        task_id: Task ID to query
+        session: Database session
+        current_user: Authenticated user
+
+    Returns:
+        Task status and result if completed
+
+    Raises:
+        HTTPException: If task not found
+    """
+    task_status = await get_task_status(task_id)
+
+    if not task_status:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Task not found",
+        )
+
+    # Verify task belongs to user
+    if task_status.user_id != current_user.id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Access denied",
+        )
+
+    return TaskStatusResponse(
+        task_id=task_id,
+        status=task_status.status,
+        result=task_status.result,
+        error=task_status.error,
+    )

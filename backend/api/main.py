@@ -36,6 +36,7 @@ from .routes.prompt_templates import router as prompt_templates_router
 from .routes.roles import router as roles_router
 from .routes.upload import router as upload_router
 from .routes.users import router as users_router
+from .routes.posters import router as posters_router
 
 
 @asynccontextmanager
@@ -131,6 +132,7 @@ app.include_router(export_router)
 app.include_router(ai_providers_router)
 app.include_router(files_router)
 app.include_router(history_router)
+app.include_router(posters_router)
 
 admin = create_admin()
 app.add_middleware(SessionMiddleware, secret_key="your-secret-key-change-in-production")

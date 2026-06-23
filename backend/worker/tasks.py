@@ -59,8 +59,17 @@ async def export_pattern_task(task_data: dict[str, Any]) -> dict[str, Any]:
     return await handler.handle(task_data)
 
 
+@broker.task(task_name="worker.tasks.ecommerce_poster")
+async def ecommerce_poster_task(task_data: dict[str, Any]) -> dict[str, Any]:
+    from worker.handlers.poster import EcommercePosterHandler
+
+    handler = EcommercePosterHandler()
+    return await handler.handle(task_data)
+
+
 __all__ = [
     "analyze_task",
+    "ecommerce_poster_task",
     "export_pattern_task",
     "generate_task",
     "mockup_task",

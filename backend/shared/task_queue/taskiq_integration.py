@@ -8,6 +8,7 @@ from taskiq_redis.exceptions import ResultIsMissingError
 from taskiq_app import broker
 from worker.tasks import (
     analyze_task,
+    ecommerce_poster_task,
     export_pattern_task,
     generate_task,
     mockup_task,
@@ -32,6 +33,7 @@ TASK_MAP = {
     "mockup": mockup_task,
     "model_preview": model_preview_task,
     "export_pattern": export_pattern_task,
+    "ecommerce_poster": ecommerce_poster_task,
 }
 
 
