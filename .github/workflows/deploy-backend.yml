@@ -52,6 +52,7 @@ jobs:
           cache-to: type=gha,mode=max
 
   deploy:
+    environment: cicd
     needs: build-and-push
     runs-on: ubuntu-latest
     steps:
