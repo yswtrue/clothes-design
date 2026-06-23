@@ -47,13 +47,23 @@ jobs:
     needs: build-and-push
     runs-on: ubuntu-latest
     steps:
+      - name: Verify secrets
+        env:
+          HOST_SET: ${{ secrets.SSH_HOST != '' }}
+        run: |
+          if [ -z "${HOST_SET}" ] || [ "${HOST_SET}" = "false" ]; then
+            echo "::error::SSH_HOST secret is empty or not set. Check Settings → Secrets → Actions."
+            exit 1
+          fi
+          echo "Secrets verified OK."
+
       - name: Deploy to production
         uses: appleboy/ssh-action@v1.2.1
         with:
           host: ${{ secrets.SSH_HOST }}
           username: ${{ secrets.SSH_USERNAME }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
-          port: ${{ secrets.SSH_PORT }}
+          port: ${{ secrets.SSH_PORT || '22' }}
           script: |
             set -e
             cd Code/clothes-design/
