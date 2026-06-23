@@ -53,6 +53,7 @@ export default function EcommercePosterTab() {
   const [selectedMaterialIds, setSelectedMaterialIds] = useState<number[]>([]);
   const [productType, setProductType] = useState<string>('tops');
   const [style, setStyle] = useState<string>('studio');
+  const [language, setLanguage] = useState<string>('en');
   const [customPrompt, setCustomPrompt] = useState('');
   const [imageCount, setImageCount] = useState(1);
   const [width, setWidth] = useState(1024);
@@ -121,6 +122,7 @@ export default function EcommercePosterTab() {
         material_ids: selectedMaterialIds,
         product_type: productType,
         style: style,
+        language: language,
         custom_prompt: customPrompt.trim() || undefined,
         image_count: imageCount,
         width: width,
@@ -169,6 +171,7 @@ export default function EcommercePosterTab() {
     setImageCount(1);
     setProductType('tops');
     setStyle('studio');
+    setLanguage('en');
     setWidth(1024);
     setHeight(1024);
     setState('ready');
@@ -345,6 +348,41 @@ export default function EcommercePosterTab() {
                   );
                 })}
               </div>
+            </div>
+
+            {/* Language Selector */}
+            <div className="space-y-3">
+              <label className="block text-sm font-medium text-zinc-950 dark:text-zinc-50">
+                提示词语种
+              </label>
+              <div className="flex gap-2">
+                {[
+                  { id: 'en', label: 'English' },
+                  { id: 'zh', label: '中文' },
+                ].map((lang) => {
+                  const isSelected = language === lang.id;
+                  return (
+                    <button
+                      key={lang.id}
+                      onClick={() => setLanguage(lang.id)}
+                      disabled={state === 'generating'}
+                      className={`
+                        flex-1 rounded-lg border p-3 text-sm font-medium transition-colors
+                        ${isSelected
+                          ? 'bg-zinc-950 dark:bg-zinc-50 text-white dark:text-zinc-950 border-zinc-950 dark:border-zinc-50'
+                          : 'border-zinc-200 dark:border-zinc-800 text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800'
+                        }
+                        disabled:opacity-50 disabled:cursor-not-allowed
+                      `}
+                    >
+                      {lang.label}
+                    </button>
+                  );
+                })}
+              </div>
+              <p className="text-xs text-zinc-500 dark:text-zinc-400">
+                选择提示词语言，影响 AI 生成的构图描述
+              </p>
             </div>
 
             {/* Custom Prompt */}

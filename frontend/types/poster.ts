@@ -2,6 +2,7 @@ export interface PosterGenerateRequest {
   material_ids: number[];
   product_type: string;
   style: string;
+  language: string; // 'en' | 'zh', default 'en'
   custom_prompt?: string;
   image_count: number;
   width: number;
