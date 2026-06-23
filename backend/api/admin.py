@@ -23,6 +23,7 @@ from api.auth.security import verify_password
 from api.db.base import AsyncSessionLocal, engine
 from api.db.models import (
     AIProviderConfig,
+    EcommercePoster,
     Material,
     PrjTemplate,
     PromptFeature,
@@ -362,6 +363,35 @@ class PromptFeatureView(ModelView):
             obj.is_default = data["is_default"]
 
 
+class EcommercePosterView(ModelView):
+    name = "E-commerce Poster"
+    label = "E-commerce Posters"
+
+    fields = [
+        IntegerField("id", exclude_from_create=True, exclude_from_edit=True),
+        IntegerField("user_id", label="用户 ID", exclude_from_create=True, exclude_from_edit=True),
+        StringField("name", label="名称", required=False),
+        StringField("product_type", label="产品类型", required=True),
+        StringField("style", label="风格", required=True),
+        StringField("custom_prompt", label="自定义提示词", exclude_from_list=True),
+        JSONField("material_ids", label="素材 ID 列表", exclude_from_list=True),
+        IntegerField("image_count", label="图片数量"),
+        IntegerField("width", label="宽度"),
+        IntegerField("height", label="高度"),
+        StringField("status", label="状态"),
+        JSONField("result_images", label="结果图片 URL", exclude_from_list=True),
+        JSONField("generation_params", label="生成参数", exclude_from_list=True),
+        StringField("created_at", exclude_from_create=True, exclude_from_edit=True),
+    ]
+
+    exclude_fields_from_list = [
+        "custom_prompt", "material_ids", "result_images", "generation_params",
+        "created_at", "deleted_at",
+    ]
+    searchable_fields = ["name", "product_type", "style", "status"]
+    sortable_fields = ["id", "product_type", "style", "status", "image_count", "created_at"]
+
+
 def create_admin() -> Admin:
     admin = Admin(
         engine,
@@ -379,5 +409,6 @@ def create_admin() -> Admin:
     admin.add_view(PromptTemplateView(PromptTemplate, icon="fa fa-comment-alt"))
     admin.add_view(PromptFeatureView(PromptFeature, icon="fa fa-list-check"))
     admin.add_view(AIProviderConfigView(AIProviderConfig, icon="fa fa-key"))
+    admin.add_view(EcommercePosterView(EcommercePoster, icon="fa fa-shopping-cart"))
 
     return admin
