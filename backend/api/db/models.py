@@ -178,6 +178,7 @@ class EcommercePoster(SoftDeleteMixin, table=True):
     image_count: int = Field(default=1)
     width: int = Field(default=1024)
     height: int = Field(default=768)
+    language: str = Field(default="en", max_length=10, index=True)
     status: str = Field(default="generating", max_length=50, index=True)
     result_images: Optional[list] = Field(default=None, sa_column=Column(JSON))
     generation_params: Optional[dict] = Field(default=None, sa_column=Column(JSON))
