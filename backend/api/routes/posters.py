@@ -23,6 +23,7 @@ class PosterGenerateRequest(BaseModel):
     material_ids: list[int]
     product_type: str
     style: str
+    language: str = "en"  # en, zh
     custom_prompt: str | None = None
     image_count: int = 1
     width: int = 1024
@@ -90,10 +91,17 @@ async def generate_poster(
                 detail=f"Material {mid} not found or access denied",
             )
 
+    if request.language not in ("en", "zh"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="language must be 'en' or 'zh'",
+        )
+
     poster = EcommercePoster(
         user_id=current_user.id,
         product_type=request.product_type,
         style=request.style,
+        language=request.language,
         custom_prompt=request.custom_prompt,
         material_ids=request.material_ids,
         image_count=request.image_count,
@@ -116,6 +124,7 @@ async def generate_poster(
         "material_ids": request.material_ids,
         "product_type": request.product_type,
         "style": request.style,
+        "language": request.language,
         "custom_prompt": request.custom_prompt,
         "image_count": request.image_count,
         "width": request.width,

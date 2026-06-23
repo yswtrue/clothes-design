@@ -29,15 +29,41 @@ from .base import TaskHandler, WorkerError
 
 logger = logging.getLogger(__name__)
 
-# Style-specific prompt prefixes for img2img — helps AI understand the desired output aesthetic
-STYLE_PROMPTS: dict[str, str] = {
-    "studio": "clean white background, studio lighting, product centered, minimal shadows, high-key commercial photography",
-    "lifestyle": "lifestyle setting with natural context, realistic environment, soft daylight, candid commercial shot",
-    "minimalist": "minimalist composition, ample negative space, elegant simplicity, architectural aesthetic",
-    "luxury": "luxury presentation, dramatic contrast lighting, premium backdrop, gold or dark accents, high-end catalog",
-    "vintage": "film grain, warm muted tones, retro film photography, analog aesthetic, 90s commercial look",
-    "outdoor": "outdoor natural setting, golden hour sunlight, greenery or urban backdrop, fresh air feel",
-    "editorial": "fashion editorial composition, bold high-contrast lighting, magazine cover quality, avant-garde styling",
+# Style-specific prompt prefixes for img2img — bilingual (en / zh)
+STYLE_PROMPTS: dict[str, dict[str, str]] = {
+    "en": {
+        "studio": "clean white background, studio lighting, product centered, minimal shadows, high-key commercial photography",
+        "lifestyle": "lifestyle setting with natural context, realistic environment, soft daylight, candid commercial shot",
+        "minimalist": "minimalist composition, ample negative space, elegant simplicity, architectural aesthetic",
+        "luxury": "luxury presentation, dramatic contrast lighting, premium backdrop, gold or dark accents, high-end catalog",
+        "vintage": "film grain, warm muted tones, retro film photography, analog aesthetic, 90s commercial look",
+        "outdoor": "outdoor natural setting, golden hour sunlight, greenery or urban backdrop, fresh air feel",
+        "editorial": "fashion editorial composition, bold high-contrast lighting, magazine cover quality, avant-garde styling",
+    },
+    "zh": {
+        "studio": "纯白背景，影棚灯光，产品居中展示，干净无阴影，高清商业摄影",
+        "lifestyle": "生活场景，自然氛围，柔和日光，真实环境，自然抓拍感",
+        "minimalist": "极简构图，大量留白，优雅简洁，建筑美学感，高级质感",
+        "luxury": "奢华展示，戏剧性对比光，高级背景，金色或暗色调点缀，高端画册质感",
+        "vintage": "胶片颗粒感，温暖柔和色调，复古摄影风格，90年代商业片质感",
+        "outdoor": "户外自然场景，黄金时段阳光，绿植或都市背景，清新自然感",
+        "editorial": "时尚杂志大片构图，高对比度光影，封面级质感，前卫造型",
+    },
+}
+
+PRODUCT_LABELS: dict[str, dict[str, str]] = {
+    "en": {
+        "tops": "tops and shirts", "pants": "pants and trousers",
+        "skirts": "skirts and dresses", "outerwear": "outerwear and jackets",
+        "shoes": "shoes and footwear", "bags": "bags and handbags",
+        "accessories": "fashion accessories", "other": "fashion products",
+    },
+    "zh": {
+        "tops": "上衣和衬衫", "pants": "裤装",
+        "skirts": "裙装", "outerwear": "外套和夹克",
+        "shoes": "鞋类", "bags": "包袋",
+        "accessories": "时尚配饰", "other": "时尚单品",
+    },
 }
 
 
@@ -82,7 +108,7 @@ class EcommercePosterHandler(TaskHandler):
 
     async def validate_input(self, task_data: dict[str, Any]) -> None:
         required_fields = [
-            "material_ids", "product_type", "style",
+            "material_ids", "product_type", "style", "language",
             "image_count", "width", "height",
         ]
         for field in required_fields:
@@ -94,6 +120,9 @@ class EcommercePosterHandler(TaskHandler):
         image_count = task_data["image_count"]
         if not isinstance(image_count, int) or image_count < 1 or image_count > 10:
             raise WorkerError("image_count must be between 1 and 10")
+        language = task_data["language"]
+        if language not in ("en", "zh"):
+            raise WorkerError("language must be 'en' or 'zh'")
 
     # ── material image loading ──────────────────────────────────────
 
@@ -159,29 +188,31 @@ class EcommercePosterHandler(TaskHandler):
     # ── prompt building ─────────────────────────────────────────────
 
     def _build_poster_prompt(
-        self, product_type: str, style: str, custom_prompt: str | None
+        self, product_type: str, style: str, language: str, custom_prompt: str | None
     ) -> str:
-        """Build an img2img-optimized prompt that describes the desired poster output."""
-        product_labels: dict[str, str] = {
-            "tops": "tops and shirts",
-            "pants": "pants and trousers",
-            "skirts": "skirts and dresses",
-            "outerwear": "outerwear and jackets",
-            "shoes": "shoes and footwear",
-            "bags": "bags and handbags",
-            "accessories": "fashion accessories",
-            "other": "fashion products",
-        }
-        product_label = product_labels.get(product_type, product_type)
-        style_desc = STYLE_PROMPTS.get(style, f"{style} style commercial photography")
+        """Build an img2img-optimized prompt in the specified language."""
+        lang = language if language in STYLE_PROMPTS else "en"
+        labels = PRODUCT_LABELS[lang]
+        style_desc = STYLE_PROMPTS[lang].get(style, f"{style} style commercial photography")
 
-        parts = [
-            f"Professional e-commerce product poster featuring {product_label}",
-            f"Based on the reference product images shown, create a polished commercial poster",
-            style_desc,
-            "The output should be a clean, attractive product showcase suitable for online store listing",
-            "High resolution, professional product photography, 8K detail",
-        ]
+        product_label = labels.get(product_type, product_type)
+
+        if lang == "zh":
+            parts = [
+                f"专业的{product_label}电商产品海报",
+                "基于提供的参考产品图片，创作精美的商业海报",
+                style_desc,
+                "输出应为干净、吸引人的产品展示图，适合线上店铺使用",
+                "高分辨率，专业产品摄影，8K细节",
+            ]
+        else:
+            parts = [
+                f"Professional e-commerce product poster featuring {product_label}",
+                "Based on the reference product images shown, create a polished commercial poster",
+                style_desc,
+                "The output should be a clean, attractive product showcase suitable for online store listing",
+                "High resolution, professional product photography, 8K detail",
+            ]
         if custom_prompt:
             parts.append(custom_prompt)
         return ". ".join(parts)
@@ -194,6 +225,7 @@ class EcommercePosterHandler(TaskHandler):
         poster_id = task_data.get("poster_id")
         product_type: str = task_data["product_type"]
         style: str = task_data["style"]
+        language: str = task_data.get("language", "en")
         custom_prompt: str | None = task_data.get("custom_prompt")
         image_count: int = task_data["image_count"]
         width: int = task_data["width"]
@@ -214,8 +246,8 @@ class EcommercePosterHandler(TaskHandler):
             )
 
             # ── Step 3: build prompt ──
-            full_prompt = self._build_poster_prompt(product_type, style, custom_prompt)
-            self.logger.info(f"Poster prompt: {full_prompt[:150]}...")
+            full_prompt = self._build_poster_prompt(product_type, style, language, custom_prompt)
+            self.logger.info(f"Poster prompt (lang={language}): {full_prompt[:150]}...")
 
             # ── Step 4: get AI provider ──
             provider, provider_type = await self._get_provider()
