@@ -160,6 +160,34 @@ class GeneratedDesign(SoftDeleteMixin, table=True):
     material: Optional["Material"] = Relationship(back_populates="generated_designs")
 
 
+class EcommercePoster(SoftDeleteMixin, table=True):
+    @declared_attr.directive
+    def __tablename__(cls) -> str:
+        return "ecommerce_posters"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    user_id: Optional[int] = Field(
+        default=None,
+        sa_column=Column(ForeignKey("users.id", ondelete="SET NULL"), index=True),
+    )
+    name: Optional[str] = Field(default=None, max_length=255)
+    product_type: str = Field(max_length=100, index=True)
+    style: str = Field(max_length=100)
+    custom_prompt: Optional[str] = Field(default=None, sa_column=Column(Text))
+    material_ids: Optional[list] = Field(default=None, sa_column=Column(JSON))
+    image_count: int = Field(default=1)
+    width: int = Field(default=1024)
+    height: int = Field(default=768)
+    status: str = Field(default="generating", max_length=50, index=True)
+    result_images: Optional[list] = Field(default=None, sa_column=Column(JSON))
+    generation_params: Optional[dict] = Field(default=None, sa_column=Column(JSON))
+    created_at: Optional[datetime] = Field(
+        default=None, sa_column_kwargs={"server_default": func.now()}, index=True
+    )
+
+    user: Optional[User] = Relationship()
+
+
 class LoginSession(SoftDeleteMixin, table=True):
     @declared_attr.directive
     def __tablename__(cls) -> str:

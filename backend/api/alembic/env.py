@@ -8,6 +8,7 @@ from alembic import context
 from config import get_settings
 from api.db.models import (
     AIProviderConfig,
+    EcommercePoster,
     GeneratedDesign,
     LoginSession,
     Material,
