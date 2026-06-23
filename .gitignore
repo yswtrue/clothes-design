@@ -141,3 +141,5 @@ playwright/.cache/
 
 **/__pycache__
 uploads/
+
+.omo/
