@@ -3,6 +3,8 @@ from typing import Any, Optional
 
 from api.db.base import SoftDeleteMixin
 from api.storage.storages import (
+    clo3d_project_storage,
+    clo3d_render_storage,
     generated_image_storage,
     material_storage,
     output_tif_storage,
@@ -158,6 +160,85 @@ class GeneratedDesign(SoftDeleteMixin, table=True):
     exported_at: Optional[datetime] = Field(default=None)
 
     material: Optional["Material"] = Relationship(back_populates="generated_designs")
+
+
+class Clo3dProject(SoftDeleteMixin, table=True):
+    """Uploaded CLO3D project (.zprj) with extracted piece metadata."""
+
+    @declared_attr.directive
+    def __tablename__(cls) -> str:
+        return "clo3d_projects"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    user_id: Optional[int] = Field(
+        default=None,
+        sa_column=Column(ForeignKey("users.id", ondelete="SET NULL"), index=True),
+    )
+    name: str = Field(max_length=255, index=True)
+    category: str = Field(max_length=50, index=True)
+    prj_file: Any = Field(
+        default=None,
+        sa_column=Column("prj_path", FileType(storage=clo3d_project_storage), nullable=True),
+    )
+    preview_image: Any = Field(
+        default=None,
+        sa_column=Column(FileType(storage=preview_storage), nullable=True),
+    )
+    pieces: Optional[dict] = Field(default=None, sa_column=Column(JSON))
+    # pieces shape: [{"name": "front", "label": "前片", "bounds": {...}}, ...]
+    piece_count: int = Field(default=0)
+    status: str = Field(default="uploaded", max_length=50, index=True)
+    # uploaded -> pieces_extracted -> ready
+    created_at: Optional[datetime] = Field(
+        default=None,
+        sa_column_kwargs={"server_default": func.now()},
+    )
+
+    user: Optional[User] = Relationship()
+    render_tasks: list["Clo3dRenderTask"] = Relationship(
+        back_populates="project", cascade_delete=True
+    )
+
+
+class Clo3dRenderTask(SoftDeleteMixin, table=True):
+    """A render job for a CLO3D project with per-piece material assignments."""
+
+    @declared_attr.directive
+    def __tablename__(cls) -> str:
+        return "clo3d_render_tasks"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    project_id: int = Field(
+        sa_column=Column(
+            ForeignKey("clo3d_projects.id", ondelete="CASCADE"), nullable=False, index=True
+        )
+    )
+    user_id: Optional[int] = Field(
+        default=None,
+        sa_column=Column(ForeignKey("users.id", ondelete="SET NULL"), index=True),
+    )
+    material_assignments: Optional[dict] = Field(default=None, sa_column=Column(JSON))
+    # shape: {"piece_name": material_id, ...}
+    status: str = Field(default="pending", max_length=50, index=True)
+    # pending -> processing -> completed | failed
+    front_image: Any = Field(
+        default=None,
+        sa_column=Column("front_image_path", FileType(storage=clo3d_render_storage), nullable=True),
+    )
+    back_image: Any = Field(
+        default=None,
+        sa_column=Column("back_image_path", FileType(storage=clo3d_render_storage), nullable=True),
+    )
+    error_message: Optional[str] = Field(default=None, sa_column=Column(Text))
+    render_params: Optional[dict] = Field(default=None, sa_column=Column(JSON))
+    created_at: Optional[datetime] = Field(
+        default=None,
+        sa_column_kwargs={"server_default": func.now()}, index=True
+    )
+    completed_at: Optional[datetime] = Field(default=None)
+
+    project: Optional[Clo3dProject] = Relationship(back_populates="render_tasks")
+    user: Optional[User] = Relationship()
 
 
 class EcommercePoster(SoftDeleteMixin, table=True):

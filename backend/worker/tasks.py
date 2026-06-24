@@ -67,8 +67,17 @@ async def ecommerce_poster_task(task_data: dict[str, Any]) -> dict[str, Any]:
     return await handler.handle(task_data)
 
 
+@broker.task(task_name="worker.tasks.clo3d_render")
+async def clo3d_render_task(task_data: dict[str, Any]) -> dict[str, Any]:
+    from worker.handlers.clo3d import Clo3dRenderHandler
+
+    handler = Clo3dRenderHandler()
+    return await handler.handle(task_data)
+
+
 __all__ = [
     "analyze_task",
+    "clo3d_render_task",
     "ecommerce_poster_task",
     "export_pattern_task",
     "generate_task",

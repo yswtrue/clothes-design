@@ -1,0 +1,8 @@
+{
+  "name": "CLO3D API Server",
+  "version": "1.0.0",
+  "description": "HTTP API server for external render commands. Listens on port 9898.",
+  "author": "Clothes Design Platform",
+  "auto_start": true,
+  "category": "automation"
+}

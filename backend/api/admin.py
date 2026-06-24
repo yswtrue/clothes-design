@@ -23,6 +23,8 @@ from api.auth.security import verify_password
 from api.db.base import AsyncSessionLocal, engine
 from api.db.models import (
     AIProviderConfig,
+    Clo3dProject,
+    Clo3dRenderTask,
     EcommercePoster,
     Material,
     PrjTemplate,
@@ -392,6 +394,52 @@ class EcommercePosterView(ModelView):
     sortable_fields = ["id", "product_type", "style", "status", "image_count", "created_at"]
 
 
+class Clo3dProjectView(ModelView):
+    name = "CLO3D Project"
+    label = "CLO3D Projects"
+
+    fields = [
+        IntegerField("id", exclude_from_create=True, exclude_from_edit=True),
+        IntegerField("user_id", label="用户 ID", exclude_from_create=True, exclude_from_edit=True),
+        StringField("name", required=True, help_text="项目名称"),
+        StringField("category", required=True, help_text="分类"),
+        FileField("prj_file", label="ZPRJ 文件", accept=".zprj", exclude_from_list=True),
+        ImageField("preview_image", label="预览图", exclude_from_list=True),
+        JSONField("pieces", label="版片数据", exclude_from_list=True),
+        IntegerField("piece_count", label="版片数量", exclude_from_create=True, exclude_from_edit=True),
+        StringField("status", label="状态"),
+        StringField("created_at", exclude_from_create=True, exclude_from_edit=True),
+    ]
+
+    exclude_fields_from_list = ["pieces", "created_at", "deleted_at", "prj_file"]
+    searchable_fields = ["name", "category", "status"]
+    sortable_fields = ["id", "name", "category", "status", "piece_count", "created_at"]
+
+
+class Clo3dRenderTaskView(ModelView):
+    name = "CLO3D Render Task"
+    label = "CLO3D Render Tasks"
+
+    fields = [
+        IntegerField("id", exclude_from_create=True, exclude_from_edit=True),
+        IntegerField("project_id", label="项目 ID"),
+        IntegerField("user_id", label="用户 ID", exclude_from_create=True, exclude_from_edit=True),
+        JSONField("material_assignments", label="面料分配", exclude_from_list=True),
+        StringField("status", label="状态"),
+        ImageField("front_image", label="正面渲染图", exclude_from_list=True),
+        ImageField("back_image", label="背面渲染图", exclude_from_list=True),
+        StringField("error_message", label="错误信息", exclude_from_list=True),
+        StringField("created_at", exclude_from_create=True, exclude_from_edit=True),
+        StringField("completed_at", exclude_from_create=True, exclude_from_edit=True),
+    ]
+
+    exclude_fields_from_list = [
+        "material_assignments", "error_message", "created_at", "completed_at", "deleted_at",
+    ]
+    searchable_fields = ["status"]
+    sortable_fields = ["id", "project_id", "status", "created_at"]
+
+
 def create_admin() -> Admin:
     admin = Admin(
         engine,
@@ -410,5 +458,7 @@ def create_admin() -> Admin:
     admin.add_view(PromptFeatureView(PromptFeature, icon="fa fa-list-check"))
     admin.add_view(AIProviderConfigView(AIProviderConfig, icon="fa fa-key"))
     admin.add_view(EcommercePosterView(EcommercePoster, icon="fa fa-shopping-cart"))
+    admin.add_view(Clo3dProjectView(Clo3dProject, icon="fa fa-tshirt"))
+    admin.add_view(Clo3dRenderTaskView(Clo3dRenderTask, icon="fa fa-image"))
 
     return admin

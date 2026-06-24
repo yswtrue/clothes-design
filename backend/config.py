@@ -105,6 +105,13 @@ class VectorizerSettings(BaseSettings):
     timeout: int = Field(default=300, alias="VECTORIZER_TIMEOUT")
 
 
+class Clo3dSettings(BaseSettings):
+    model_config = SettingsConfigDict(env_prefix="", extra="ignore")
+
+    api_base_url: str = Field(default="http://127.0.0.1:9898", alias="CLO3D_API_URL")
+    render_timeout_sec: int = Field(default=600, alias="CLO3D_RENDER_TIMEOUT")
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="", extra="ignore")
 
@@ -112,6 +119,7 @@ class Settings(BaseSettings):
     database: DatabaseSettings = Field(default_factory=DatabaseSettings)
     redis: RedisSettings = Field(default_factory=RedisSettings)
     vectorizer: VectorizerSettings = Field(default_factory=VectorizerSettings)
+    clo3d: Clo3dSettings = Field(default_factory=Clo3dSettings)
 
 
 @lru_cache

@@ -8,6 +8,7 @@ from taskiq_redis.exceptions import ResultIsMissingError
 from taskiq_app import broker
 from worker.tasks import (
     analyze_task,
+    clo3d_render_task,
     ecommerce_poster_task,
     export_pattern_task,
     generate_task,
@@ -34,6 +35,7 @@ TASK_MAP = {
     "model_preview": model_preview_task,
     "export_pattern": export_pattern_task,
     "ecommerce_poster": ecommerce_poster_task,
+    "clo3d_render": clo3d_render_task,
 }
 
 
