@@ -2,6 +2,10 @@
 
 Detects and extracts individual fabric patches from an input image
 using computer vision techniques (thresholding, morphology, connected components).
+
+Performance: large images are automatically downscaled for processing
+(longest edge capped at MAX_PROCESSING_DIM), and connected-component
+search only iterates foreground pixels via np.argwhere().
 """
 
 import io
@@ -9,6 +13,10 @@ from collections import deque
 
 import numpy as np
 from PIL import Image, ImageFilter
+
+# Images larger than this are downscaled before segmentation.
+# Bounding boxes are mapped back to original coordinates.
+MAX_PROCESSING_DIM = 1500
 
 
 def _otsu_threshold(gray: np.ndarray) -> int:
@@ -89,67 +97,85 @@ def _morphological_closing(mask: np.ndarray, radius: int = 2) -> np.ndarray:
     return _erode(_dilate(mask, radius), radius)
 
 
+def _bfs_component(
+    y0: int, x0: int, binary: np.ndarray, visited: np.ndarray
+) -> tuple[int, int, int, int, int] | None:
+    """BFS from (y0,x0) to find connected component and its bounding box.
+
+    Returns (x1, y1, x2, y2, area) or None if the component was already visited.
+    """
+    if visited[y0, x0]:
+        return None
+
+    h, w = binary.shape
+    queue: deque[tuple[int, int]] = deque()
+    queue.append((y0, x0))
+    visited[y0, x0] = True
+
+    min_x = max_x = x0
+    min_y = max_y = y0
+    area = 0
+
+    while queue:
+        y, x = queue.popleft()
+        area += 1
+
+        min_x = min(min_x, x)
+        max_x = max(max_x, x)
+        min_y = min(min_y, y)
+        max_y = max(max_y, y)
+
+        for dy, dx in [(-1, 0), (1, 0), (0, -1), (0, 1)]:
+            ny, nx = y + dy, x + dx
+            if 0 <= ny < h and 0 <= nx < w and binary[ny, nx] and not visited[ny, nx]:
+                visited[ny, nx] = True
+                queue.append((ny, nx))
+
+    return (min_x, min_y, max_x, max_y, area)
+
+
 def _find_connected_components(
     binary: np.ndarray,
     min_area: int,
-) -> list[list[tuple[int, int]]]:
-    """Find 4-connected components in a binary mask using BFS.
+) -> list[tuple[int, int, int, int]]:
+    """Find 4-connected components using BFS via np.argwhere seed points.
 
-    Returns list of components where each component is a list of (y, x) pixel coordinates.
-    Only components with area >= min_area are returned.
+    Only iterates foreground pixels. Returns list of (x1, y1, x2, y2) bboxes
+    for components whose area >= min_area.
     """
-    h, w = binary.shape
     visited = np.zeros_like(binary, dtype=bool)
-    components: list[list[tuple[int, int]]] = []
+    components: list[tuple[int, int, int, int]] = []
 
-    for y in range(h):
-        for x in range(w):
-            if binary[y, x] == 1 and not visited[y, x]:
-                component: list[tuple[int, int]] = []
-                queue: deque[tuple[int, int]] = deque()
-                queue.append((y, x))
-                visited[y, x] = True
+    fg_coords: np.ndarray = np.argwhere(binary == 1)
 
-                while queue:
-                    cy, cx = queue.popleft()
-                    component.append((cy, cx))
-
-                    # 4-connected neighbors
-                    for dy, dx in [(-1, 0), (1, 0), (0, -1), (0, 1)]:
-                        ny, nx = cy + dy, cx + dx
-                        if (
-                            0 <= ny < h
-                            and 0 <= nx < w
-                            and binary[ny, nx] == 1
-                            and not visited[ny, nx]
-                        ):
-                            visited[ny, nx] = True
-                            queue.append((ny, nx))
-
-                if len(component) >= min_area:
-                    components.append(component)
+    for cy, cx in fg_coords:
+        result = _bfs_component(int(cy), int(cx), binary, visited)
+        if result is None:
+            continue
+        x1, y1, x2, y2, area = result
+        if area >= min_area:
+            components.append((x1, y1, x2, y2))
 
     return components
 
 
-def _compute_bbox_with_padding(
-    component: list[tuple[int, int]],
-    img_h: int,
-    img_w: int,
-    padding: int = 5,
+def _apply_padding(
+    x1: int, y1: int, x2: int, y2: int, pad: int, w: int, h: int
 ) -> tuple[int, int, int, int]:
-    """Compute bounding box for a component with padding, clamped to image bounds."""
-    ys = [p[0] for p in component]
-    xs = [p[1] for p in component]
-    x1 = max(0, min(xs) - padding)
-    y1 = max(0, min(ys) - padding)
-    x2 = min(img_w - 1, max(xs) + padding)
-    y2 = min(img_h - 1, max(ys) + padding)
-    return (x1, y1, x2, y2)
+    """Add padding to bbox, clamped to image boundaries."""
+    return (
+        max(0, x1 - pad),
+        max(0, y1 - pad),
+        min(w - 1, x2 + pad),
+        min(h - 1, y2 + pad),
+    )
 
 
 def segment_fabric_patches(image_bytes: bytes) -> list[dict]:
     """Segment the input image into individual fabric patches.
+
+    Large images are downscaled for fast processing; bounding boxes
+    are projected back to original coordinates.
 
     Args:
         image_bytes: Raw image file bytes (JPEG, PNG, WebP, etc.)
@@ -163,15 +189,19 @@ def segment_fabric_patches(image_bytes: bytes) -> list[dict]:
 
         Returns empty list if fewer than 2 patches are found.
     """
-    # Load image with PIL
-    pil_image = Image.open(io.BytesIO(image_bytes))
-    pil_image = pil_image.convert("RGB")
-    orig_w, orig_h = pil_image.size
-    total_pixels = orig_w * orig_h
-    min_area_pixels = max(1, int(total_pixels * 0.001))
+    # Load full-resolution image (used for final crop)
+    full_img = Image.open(io.BytesIO(image_bytes)).convert("RGB")
+    orig_w, orig_h = full_img.size
 
-    # Convert to grayscale numpy array
-    gray = np.array(pil_image.convert("L"), dtype=np.uint8)
+    # Downscale large images for fast processing
+    scale = 1.0
+    if max(orig_w, orig_h) > MAX_PROCESSING_DIM:
+        scale = MAX_PROCESSING_DIM / max(orig_w, orig_h)
+    proc_w, proc_h = int(orig_w * scale), int(orig_h * scale)
+    proc_img = full_img.resize((proc_w, proc_h), Image.LANCZOS) if scale < 1.0 else full_img.copy()
+
+    # Convert to grayscale numpy array (at processing resolution)
+    gray = np.array(proc_img.convert("L"), dtype=np.uint8)
 
     # Apply GaussianBlur to reduce noise
     blurred_pil = Image.fromarray(gray, mode="L").filter(ImageFilter.GaussianBlur(radius=3))
@@ -189,22 +219,31 @@ def segment_fabric_patches(image_bytes: bytes) -> list[dict]:
     # Morphological closing: dilate 2px then erode 2px
     mask = _morphological_closing(mask, radius=2)
 
-    # Find connected components
-    components = _find_connected_components(mask, min_area=min_area_pixels)
+    # Minimum patch area (relative to processing resolution)
+    min_area_pixels = max(1, int(proc_w * proc_h * 0.001))
 
-    # Require at least 2 patches
-    if len(components) < 2:
+    # Find connected components → bboxes at processing resolution
+    bboxes = _find_connected_components(mask, min_area=min_area_pixels)
+
+    if len(bboxes) < 2:
         return []
 
-    # Extract each patch
+    # Project bboxes back to original resolution and crop
+    inv_scale = 1.0 / scale
     results: list[dict] = []
-    for component in components:
-        x1, y1, x2, y2 = _compute_bbox_with_padding(component, orig_h, orig_w, padding=5)
+    for px1, py1, px2, py2 in bboxes:
+        # Map to original coordinates
+        ox1 = int(px1 * inv_scale)
+        oy1 = int(py1 * inv_scale)
+        ox2 = int(px2 * inv_scale)
+        oy2 = int(py2 * inv_scale)
 
-        # Crop from original image
-        patch = pil_image.crop((x1, y1, x2 + 1, y2 + 1))
+        # Add padding (in original coordinates) and clamp
+        ox1, oy1, ox2, oy2 = _apply_padding(ox1, oy1, ox2, oy2, pad=5, w=orig_w, h=orig_h)
 
-        # Save as PNG bytes in memory
+        # Crop from original full-resolution image
+        patch = full_img.crop((ox1, oy1, ox2 + 1, oy2 + 1))
+
         buf = io.BytesIO()
         patch.save(buf, format="PNG")
         patch_bytes = buf.getvalue()
@@ -212,9 +251,9 @@ def segment_fabric_patches(image_bytes: bytes) -> list[dict]:
         results.append(
             {
                 "image_bytes": patch_bytes,
-                "bbox": (x1, y1, x2, y2),
-                "width": x2 - x1 + 1,
-                "height": y2 - y1 + 1,
+                "bbox": (ox1, oy1, ox2, oy2),
+                "width": ox2 - ox1 + 1,
+                "height": oy2 - oy1 + 1,
             }
         )
 
