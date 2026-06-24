@@ -19,7 +19,7 @@ from pathlib import Path
 
 HOST = os.environ.get("CLO3D_API_HOST", "127.0.0.1")
 PORT = int(os.environ.get("CLO3D_API_PORT", "9898"))
-IPC_DIR = Path(os.environ.get("CLO3D_IPC_DIR", str(Path(__file__).parent / "clo3d_ipc")))
+IPC_DIR = Path(os.environ.get("CLO3D_IPC_DIR", os.path.join(os.environ.get("TEMP", os.path.expanduser("~")), "clo3d_ipc")))
 LOG_FILE = os.environ.get("CLO3D_API_LOG", str(Path(__file__).parent / "clo3d_api.log"))
 
 CMD_DIR = IPC_DIR / "commands"
