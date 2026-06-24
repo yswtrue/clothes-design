@@ -1,13 +1,10 @@
 """
-CLO3D API Server — start HTTP in background thread, script returns immediately.
+CLO3D API Server — background handle_request loop.
 
-Run once in CLO3D Script Editor. Server keeps running in background.
-CLO3D UI stays responsive. Health check is instant.
-
-If POST /render or /extract hangs, CLO3D API needs main thread —
-use clo3d_worker.py instead.
+Run once in CLO3D Script Editor. Script returns immediately.
+Server runs in background thread with handle_request() loop.
 """
-import json, os, threading, traceback
+import json, os, threading, time, traceback
 from datetime import datetime
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from pathlib import Path
@@ -15,7 +12,7 @@ from pathlib import Path
 HOST = os.environ.get("CLO3D_API_HOST", "127.0.0.1")
 PORT = int(os.environ.get("CLO3D_API_PORT", "9898"))
 LOG_FILE = os.environ.get("CLO3D_API_LOG", str(Path(os.path.expanduser("~")) / "clo3d_api.log"))
-LOCK = threading.Lock()
+LOCK = threading.Lock(); STOP = threading.Event()
 
 def log(msg):
     ts = datetime.now().strftime("%H:%M:%S")
@@ -113,10 +110,15 @@ class Handler(BaseHTTPRequestHandler):
 
     def log_message(self, fmt, *args): pass
 
-srv = HTTPServer((HOST, PORT), Handler)
-# non-daemon thread — survives after script returns
-t = threading.Thread(target=srv.serve_forever, name="clo3d-http")
+def _run():
+    srv = HTTPServer((HOST, PORT), Handler)
+    log(f"Server at http://{HOST}:{PORT}")
+    while not STOP.is_set():
+        srv.handle_request()
+    srv.server_close()
+
+t = threading.Thread(target=_run, name="clo3d-http")
 t.start()
 
-log(f"Server at http://{HOST}:{PORT}")
-log("Script done. Server running in background. Health: curl http://127.0.0.1:9898/health")
+log("Ready. Script done — server running in background.")
+log("Health: curl http://127.0.0.1:9898/health")
