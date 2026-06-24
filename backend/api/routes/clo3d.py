@@ -589,7 +589,7 @@ def _extract_pieces_from_image(
 @router.post("/extract-pieces", response_model=ExtractPiecesResponse)
 async def extract_pieces_from_screenshot(
     screenshot: UploadFile = File(...),
-    current_user: _user_dep = Depends(),
+    current_user: _user_dep,
 ):
     """Upload a PS screenshot — auto-detect individual fabric piece images."""
     if not screenshot.content_type or not screenshot.content_type.startswith("image/"):
