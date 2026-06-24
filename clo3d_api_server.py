@@ -14,17 +14,28 @@ import os
 import sys
 import threading
 import traceback
+from datetime import datetime
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from pathlib import Path
 from typing import Any
 
 HOST = os.environ.get("CLO3D_API_HOST", "127.0.0.1")
 PORT = int(os.environ.get("CLO3D_API_PORT", "9898"))
+LOG_FILE = os.environ.get("CLO3D_API_LOG", str(Path(__file__).parent / "clo3d_api.log"))
 LOCK = threading.Lock()
+_LOG_LOCK = threading.Lock()
 
 
 def log(msg: str) -> None:
     print(f"[CLO3D-API] {msg}", flush=True)
+    try:
+        with _LOG_LOCK:
+            ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            Path(LOG_FILE).parent.mkdir(parents=True, exist_ok=True)
+            with open(LOG_FILE, "a", encoding="utf-8") as f:
+                f.write(f"[{ts}] {msg}\n")
+    except Exception:
+        pass
 
 
 # ── Detect ──────────────────────────────────────────────────────────────────
