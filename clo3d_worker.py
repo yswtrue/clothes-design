@@ -1,123 +1,94 @@
 """
-CLO3D Worker — runs inside CLO3D Script Editor.
-
-Checks for command files from the standalone HTTP bridge, processes
-them using CLO3D API on the main thread, writes results back.
-
-Usage: CLO3D → Script → Script Editor → Open → Run
-        The script processes one batch of commands then exits.
-        Re-run to process the next batch.
+CLO3D Worker — run once in CLO3D Script Editor per render batch.
+Processes all pending command files, then exits. Re-run for next batch.
 """
-
-import json
-import os
-import time
-import traceback
-from datetime import datetime
+import json, os, traceback
 from pathlib import Path
 
-IPC_DIR = Path(os.environ.get("CLO3D_IPC_DIR", os.path.join(os.environ.get("TEMP", "."), "clo3d_ipc")))
-CMD_DIR = IPC_DIR / "commands"
-RESULT_DIR = IPC_DIR / "results"
+IPC = Path(os.environ.get("CLO3D_IPC_DIR", os.path.join(os.environ.get("TEMP","."),"clo3d_ipc")))
+CMD, RES = IPC / "commands", IPC / "results"
 
-print(f"[CLO3D-Worker] IPC dir: {IPC_DIR}", flush=True)
-print(f"[CLO3D-Worker] Loading CLO3D API...", flush=True)
-
+print("[Worker] Loading CLO3D API...", flush=True)
 from import_api import ImportFile
 from export_api import ExportRenderingImage
 from fabric_api import AddFabric, AssignFabricToPattern
 from pattern_api import GetPatternCount, GetPatternPieceName
 from utility_api import Simulate
-print("[CLO3D-Worker] CLO3D API loaded", flush=True)
+print("[Worker] Ready.", flush=True)
 
 
 def do_extract(prj_path, output_dir):
     if not os.path.exists(prj_path):
-        return {"status": "error", "error": f"File not found: {prj_path}"}
+        return {"status":"error","error":"File not found"}
     out = Path(output_dir); out.mkdir(parents=True, exist_ok=True)
     ImportFile(prj_path)
-    count = GetPatternCount()
-    print(f"  Extracting {count} pieces", flush=True)
+    n = GetPatternCount()
+    print(f"  {n} pieces", flush=True)
     pieces = []
-    for i in range(count):
-        try: name = GetPatternPieceName(i)
-        except Exception: name = f"piece_{i}"
-        pieces.append({"name": name, "label": name, "index": i})
-    layout = str(out / "layout.png")
-    try: ExportRenderingImage(layout, False, 0)
-    except Exception: layout = ""
-    return {"status": "success", "piece_count": count, "pieces": pieces, "layout_image": layout}
+    for i in range(n):
+        try: nm = GetPatternPieceName(i)
+        except: nm = f"piece_{i}"
+        pieces.append({"name": nm, "label": nm, "index": i})
+    ly = str(out / "layout.png")
+    try: ExportRenderingImage(ly, False, 0)
+    except: ly = ""
+    return {"status":"success","piece_count":n,"pieces":pieces,"layout_image":ly}
 
 
 def do_render(prj_path, materials, views, output_dir):
     if not os.path.exists(prj_path):
-        return {"status": "error", "error": f"File not found: {prj_path}"}
+        return {"status":"error","error":"File not found"}
     out = Path(output_dir); out.mkdir(parents=True, exist_ok=True)
     print(f"  Loading: {Path(prj_path).name}", flush=True)
     ImportFile(prj_path)
-    count = GetPatternCount()
-    name_to_idx = {}
-    for i in range(count):
-        try: name_to_idx[GetPatternPieceName(i)] = i
-        except Exception: name_to_idx[f"piece_{i}"] = i
-    for piece_name, mat_path in materials.items():
-        if not mat_path or not os.path.exists(mat_path): continue
-        idx = name_to_idx.get(piece_name)
+    n = GetPatternCount()
+    ni = {}
+    for i in range(n):
+        try: ni[GetPatternPieceName(i)] = i
+        except: ni[f"piece_{i}"] = i
+    for pn, mp in materials.items():
+        if not mp or not os.path.exists(mp): continue
+        idx = ni.get(pn)
         if idx is None:
-            for n, i in name_to_idx.items():
-                if piece_name in n or n in piece_name: idx = i; break
+            for nn, ii in ni.items():
+                if pn in nn or nn in pn: idx = ii; break
         if idx is None: continue
         try:
-            fab = AddFabric(mat_path)
-            AssignFabricToPattern(fab, idx)
-            print(f"    {piece_name}[{idx}] OK", flush=True)
-        except Exception as exc:
-            print(f"    {piece_name}[{idx}] FAILED: {exc}", flush=True)
-    try:
-        Simulate(100)
-        print("  Simulated 100 steps", flush=True)
-    except Exception as exc:
-        print(f"  Simulation: {exc}", flush=True)
-    images = {}
-    for view in views:
-        p = str(out / f"render_{view}.png")
+            f = AddFabric(mp); AssignFabricToPattern(f, idx)
+            print(f"    {pn}[{idx}] OK", flush=True)
+        except Exception as ex:
+            print(f"    {pn}[{idx}] FAILED: {ex}", flush=True)
+    try: Simulate(100); print("  Simulated 100 steps", flush=True)
+    except Exception as ex: print(f"  Sim: {ex}", flush=True)
+    im = {}
+    for vw in views:
+        p = str(out / f"render_{vw}.png")
         ExportRenderingImage(p, False, 0)
-        images[view] = p
-        print(f"  {view}: {p}", flush=True)
-    return {"status": "success", "images": images}
+        im[vw] = p; print(f"  {vw}: {p}", flush=True)
+    return {"status":"success","images":im}
 
 
-# Process all pending commands
-cmd_files = sorted(CMD_DIR.glob("*.json"), key=lambda p: p.stat().st_mtime)
-
-if not cmd_files:
-    print("[CLO3D-Worker] No pending commands.", flush=True)
+cmds = sorted(CMD.glob("*.json"), key=lambda f: f.stat().st_mtime)
+if not cmds:
+    print("[Worker] No pending commands.", flush=True)
 else:
-    print(f"[CLO3D-Worker] Processing {len(cmd_files)} command(s)...", flush=True)
-    for cf in cmd_files:
+    print(f"[Worker] Processing {len(cmds)} command(s)...", flush=True)
+    for cf in cmds:
         try:
-            cmd = json.loads(cf.read_text())
-            task_id = cmd["task_id"]
-            action = cmd["action"]
-            print(f"[CLO3D-Worker] Task {task_id}: {action}", flush=True)
-
-            if action == "extract":
-                r = do_extract(cmd.get("prj_path", ""), cmd.get("output_dir", "./output"))
-            elif action == "render":
-                r = do_render(cmd.get("prj_path", ""), cmd.get("material_assignments", {}),
-                              cmd.get("views", ["front", "back"]), cmd.get("output_dir", "./output"))
+            c = json.loads(cf.read_text()); tid = c["task_id"]; a = c["action"]
+            print(f"[Worker] {tid}: {a}", flush=True)
+            if a == "extract":
+                r = do_extract(c.get("prj_path",""), c.get("output_dir","./output"))
+            elif a == "render":
+                r = do_render(c.get("prj_path",""), c.get("material_assignments",{}),
+                              c.get("views",["front","back"]), c.get("output_dir","./output"))
             else:
-                r = {"status": "error", "error": f"unknown action: {action}"}
-
-            (RESULT_DIR / f"{task_id}.json").write_text(json.dumps(r))
+                r = {"status":"error","error":f"unknown:{a}"}
+            (RES / f"{tid}.json").write_text(json.dumps(r))
             cf.unlink()
-            print(f"[CLO3D-Worker] Task {task_id}: done", flush=True)
-        except Exception as exc:
+            print(f"[Worker] {tid}: done", flush=True)
+        except Exception as ex:
             traceback.print_exc()
-            try:
-                (RESULT_DIR / f"{cmd['task_id']}.error.json").write_text(str(exc))
-                cf.unlink()
-            except Exception:
-                pass
-
-print("[CLO3D-Worker] Done. Re-run to process next batch.", flush=True)
+            try: (RES / f"{c['task_id']}.error.json").write_text(str(ex)); cf.unlink()
+            except: pass
+print("[Worker] Done. Re-run for next batch.", flush=True)

@@ -45,12 +45,23 @@ def log(msg):
 try:
     from import_api import ImportFile
     from export_api import ExportRenderingImage
-    from fabric_api import AddFabric, AssignFabricToPattern, ApplyTextureToPatternFace
+    from fabric_api import AddFabric, AssignFabricToPattern
     from pattern_api import GetPatternCount, GetPatternName
-    from utility_api import Simulate, SetFrontView, SetBackView, RotateCamera
+    from utility_api import Simulate
     log("CLO3D Python API ready")
 except ImportError as e:
     log(f"WARNING: CLO3D API not available: {e}")
+
+SetFrontView = None; SetBackView = None; RotateCamera = None
+try:
+    from utility_api import SetFrontView as _sfv; SetFrontView = _sfv
+except ImportError: pass
+try:
+    from utility_api import SetBackView as _sbv; SetBackView = _sbv
+except ImportError: pass
+try:
+    from utility_api import RotateCamera as _rc; RotateCamera = _rc
+except ImportError: pass
 
 
 def do_extract(prj_path: str, output_dir: str) -> dict:
@@ -103,10 +114,7 @@ def do_render(prj_path: str, materials: dict, views: list, output_dir: str) -> d
             fab = AddFabric(mat_path)
             AssignFabricToPattern(fab, idx)
         except Exception:
-            try:
-                ApplyTextureToPatternFace(idx, 0, mat_path)
-            except Exception:
-                pass
+            pass
     try:
         Simulate(100)
     except Exception:
