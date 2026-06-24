@@ -16,7 +16,7 @@ from PIL import Image, ImageFilter
 
 # Pixels whose RGB Euclidean distance from pure white (255,255,255)
 # exceeds this threshold are considered foreground (fabric).
-WHITE_DIST_THRESHOLD = 35
+WHITE_DIST_THRESHOLD = 25
 
 
 def _dilate(mask: np.ndarray, radius: int = 2) -> np.ndarray:
@@ -156,18 +156,16 @@ def segment_fabric_patches(image_bytes: bytes) -> list[dict]:
     # White = (255,255,255), any deviation means color
     dist = np.sqrt(np.sum((img_np - 255.0) ** 2, axis=2))
 
-    # Blur the distance map to reduce fabric texture noise
+    # Light blur on distance map to reduce fabric texture noise
     dist_uint8 = np.clip(dist, 0, 255).astype(np.uint8)
     dist_pil = Image.fromarray(dist_uint8, mode="L")
-    dist_blurred = np.array(dist_pil.filter(ImageFilter.GaussianBlur(radius=3)), dtype=np.float32)
+    dist_blurred = np.array(dist_pil.filter(ImageFilter.GaussianBlur(radius=1)), dtype=np.float32)
 
     # Threshold: pixels far enough from white are fabric
     mask = (dist_blurred > WHITE_DIST_THRESHOLD).astype(np.uint8)
 
-    # Morphological opening to remove small noise (fabric lint, dust)
-    mask = _morphological_opening(mask, radius=1)
-    # Morphological closing to fill small holes within fabric patches
-    mask = _morphological_closing(mask, radius=3)
+    # Light closing to fill tiny holes — avoid merging adjacent patches
+    mask = _morphological_closing(mask, radius=1)
 
     # Find connected components with ID tracking for alpha masking
     bboxes, component_map = _find_connected_components(mask, min_area=min_area_pixels)

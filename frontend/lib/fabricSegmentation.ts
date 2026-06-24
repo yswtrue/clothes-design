@@ -17,7 +17,7 @@ export interface PatchResult {
   height: number;
 }
 
-const WHITE_DIST_THRESHOLD = 35;
+const WHITE_DIST_THRESHOLD = 25;
 
 function loadImage(file: File): Promise<HTMLImageElement> {
   return new Promise((resolve, reject) => {
@@ -248,8 +248,8 @@ export async function segmentFabricPatches(file: File): Promise<PatchResult[]> {
   const { data, width, height } = getImageData(img);
 
   let mask = buildMask(data, width, height);
-  mask = blurMask(mask, width, height);
-  mask = morphologicalClosing(mask, width, height, 3);
+  // Light closing only — avoid merging adjacent patches
+  mask = morphologicalClosing(mask, width, height, 1);
 
   const minArea = Math.max(1, Math.floor((width * height) * 0.001));
   const { bboxes, componentMap } = findComponents(mask, width, height, minArea);
