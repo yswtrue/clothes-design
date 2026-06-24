@@ -1,31 +1,39 @@
 'use client';
 
 import { useState } from 'react';
-import { uploadFabricImage, pollSegmentStatus } from '@/lib/fabric';
+import { segmentFabricPatches } from '@/lib/fabricSegmentation';
 import DropZone from '@/components/upload/DropZone';
 import PatchGallery from '@/components/fabric/PatchGallery';
-import type { UploadProgress, FabricPatch } from '@/types/fabric';
+import type { FabricPatch } from '@/types/fabric';
 
-type UploadState = 'idle' | 'uploading' | 'segmenting' | 'complete' | 'error';
+type UploadState = 'idle' | 'segmenting' | 'complete' | 'error';
 
 export default function FabricPatchUploader() {
   const [state, setState] = useState<UploadState>('idle');
-  const [selectedFile, setSelectedFile] = useState<File | null>(null);
-  const [uploadProgress, setUploadProgress] = useState<UploadProgress>({ loaded: 0, total: 0, percentage: 0 });
   const [patches, setPatches] = useState<FabricPatch[]>([]);
   const [error, setError] = useState<string | null>(null);
 
   const handleFileAccepted = async (file: File) => {
-    setSelectedFile(file);
     setError(null);
-    setState('uploading');
+    setState('segmenting');
 
     try {
-      const taskId = await uploadFabricImage(file, setUploadProgress);
-      setState('segmenting');
+      const results = await segmentFabricPatches(file);
 
-      const result = await pollSegmentStatus(taskId);
-      setPatches(result);
+      if (results.length === 0) {
+        setError('未检测到布块，请确认图片中包含多个彩色布块且背景为白色。');
+        setState('error');
+        return;
+      }
+
+      setPatches(
+        results.map((r) => ({
+          index: r.index,
+          url: r.blobUrl,
+          width: r.width,
+          height: r.height,
+        })),
+      );
       setState('complete');
     } catch (err) {
       setError(err instanceof Error ? err.message : '分割失败，请重试。');
@@ -35,46 +43,19 @@ export default function FabricPatchUploader() {
 
   const handleReset = () => {
     setState('idle');
-    setSelectedFile(null);
-    setUploadProgress({ loaded: 0, total: 0, percentage: 0 });
+    // Revoke old blob URLs to free memory
+    for (const p of patches) {
+      if (p.url.startsWith('blob:') || p.url.startsWith('data:')) {
+        URL.revokeObjectURL(p.url);
+      }
+    }
     setPatches([]);
     setError(null);
   };
 
   return (
     <div>
-      {state === 'idle' && (
-        <DropZone onFileAccepted={handleFileAccepted} />
-      )}
-
-      {state === 'uploading' && selectedFile && (
-        <div className="bg-white dark:bg-zinc-900 rounded-lg border border-zinc-200 dark:border-zinc-800 p-6">
-          <h2 className="text-lg font-semibold text-zinc-950 dark:text-zinc-50 mb-4">
-            上传中...
-          </h2>
-          <div className="space-y-3">
-            <div className="flex items-center justify-between text-sm">
-              <span className="font-medium text-zinc-950 dark:text-zinc-50 truncate pr-4">
-                {selectedFile.name}
-              </span>
-              <span className="text-zinc-600 dark:text-zinc-400">
-                {uploadProgress.percentage}%
-              </span>
-            </div>
-
-            <div className="w-full bg-zinc-200 dark:bg-zinc-800 rounded-full h-2 overflow-hidden">
-              <div
-                className="bg-zinc-950 dark:bg-zinc-50 h-full transition-all duration-300 ease-out"
-                style={{ width: `${uploadProgress.percentage}%` }}
-              />
-            </div>
-
-            <div className="text-xs text-zinc-500 dark:text-zinc-500">
-              {(uploadProgress.loaded / 1024 / 1024).toFixed(2)}MB / {(uploadProgress.total / 1024 / 1024).toFixed(2)}MB
-            </div>
-          </div>
-        </div>
-      )}
+      {state === 'idle' && <DropZone onFileAccepted={handleFileAccepted} />}
 
       {state === 'segmenting' && (
         <div className="bg-white dark:bg-zinc-900 rounded-lg border border-zinc-200 dark:border-zinc-800 p-6">
@@ -85,7 +66,7 @@ export default function FabricPatchUploader() {
                 正在分割布块...
               </h2>
               <p className="text-sm text-zinc-600 dark:text-zinc-400">
-                后台处理中，请耐心等待
+                纯浏览器处理，图片不会上传到服务器
               </p>
             </div>
           </div>

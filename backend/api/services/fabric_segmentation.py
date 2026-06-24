@@ -1,11 +1,11 @@
 """Fabric patch segmentation service.
 
-Detects and extracts individual fabric patches from an input image
-using computer vision techniques (thresholding, morphology, connected components).
+Detects colored fabric patches on a white/light background using
+RGB color distance from white, then extracts each patch via connected
+component analysis.
 
 Performance: connected-component search uses np.argwhere() to iterate
-only foreground pixels (typically 10-30% of the image), avoiding a
-full O(H*W) Python double-loop scan.
+only foreground pixels (typically 10-30% of the image).
 """
 
 import io
@@ -14,91 +14,55 @@ from collections import deque
 import numpy as np
 from PIL import Image, ImageFilter
 
-
-def _otsu_threshold(gray: np.ndarray) -> int:
-    """Compute Otsu's threshold for a grayscale image.
-
-    Finds the threshold that maximizes between-class variance.
-    """
-    hist, _ = np.histogram(gray, bins=256, range=(0, 256))
-    total = gray.size
-    if total == 0:
-        return 0
-
-    sum_total = float(np.arange(256).dot(hist.astype(np.float64)))
-    sum_b = 0.0
-    w_b = 0.0
-    var_max = 0.0
-    threshold = 0
-
-    for t in range(256):
-        w_b += float(hist[t])
-        if w_b == 0 or abs(w_b - total) < 1e-10:
-            continue
-        w_f = total - w_b
-        sum_b += float(t) * float(hist[t])
-        sum_f = sum_total - sum_b
-
-        mean_b = sum_b / w_b
-        mean_f = sum_f / w_f
-
-        var_between = w_b * w_f * (mean_b - mean_f) ** 2
-        if var_between > var_max:
-            var_max = var_between
-            threshold = t
-
-    return threshold
+# Pixels whose RGB Euclidean distance from pure white (255,255,255)
+# exceeds this threshold are considered foreground (fabric).
+WHITE_DIST_THRESHOLD = 35
 
 
 def _dilate(mask: np.ndarray, radius: int = 2) -> np.ndarray:
-    """Dilate a binary mask by propagating foreground pixels outward.
-
-    Uses iterative 4-neighbor expansion for efficiency.
-    """
+    """Dilate a binary mask by propagating foreground pixels outward."""
     result = mask.copy().astype(bool)
     for _ in range(radius):
         dilated = np.zeros_like(result)
-        # Shift in all 4 directions
-        dilated[1:, :] |= result[:-1, :]  # down
-        dilated[:-1, :] |= result[1:, :]  # up
-        dilated[:, 1:] |= result[:, :-1]  # right
-        dilated[:, :-1] |= result[:, 1:]  # left
+        dilated[1:, :] |= result[:-1, :]
+        dilated[:-1, :] |= result[1:, :]
+        dilated[:, 1:] |= result[:, :-1]
+        dilated[:, :-1] |= result[:, 1:]
         dilated |= result
         result = dilated
     return result.astype(np.uint8)
 
 
 def _erode(mask: np.ndarray, radius: int = 2) -> np.ndarray:
-    """Erode a binary mask by shrinking foreground pixels inward.
-
-    Uses iterative 4-neighbor contraction for efficiency.
-    """
+    """Erode a binary mask by shrinking foreground pixels inward."""
     result = mask.copy().astype(bool)
     for _ in range(radius):
         eroded = np.ones_like(result)
-        eroded[1:, :] &= result[:-1, :]  # down
-        eroded[:-1, :] &= result[1:, :]  # up
-        eroded[:, 1:] &= result[:, :-1]  # right
-        eroded[:, :-1] &= result[:, 1:]  # left
+        eroded[1:, :] &= result[:-1, :]
+        eroded[:-1, :] &= result[1:, :]
+        eroded[:, 1:] &= result[:, :-1]
+        eroded[:, :-1] &= result[:, 1:]
         eroded &= result
         result = eroded
     return result.astype(np.uint8)
 
 
 def _morphological_closing(mask: np.ndarray, radius: int = 2) -> np.ndarray:
-    """Apply morphological closing: dilate then erode.
-
-    Closing fills small holes and joins nearby objects.
-    """
+    """Apply morphological closing: dilate then erode."""
     return _erode(_dilate(mask, radius), radius)
+
+
+def _morphological_opening(mask: np.ndarray, radius: int = 2) -> np.ndarray:
+    """Apply morphological opening: erode then dilate (removes small noise)."""
+    return _dilate(_erode(mask, radius), radius)
 
 
 def _bfs_component(
     y0: int, x0: int, binary: np.ndarray, visited: np.ndarray
 ) -> tuple[int, int, int, int, int] | None:
-    """BFS from (y0,x0) to find connected component and its bounding box.
+    """BFS from (y0,x0) to find a connected component and its bounding box.
 
-    Returns (x1, y1, x2, y2, area) or None if the component was already visited.
+    Returns (x1, y1, x2, y2, area) or None if already visited.
     """
     if visited[y0, x0]:
         return None
@@ -134,11 +98,7 @@ def _find_connected_components(
     binary: np.ndarray,
     min_area: int,
 ) -> list[tuple[int, int, int, int]]:
-    """Find 4-connected components using BFS via np.argwhere seed points.
-
-    Only iterates foreground pixels. Returns list of (x1, y1, x2, y2) bboxes
-    for components whose area >= min_area.
-    """
+    """Find 4-connected components via BFS on np.argwhere seed points."""
     visited = np.zeros_like(binary, dtype=bool)
     components: list[tuple[int, int, int, int]] = []
 
@@ -168,45 +128,42 @@ def _apply_padding(
 
 
 def segment_fabric_patches(image_bytes: bytes) -> list[dict]:
-    """Segment the input image into individual fabric patches.
+    """Segment colored fabric patches from a white-background image.
 
-    Args:
-        image_bytes: Raw image file bytes (JPEG, PNG, WebP, etc.)
+    Uses RGB color distance from pure white (255,255,255) instead of
+    grayscale Otsu, so light-colored fabrics are correctly separated
+    from the white background.
 
-    Returns:
-        List of dicts, each containing:
-            - image_bytes: PNG-encoded bytes of the cropped patch
-            - bbox: (x1, y1, x2, y2) bounding box in original image coords
-            - width: patch width in pixels
-            - height: patch height in pixels
-
-        Returns empty list if fewer than 2 patches are found.
+    Returns empty list if fewer than 2 patches are found.
     """
-    # Load image with PIL
+    # Load image
     pil_image = Image.open(io.BytesIO(image_bytes)).convert("RGB")
     img_w, img_h = pil_image.size
     min_area_pixels = max(1, int(img_w * img_h * 0.001))
 
-    # Convert to grayscale numpy array
-    gray = np.array(pil_image.convert("L"), dtype=np.uint8)
+    # Convert to float numpy array for distance calculation
+    img_np = np.array(pil_image, dtype=np.float32)
 
-    # Apply GaussianBlur to reduce noise
-    blurred_pil = Image.fromarray(gray, mode="L").filter(ImageFilter.GaussianBlur(radius=3))
-    blurred = np.array(blurred_pil, dtype=np.uint8)
+    # Euclidean distance from pure white in RGB space
+    # White = (255,255,255), any deviation means color
+    dist = np.sqrt(np.sum((img_np - 255.0) ** 2, axis=2))
 
-    # Otsu's threshold to create binary mask
-    threshold = _otsu_threshold(blurred)
-    mask = (blurred > threshold).astype(np.uint8)
+    # Blur the distance map to reduce fabric texture noise
+    dist_uint8 = np.clip(dist, 0, 255).astype(np.uint8)
+    dist_pil = Image.fromarray(dist_uint8, mode="L")
+    dist_blurred = np.array(
+        dist_pil.filter(ImageFilter.GaussianBlur(radius=3)), dtype=np.float32
+    )
 
-    # Heuristic: if foreground area > 50%, invert (assume background is majority)
-    foreground_ratio = float(mask.sum()) / float(mask.size)
-    if foreground_ratio > 0.5:
-        mask = 1 - mask
+    # Threshold: pixels far enough from white are fabric
+    mask = (dist_blurred > WHITE_DIST_THRESHOLD).astype(np.uint8)
 
-    # Morphological closing: dilate 2px then erode 2px
-    mask = _morphological_closing(mask, radius=2)
+    # Morphological opening to remove small noise (fabric lint, dust)
+    mask = _morphological_opening(mask, radius=1)
+    # Morphological closing to fill small holes within fabric patches
+    mask = _morphological_closing(mask, radius=3)
 
-    # Find connected components → bboxes
+    # Find connected components
     bboxes = _find_connected_components(mask, min_area=min_area_pixels)
 
     if len(bboxes) < 2:
