@@ -1,162 +1,109 @@
 """
-CLO3D API Server v2 — tested with CLO3D 2026.
+CLO3D API Server v4 — main-thread safe via file queue.
 
-Run directly in Script Editor. Starts HTTP server in background thread,
-monitors for stop signal so Script Editor doesn't freeze.
+HTTP server (background thread) writes command files.
+Main thread (CLO3D poll loop) executes CLO3D API calls.
+HTTP handler polls for result, returns to client.
 
-Usage:
-    1. CLO3D → Script → Script Editor → Open this file → Run
-    2. Verify: curl.exe http://127.0.0.1:9898/health
-
-To stop: set STOP_FLAG = True in the "stop" section at the bottom.
+Run in CLO3D Script Editor.
 """
 
 import json
 import os
 import threading
+import time
 import traceback
 from datetime import datetime
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from pathlib import Path
 
-# ── Config ──────────────────────────────────────────────────────────────────
 HOST = os.environ.get("CLO3D_API_HOST", "127.0.0.1")
 PORT = int(os.environ.get("CLO3D_API_PORT", "9898"))
+IPC_DIR = Path(os.environ.get("CLO3D_IPC_DIR", str(Path(__file__).parent / "clo3d_ipc")))
 LOG_FILE = os.environ.get("CLO3D_API_LOG", str(Path(__file__).parent / "clo3d_api.log"))
-LOCK = threading.Lock()
-LOG_LOCK = threading.Lock()
-STOP_FLAG = threading.Event()
 
-# ── Logging ─────────────────────────────────────────────────────────────────
+CMD_DIR = IPC_DIR / "commands"
+RESULT_DIR = IPC_DIR / "results"
+for d in (CMD_DIR, RESULT_DIR):
+    d.mkdir(parents=True, exist_ok=True)
+
+STOP_FLAG = threading.Event()
+LOG_LOCK = threading.Lock()
+
 def log(msg):
-    ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    line = f"[CLO3D-API] {msg}"
-    print(line, flush=True)
+    ts = datetime.now().strftime("%H:%M:%S")
+    print(f"[CLO3D-API] {msg}", flush=True)
     try:
         with LOG_LOCK:
             Path(LOG_FILE).parent.mkdir(parents=True, exist_ok=True)
             with open(LOG_FILE, "a", encoding="utf-8") as f:
                 f.write(f"[{ts}] {msg}\n")
-    except Exception:
-        pass
+    except Exception: pass
 
+# ── CLO3D API (main thread only!) ─────────────────────────────────────────
+log("Loading CLO3D API...")
+from import_api import ImportFile
+from export_api import ExportRenderingImage
+from fabric_api import AddFabric, AssignFabricToPattern
+from pattern_api import GetPatternCount, GetPatternPieceName
+from utility_api import Simulate
+log("CLO3D API loaded")
 
-# ── CLO3D API ──────────────────────────────────────────────────────────────
-log("Loading CLO3D modules...")
-
-try:
-    from import_api import ImportFile
-    from export_api import ExportRenderingImage
-    from fabric_api import AddFabric, AssignFabricToPattern, ApplyTextureToPatternFace
-    from pattern_api import GetPatternCount, GetPatternName
-    from utility_api import Simulate, SetFrontView, SetBackView, RotateCamera
-    log("CLO3D Python API loaded successfully")
-except ImportError as e:
-    log(f"CLO3D API load FAILED: {e}")
-    raise SystemExit(f"Not inside CLO3D or API unavailable: {e}")
-
-
-def do_extract(prj_path: str, output_dir: str) -> dict:
+def do_extract(prj_path, output_dir):
     if not os.path.exists(prj_path):
-        return {"status": "error", "error": f"File not found: {prj_path}"}
-    out = Path(output_dir)
-    out.mkdir(parents=True, exist_ok=True)
-
+        return {"status":"error","error":f"File not found: {prj_path}"}
+    out = Path(output_dir); out.mkdir(parents=True, exist_ok=True)
     ImportFile(prj_path)
     count = GetPatternCount()
-    log(f"Extracting {count} pieces from {Path(prj_path).name}")
-
+    log(f"Extracting {count} pieces")
     pieces = []
     for i in range(count):
-        try:
-            name = GetPatternName(i)
-        except Exception:
-            name = f"piece_{i}"
-        pieces.append({"name": name, "label": name, "index": i})
-
+        try: name = GetPatternPieceName(i)
+        except Exception: name = f"piece_{i}"
+        pieces.append({"name":name,"label":name,"index":i})
     layout = str(out / "layout.png")
-    try:
-        ExportRenderingImage(layout, False, 0)
-    except Exception:
-        layout = ""
+    try: ExportRenderingImage(layout, False, 0)
+    except Exception: layout = ""
+    return {"status":"success","piece_count":count,"pieces":pieces,"layout_image":layout}
 
-    return {"status": "success", "piece_count": count, "pieces": pieces, "layout_image": layout}
-
-
-def do_render(prj_path: str, materials: dict, views: list, output_dir: str) -> dict:
+def do_render(prj_path, materials, views, output_dir):
     if not os.path.exists(prj_path):
-        return {"status": "error", "error": f"File not found: {prj_path}"}
-    out = Path(output_dir)
-    out.mkdir(parents=True, exist_ok=True)
-
+        return {"status":"error","error":f"File not found: {prj_path}"}
+    out = Path(output_dir); out.mkdir(parents=True, exist_ok=True)
     log(f"Loading: {Path(prj_path).name}")
     ImportFile(prj_path)
-
     count = GetPatternCount()
     name_to_idx = {}
     for i in range(count):
-        try:
-            name_to_idx[GetPatternName(i)] = i
-        except Exception:
-            name_to_idx[f"piece_{i}"] = i
-
+        try: name_to_idx[GetPatternPieceName(i)] = i
+        except Exception: name_to_idx[f"piece_{i}"] = i
     for piece_name, mat_path in materials.items():
-        if not mat_path or not os.path.exists(mat_path):
-            log(f"  Skip {piece_name}: material missing")
-            continue
+        if not mat_path or not os.path.exists(mat_path): continue
         idx = name_to_idx.get(piece_name)
         if idx is None:
-            for n, i in name_to_idx.items():
-                if piece_name in n or n in piece_name:
-                    idx = i
-                    break
-        if idx is None:
-            log(f"  Skip {piece_name}: not in project")
-            continue
+            for n,i in name_to_idx.items():
+                if piece_name in n or n in piece_name: idx = i; break
+        if idx is None: continue
         try:
             fab = AddFabric(mat_path)
             AssignFabricToPattern(fab, idx)
-            log(f"  {piece_name}[{idx}] fabric assigned")
-        except Exception:
-            try:
-                ApplyTextureToPatternFace(idx, 0, mat_path)
-                log(f"  {piece_name}[{idx}] texture applied")
-            except Exception as exc:
-                log(f"  {piece_name}[{idx}] FAILED: {exc}")
-
-    log("Simulating 100 steps...")
+            log(f"  {piece_name}[{idx}] OK")
+        except Exception as exc:
+            log(f"  {piece_name}[{idx}] FAILED: {exc}")
     try:
         Simulate(100)
+        log("Simulated 100 steps")
     except Exception as exc:
-        log(f"Simulation warning: {exc}")
-
+        log(f"Simulation: {exc}")
     images = {}
-    if "front" in views:
-        try:
-            SetFrontView()
-        except Exception:
-            pass
-        p = str(out / "render_front.png")
+    for view in views:
+        p = str(out / f"render_{view}.png")
         ExportRenderingImage(p, False, 0)
-        images["front"] = p
-        log(f"Front: {p}")
-    if "back" in views:
-        try:
-            SetBackView()
-        except Exception:
-            try:
-                RotateCamera(0, 180)
-            except Exception:
-                pass
-        p = str(out / "render_back.png")
-        ExportRenderingImage(p, False, 0)
-        images["back"] = p
-        log(f"Back: {p}")
+        images[view] = p
+        log(f"{view}: {p}")
+    return {"status":"success","images":images}
 
-    return {"status": "success", "images": images}
-
-
-# ── HTTP Handler ────────────────────────────────────────────────────────────
+# ── HTTP Handler (background thread, only file I/O, no CLO3D API) ─────────
 class Handler(BaseHTTPRequestHandler):
     def _send(self, status, data):
         body = json.dumps(data, ensure_ascii=False).encode()
@@ -167,73 +114,87 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def _read(self):
-        n = int(self.headers.get("Content-Length", "0"))
+        n = int(self.headers.get("Content-Length","0"))
         return json.loads(self.rfile.read(n)) if n else {}
+
+    def _wait_result(self, task_id, timeout=600):
+        result_file = RESULT_DIR / f"{task_id}.json"
+        error_file = RESULT_DIR / f"{task_id}.error.json"
+        elapsed = 0
+        while elapsed < timeout:
+            if result_file.exists():
+                return json.loads(result_file.read_text())
+            if error_file.exists():
+                return {"status":"error","error":error_file.read_text()}
+            time.sleep(0.5)
+            elapsed += 0.5
+        return {"status":"error","error":"timeout"}
 
     def do_GET(self):
         if self.path == "/health":
-            with LOCK:
-                count = GetPatternCount()
-            self._send(200, {"status": "ok", "pieces": count})
-        else:
-            self._send(404, {"error": "not found"})
+            self._send(200, {"status":"ok","inside_clo3d":True})
 
     def do_POST(self):
-        log(f"POST {self.path}")
+        try: data = self._read()
+        except json.JSONDecodeError: self._send(400,{"error":"invalid JSON"}); return
+
+        import uuid
+        task_id = uuid.uuid4().hex[:12]
+
+        if self.path == "/extract":
+            cmd = {"action":"extract","task_id":task_id,"prj_path":data.get("prj_path",""),"output_dir":data.get("output_dir","./output")}
+        elif self.path == "/render":
+            cmd = {"action":"render","task_id":task_id,"prj_path":data.get("prj_path",""),"material_assignments":data.get("material_assignments",{}),"views":data.get("views",["front","back"]),"output_dir":data.get("output_dir","./output")}
+        else:
+            self._send(404,{"error":f"unknown:{self.path}"}); return
+
+        (CMD_DIR / f"{task_id}.json").write_text(json.dumps(cmd))
+        log(f"Queued {self.path} task={task_id}")
+        result = self._wait_result(task_id)
+        self._send(200 if result.get("status")=="success" else 500, result)
+
+    def log_message(self, fmt, *args): pass
+
+# ── Main-thread poll loop ──────────────────────────────────────────────────
+def process_commands():
+    cmd_files = sorted(CMD_DIR.glob("*.json"), key=lambda p: p.stat().st_mtime)
+    for cf in cmd_files:
         try:
-            data = self._read()
-        except json.JSONDecodeError:
-            self._send(400, {"error": "invalid JSON"})
-            return
-
-        with LOCK:
+            cmd = json.loads(cf.read_text())
+            task_id = cmd["task_id"]
+            action = cmd["action"]
+            log(f"Processing {action} task={task_id}")
+            if action == "extract":
+                r = do_extract(cmd.get("prj_path",""), cmd.get("output_dir","./output"))
+            elif action == "render":
+                r = do_render(cmd.get("prj_path",""), cmd.get("material_assignments",{}), cmd.get("views",["front","back"]), cmd.get("output_dir","./output"))
+            else:
+                r = {"status":"error","error":f"unknown action:{action}"}
+            (RESULT_DIR / f"{task_id}.json").write_text(json.dumps(r))
+            cf.unlink()
+            log(f"Completed {action} task={task_id}")
+        except Exception as exc:
+            traceback.print_exc()
+            log(f"Command error: {exc}")
             try:
-                if self.path == "/extract":
-                    r = do_extract(
-                        data.get("prj_path", ""),
-                        data.get("output_dir", "./output"),
-                    )
-                elif self.path == "/render":
-                    r = do_render(
-                        data.get("prj_path", ""),
-                        data.get("material_assignments", {}),
-                        data.get("views", ["front", "back"]),
-                        data.get("output_dir", "./output"),
-                    )
-                else:
-                    self._send(404, {"error": f"unknown: {self.path}"})
-                    return
-                self._send(200 if r.get("status") == "success" else 500, r)
-            except Exception as exc:
-                traceback.print_exc()
-                log(f"ERROR: {exc}")
-                self._send(500, {"status": "error", "error": str(exc)})
-
-    def log_message(self, fmt, *args):
-        pass  # suppress default HTTP log noise
-
-
-# ── Server thread ──────────────────────────────────────────────────────────
-_server = None
-
-def _run():
-    global _server
-    _server = HTTPServer((HOST, PORT), Handler)
-    log(f"Server started at http://{HOST}:{PORT}")
-    log("Endpoints: GET /health  |  POST /extract  |  POST /render")
-    while not STOP_FLAG.is_set():
-        _server.handle_request()  # process one request at a time, allows checking STOP_FLAG
-
-    _server.server_close()
-    log("Server stopped")
-
+                (RESULT_DIR / f"{cmd['task_id']}.error.json").write_text(str(exc))
+                cf.unlink()
+            except Exception: pass
 
 # ── Start ──────────────────────────────────────────────────────────────────
-log("Starting CLO3D API server in background thread...")
-t = threading.Thread(target=_run, daemon=True, name="clo3d-api")
-t.start()
-log("Server running in background. Script Editor is free to use.")
+def _run_http():
+    srv = HTTPServer((HOST, PORT), Handler)
+    log(f"HTTP at http://{HOST}:{PORT}")
+    while not STOP_FLAG.is_set():
+        srv.handle_request()
+    srv.server_close()
 
-# ── Stop (run this section when you want to shut down) ─────────────────────
-# STOP_FLAG.set()
-# print("Stop signal sent. Server will close after current request.", flush=True)
+log("Starting HTTP server (background)...")
+threading.Thread(target=_run_http, daemon=True, name="clo3d-http").start()
+
+log("Starting command poll loop (main thread)...")
+log("Ready. health check should respond now.")
+
+while not STOP_FLAG.is_set():
+    process_commands()
+    time.sleep(1)
