@@ -10,9 +10,10 @@ import EcommercePosterTab from '@/components/poster/EcommercePosterTab';
 import HistoryTab from '@/components/dashboard/HistoryTab';
 import TemplatesTab from '@/components/dashboard/TemplatesTab';
 import OverviewTab from '@/components/dashboard/OverviewTab';
+import Clo3dTab from '@/components/clo3d/Clo3dTab';
 import { apiRequest } from '@/lib/api';
 
-type TabType = 'overview' | 'upload' | 'generate' | 'poster' | 'history' | 'templates';
+type TabType = 'overview' | 'upload' | 'generate' | 'poster' | 'history' | 'templates' | 'clo3d';
 
 interface QuickStats {
   designs: number;
@@ -64,6 +65,7 @@ export default function DashboardPage() {
     { id: 'poster' as const, label: '电商图', icon: '🛍️' },
     { id: 'history' as const, label: '设计历史', icon: '📋' },
     { id: 'templates' as const, label: '服装模板', icon: '👔' },
+    { id: 'clo3d' as const, label: 'CLO3D 渲染', icon: '👗' },
   ];
 
   return (
@@ -122,6 +124,7 @@ export default function DashboardPage() {
         {activeTab === 'poster' && <EcommercePosterTab />}
         {activeTab === 'history' && <HistoryTab />}
         {activeTab === 'templates' && <TemplatesTab />}
+        {activeTab === 'clo3d' && <Clo3dTab />}
       </main>
     </div>
   );
