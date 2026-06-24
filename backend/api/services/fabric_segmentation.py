@@ -58,12 +58,14 @@ def _morphological_opening(mask: np.ndarray, radius: int = 2) -> np.ndarray:
 
 
 def _bfs_component(
-    y0: int, x0: int, binary: np.ndarray, visited: np.ndarray
+    y0: int,
+    x0: int,
+    binary: np.ndarray,
+    visited: np.ndarray,
+    component_map: np.ndarray,
+    comp_id: int,
 ) -> tuple[int, int, int, int, int] | None:
-    """BFS from (y0,x0) to find a connected component and its bounding box.
-
-    Returns (x1, y1, x2, y2, area) or None if already visited.
-    """
+    """BFS - also tags pixels with component ID for later alpha masking."""
     if visited[y0, x0]:
         return None
 
@@ -71,6 +73,7 @@ def _bfs_component(
     queue: deque[tuple[int, int]] = deque()
     queue.append((y0, x0))
     visited[y0, x0] = True
+    component_map[y0, x0] = comp_id
 
     min_x = max_x = x0
     min_y = max_y = y0
@@ -89,6 +92,7 @@ def _bfs_component(
             ny, nx = y + dy, x + dx
             if 0 <= ny < h and 0 <= nx < w and binary[ny, nx] and not visited[ny, nx]:
                 visited[ny, nx] = True
+                component_map[ny, nx] = comp_id
                 queue.append((ny, nx))
 
     return (min_x, min_y, max_x, max_y, area)
@@ -97,22 +101,26 @@ def _bfs_component(
 def _find_connected_components(
     binary: np.ndarray,
     min_area: int,
-) -> list[tuple[int, int, int, int]]:
-    """Find 4-connected components via BFS on np.argwhere seed points."""
+) -> tuple[list[tuple[int, int, int, int]], np.ndarray]:
+    """Find components and return bboxes + component ID map."""
+    h, w = binary.shape
     visited = np.zeros_like(binary, dtype=bool)
+    component_map = np.zeros((h, w), dtype=np.int32)
     components: list[tuple[int, int, int, int]] = []
+    comp_id = 0
 
     fg_coords: np.ndarray = np.argwhere(binary == 1)
 
     for cy, cx in fg_coords:
-        result = _bfs_component(int(cy), int(cx), binary, visited)
+        comp_id += 1
+        result = _bfs_component(int(cy), int(cx), binary, visited, component_map, comp_id)
         if result is None:
             continue
         x1, y1, x2, y2, area = result
         if area >= min_area:
             components.append((x1, y1, x2, y2))
 
-    return components
+    return components, component_map
 
 
 def _apply_padding(
@@ -151,9 +159,7 @@ def segment_fabric_patches(image_bytes: bytes) -> list[dict]:
     # Blur the distance map to reduce fabric texture noise
     dist_uint8 = np.clip(dist, 0, 255).astype(np.uint8)
     dist_pil = Image.fromarray(dist_uint8, mode="L")
-    dist_blurred = np.array(
-        dist_pil.filter(ImageFilter.GaussianBlur(radius=3)), dtype=np.float32
-    )
+    dist_blurred = np.array(dist_pil.filter(ImageFilter.GaussianBlur(radius=3)), dtype=np.float32)
 
     # Threshold: pixels far enough from white are fabric
     mask = (dist_blurred > WHITE_DIST_THRESHOLD).astype(np.uint8)
@@ -163,18 +169,30 @@ def segment_fabric_patches(image_bytes: bytes) -> list[dict]:
     # Morphological closing to fill small holes within fabric patches
     mask = _morphological_closing(mask, radius=3)
 
-    # Find connected components
-    bboxes = _find_connected_components(mask, min_area=min_area_pixels)
+    # Find connected components with ID tracking for alpha masking
+    bboxes, component_map = _find_connected_components(mask, min_area=min_area_pixels)
 
     if len(bboxes) < 2:
         return []
 
-    # Extract each patch from the original image
-    results: list[dict] = []
-    for x1, y1, x2, y2 in bboxes:
-        x1, y1, x2, y2 = _apply_padding(x1, y1, x2, y2, pad=5, w=img_w, h=img_h)
+    # Convert to RGBA for alpha channel
+    rgba = pil_image.convert("RGBA")
+    rgba_np = np.array(rgba)
 
-        patch = pil_image.crop((x1, y1, x2 + 1, y2 + 1))
+    results: list[dict] = []
+    for comp_id, (x1, y1, x2, y2) in enumerate(bboxes, start=1):
+        x1, y1, x2, y2 = _apply_padding(x1, y1, x2, y2, pad=5, w=img_w, h=img_h)
+        w = x2 - x1 + 1
+        h = y2 - y1 + 1
+
+        # Crop the RGBA region
+        patch_rgba = rgba_np[y1 : y2 + 1, x1 : x2 + 1].copy()
+
+        # Alpha mask: set alpha=0 for pixels NOT in this component
+        region_cmap = component_map[y1 : y2 + 1, x1 : x2 + 1]
+        patch_rgba[region_cmap != comp_id, 3] = 0
+
+        patch = Image.fromarray(patch_rgba, "RGBA")
 
         buf = io.BytesIO()
         patch.save(buf, format="PNG")
@@ -184,8 +202,8 @@ def segment_fabric_patches(image_bytes: bytes) -> list[dict]:
             {
                 "image_bytes": patch_bytes,
                 "bbox": (x1, y1, x2, y2),
-                "width": x2 - x1 + 1,
-                "height": y2 - y1 + 1,
+                "width": w,
+                "height": h,
             }
         )
 
