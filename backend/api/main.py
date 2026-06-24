@@ -24,20 +24,21 @@ from .middleware.logging import RequestLoggingMiddleware, configure_logging
 from .rbac.seed import seed_default_roles
 from .routes.ai_providers import router as ai_providers_router
 from .routes.auth import router as auth_router
+from .routes.clo3d import router as clo3d_router
 from .routes.export import router as export_router
+from .routes.fabric_patches import router as fabric_patches_router
 from .routes.files import router as files_router
 from .routes.generate import router as generate_router
 from .routes.history import router as history_router
 from .routes.materials import router as materials_router
 from .routes.model_previews import router as model_previews_router
+from .routes.posters import router as posters_router
 from .routes.prj_templates import router as prj_templates_router
 from .routes.prompt_features import router as prompt_features_router
 from .routes.prompt_templates import router as prompt_templates_router
 from .routes.roles import router as roles_router
 from .routes.upload import router as upload_router
 from .routes.users import router as users_router
-from .routes.posters import router as posters_router
-from .routes.clo3d import router as clo3d_router
 
 
 @asynccontextmanager
@@ -135,6 +136,7 @@ app.include_router(files_router)
 app.include_router(history_router)
 app.include_router(posters_router)
 app.include_router(clo3d_router)
+app.include_router(fabric_patches_router)
 
 admin = create_admin()
 app.add_middleware(SessionMiddleware, secret_key="your-secret-key-change-in-production")

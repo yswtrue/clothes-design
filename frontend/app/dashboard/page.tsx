@@ -11,9 +11,10 @@ import HistoryTab from '@/components/dashboard/HistoryTab';
 import TemplatesTab from '@/components/dashboard/TemplatesTab';
 import OverviewTab from '@/components/dashboard/OverviewTab';
 import Clo3dTab from '@/components/clo3d/Clo3dTab';
+import FabricPatchUploader from '@/components/fabric/FabricPatchUploader';
 import { apiRequest } from '@/lib/api';
 
-type TabType = 'overview' | 'upload' | 'generate' | 'poster' | 'history' | 'templates' | 'clo3d';
+type TabType = 'overview' | 'upload' | 'generate' | 'poster' | 'history' | 'templates' | 'clo3d' | 'fabric_patches';
 
 interface QuickStats {
   designs: number;
@@ -66,6 +67,7 @@ export default function DashboardPage() {
     { id: 'history' as const, label: '设计历史', icon: '📋' },
     { id: 'templates' as const, label: '服装模板', icon: '👔' },
     { id: 'clo3d' as const, label: 'CLO3D 渲染', icon: '👗' },
+    { id: 'fabric_patches' as const, label: '布块分割', icon: '✂️' },
   ];
 
   return (
@@ -125,6 +127,7 @@ export default function DashboardPage() {
         {activeTab === 'history' && <HistoryTab />}
         {activeTab === 'templates' && <TemplatesTab />}
         {activeTab === 'clo3d' && <Clo3dTab />}
+        {activeTab === 'fabric_patches' && <FabricPatchUploader />}
       </main>
     </div>
   );
