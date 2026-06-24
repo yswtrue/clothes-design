@@ -1,16 +1,17 @@
 """
-CLO3D API Server v4 — main-thread safe via file queue.
+CLO3D API Server v5 — non-blocking main-thread loop.
 
-HTTP server (background thread) writes command files.
-Main thread (CLO3D poll loop) executes CLO3D API calls.
-HTTP handler polls for result, returns to client.
+Uses HTTPServer.timeout + time.sleep to handle HTTP requests without
+freezing CLO3D UI. Health check responds instantly.
+
+Render/extract will briefly freeze CLO3D during processing (CLO3D API
+must run on main thread).
 
 Run in CLO3D Script Editor.
 """
 
 import json
 import os
-import threading
 import time
 import traceback
 from datetime import datetime
@@ -19,28 +20,17 @@ from pathlib import Path
 
 HOST = os.environ.get("CLO3D_API_HOST", "127.0.0.1")
 PORT = int(os.environ.get("CLO3D_API_PORT", "9898"))
-IPC_DIR = Path(os.environ.get("CLO3D_IPC_DIR", os.path.join(os.environ.get("TEMP", os.path.expanduser("~")), "clo3d_ipc")))
-LOG_FILE = os.environ.get("CLO3D_API_LOG", str(Path(__file__).parent / "clo3d_api.log"))
-
-CMD_DIR = IPC_DIR / "commands"
-RESULT_DIR = IPC_DIR / "results"
-for d in (CMD_DIR, RESULT_DIR):
-    d.mkdir(parents=True, exist_ok=True)
-
-STOP_FLAG = threading.Event()
-LOG_LOCK = threading.Lock()
+LOG_FILE = os.environ.get("CLO3D_API_LOG", str(Path(os.path.expanduser("~")) / "clo3d_api.log"))
 
 def log(msg):
     ts = datetime.now().strftime("%H:%M:%S")
     print(f"[CLO3D-API] {msg}", flush=True)
     try:
-        with LOG_LOCK:
-            Path(LOG_FILE).parent.mkdir(parents=True, exist_ok=True)
-            with open(LOG_FILE, "a", encoding="utf-8") as f:
-                f.write(f"[{ts}] {msg}\n")
+        Path(LOG_FILE).parent.mkdir(parents=True, exist_ok=True)
+        with open(LOG_FILE, "a", encoding="utf-8") as f:
+            f.write(f"[{ts}] {msg}\n")
     except Exception: pass
 
-# ── CLO3D API (main thread only!) ─────────────────────────────────────────
 log("Loading CLO3D API...")
 from import_api import ImportFile
 from export_api import ExportRenderingImage
@@ -103,7 +93,6 @@ def do_render(prj_path, materials, views, output_dir):
         log(f"{view}: {p}")
     return {"status":"success","images":images}
 
-# ── HTTP Handler (background thread, only file I/O, no CLO3D API) ─────────
 class Handler(BaseHTTPRequestHandler):
     def _send(self, status, data):
         body = json.dumps(data, ensure_ascii=False).encode()
@@ -117,19 +106,6 @@ class Handler(BaseHTTPRequestHandler):
         n = int(self.headers.get("Content-Length","0"))
         return json.loads(self.rfile.read(n)) if n else {}
 
-    def _wait_result(self, task_id, timeout=600):
-        result_file = RESULT_DIR / f"{task_id}.json"
-        error_file = RESULT_DIR / f"{task_id}.error.json"
-        elapsed = 0
-        while elapsed < timeout:
-            if result_file.exists():
-                return json.loads(result_file.read_text())
-            if error_file.exists():
-                return {"status":"error","error":error_file.read_text()}
-            time.sleep(0.5)
-            elapsed += 0.5
-        return {"status":"error","error":"timeout"}
-
     def do_GET(self):
         if self.path == "/health":
             self._send(200, {"status":"ok","inside_clo3d":True})
@@ -137,64 +113,26 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self):
         try: data = self._read()
         except json.JSONDecodeError: self._send(400,{"error":"invalid JSON"}); return
-
-        import uuid
-        task_id = uuid.uuid4().hex[:12]
-
-        if self.path == "/extract":
-            cmd = {"action":"extract","task_id":task_id,"prj_path":data.get("prj_path",""),"output_dir":data.get("output_dir","./output")}
-        elif self.path == "/render":
-            cmd = {"action":"render","task_id":task_id,"prj_path":data.get("prj_path",""),"material_assignments":data.get("material_assignments",{}),"views":data.get("views",["front","back"]),"output_dir":data.get("output_dir","./output")}
-        else:
-            self._send(404,{"error":f"unknown:{self.path}"}); return
-
-        (CMD_DIR / f"{task_id}.json").write_text(json.dumps(cmd))
-        log(f"Queued {self.path} task={task_id}")
-        result = self._wait_result(task_id)
-        self._send(200 if result.get("status")=="success" else 500, result)
+        try:
+            if self.path == "/extract":
+                r = do_extract(data.get("prj_path",""), data.get("output_dir","./output"))
+            elif self.path == "/render":
+                r = do_render(data.get("prj_path",""), data.get("material_assignments",{}), data.get("views",["front","back"]), data.get("output_dir","./output"))
+            else:
+                self._send(404,{"error":f"unknown:{self.path}"}); return
+            self._send(200 if r.get("status")=="success" else 500, r)
+        except Exception as exc:
+            traceback.print_exc()
+            log(f"ERROR: {exc}")
+            self._send(500,{"status":"error","error":str(exc)})
 
     def log_message(self, fmt, *args): pass
 
-# ── Main-thread poll loop ──────────────────────────────────────────────────
-def process_commands():
-    cmd_files = sorted(CMD_DIR.glob("*.json"), key=lambda p: p.stat().st_mtime)
-    for cf in cmd_files:
-        try:
-            cmd = json.loads(cf.read_text())
-            task_id = cmd["task_id"]
-            action = cmd["action"]
-            log(f"Processing {action} task={task_id}")
-            if action == "extract":
-                r = do_extract(cmd.get("prj_path",""), cmd.get("output_dir","./output"))
-            elif action == "render":
-                r = do_render(cmd.get("prj_path",""), cmd.get("material_assignments",{}), cmd.get("views",["front","back"]), cmd.get("output_dir","./output"))
-            else:
-                r = {"status":"error","error":f"unknown action:{action}"}
-            (RESULT_DIR / f"{task_id}.json").write_text(json.dumps(r))
-            cf.unlink()
-            log(f"Completed {action} task={task_id}")
-        except Exception as exc:
-            traceback.print_exc()
-            log(f"Command error: {exc}")
-            try:
-                (RESULT_DIR / f"{cmd['task_id']}.error.json").write_text(str(exc))
-                cf.unlink()
-            except Exception: pass
+srv = HTTPServer((HOST, PORT), Handler)
+srv.timeout = 0.1  # Non-blocking: returns after 0.1s if no connection
+log(f"Server at http://{HOST}:{PORT}")
+log("Health check should respond now. CLO3D stays responsive between requests.")
 
-# ── Start ──────────────────────────────────────────────────────────────────
-def _run_http():
-    srv = HTTPServer((HOST, PORT), Handler)
-    log(f"HTTP at http://{HOST}:{PORT}")
-    while not STOP_FLAG.is_set():
-        srv.handle_request()
-    srv.server_close()
-
-log("Starting HTTP server (background)...")
-threading.Thread(target=_run_http, daemon=True, name="clo3d-http").start()
-
-log("Starting command poll loop (main thread)...")
-log("Ready. health check should respond now.")
-
-while not STOP_FLAG.is_set():
-    process_commands()
-    time.sleep(1)
+while True:
+    srv.handle_request()      # Non-blocking (0.1s timeout)
+    time.sleep(0.05)          # Yield to CLO3D event loop
