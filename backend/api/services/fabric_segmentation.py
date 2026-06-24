@@ -3,9 +3,9 @@
 Detects and extracts individual fabric patches from an input image
 using computer vision techniques (thresholding, morphology, connected components).
 
-Performance: large images are automatically downscaled for processing
-(longest edge capped at MAX_PROCESSING_DIM), and connected-component
-search only iterates foreground pixels via np.argwhere().
+Performance: connected-component search uses np.argwhere() to iterate
+only foreground pixels (typically 10-30% of the image), avoiding a
+full O(H*W) Python double-loop scan.
 """
 
 import io
@@ -13,10 +13,6 @@ from collections import deque
 
 import numpy as np
 from PIL import Image, ImageFilter
-
-# Images larger than this are downscaled before segmentation.
-# Bounding boxes are mapped back to original coordinates.
-MAX_PROCESSING_DIM = 1500
 
 
 def _otsu_threshold(gray: np.ndarray) -> int:
@@ -174,9 +170,6 @@ def _apply_padding(
 def segment_fabric_patches(image_bytes: bytes) -> list[dict]:
     """Segment the input image into individual fabric patches.
 
-    Large images are downscaled for fast processing; bounding boxes
-    are projected back to original coordinates.
-
     Args:
         image_bytes: Raw image file bytes (JPEG, PNG, WebP, etc.)
 
@@ -189,19 +182,13 @@ def segment_fabric_patches(image_bytes: bytes) -> list[dict]:
 
         Returns empty list if fewer than 2 patches are found.
     """
-    # Load full-resolution image (used for final crop)
-    full_img = Image.open(io.BytesIO(image_bytes)).convert("RGB")
-    orig_w, orig_h = full_img.size
+    # Load image with PIL
+    pil_image = Image.open(io.BytesIO(image_bytes)).convert("RGB")
+    img_w, img_h = pil_image.size
+    min_area_pixels = max(1, int(img_w * img_h * 0.001))
 
-    # Downscale large images for fast processing
-    scale = 1.0
-    if max(orig_w, orig_h) > MAX_PROCESSING_DIM:
-        scale = MAX_PROCESSING_DIM / max(orig_w, orig_h)
-    proc_w, proc_h = int(orig_w * scale), int(orig_h * scale)
-    proc_img = full_img.resize((proc_w, proc_h), Image.LANCZOS) if scale < 1.0 else full_img.copy()
-
-    # Convert to grayscale numpy array (at processing resolution)
-    gray = np.array(proc_img.convert("L"), dtype=np.uint8)
+    # Convert to grayscale numpy array
+    gray = np.array(pil_image.convert("L"), dtype=np.uint8)
 
     # Apply GaussianBlur to reduce noise
     blurred_pil = Image.fromarray(gray, mode="L").filter(ImageFilter.GaussianBlur(radius=3))
@@ -219,30 +206,18 @@ def segment_fabric_patches(image_bytes: bytes) -> list[dict]:
     # Morphological closing: dilate 2px then erode 2px
     mask = _morphological_closing(mask, radius=2)
 
-    # Minimum patch area (relative to processing resolution)
-    min_area_pixels = max(1, int(proc_w * proc_h * 0.001))
-
-    # Find connected components → bboxes at processing resolution
+    # Find connected components → bboxes
     bboxes = _find_connected_components(mask, min_area=min_area_pixels)
 
     if len(bboxes) < 2:
         return []
 
-    # Project bboxes back to original resolution and crop
-    inv_scale = 1.0 / scale
+    # Extract each patch from the original image
     results: list[dict] = []
-    for px1, py1, px2, py2 in bboxes:
-        # Map to original coordinates
-        ox1 = int(px1 * inv_scale)
-        oy1 = int(py1 * inv_scale)
-        ox2 = int(px2 * inv_scale)
-        oy2 = int(py2 * inv_scale)
+    for x1, y1, x2, y2 in bboxes:
+        x1, y1, x2, y2 = _apply_padding(x1, y1, x2, y2, pad=5, w=img_w, h=img_h)
 
-        # Add padding (in original coordinates) and clamp
-        ox1, oy1, ox2, oy2 = _apply_padding(ox1, oy1, ox2, oy2, pad=5, w=orig_w, h=orig_h)
-
-        # Crop from original full-resolution image
-        patch = full_img.crop((ox1, oy1, ox2 + 1, oy2 + 1))
+        patch = pil_image.crop((x1, y1, x2 + 1, y2 + 1))
 
         buf = io.BytesIO()
         patch.save(buf, format="PNG")
@@ -251,9 +226,9 @@ def segment_fabric_patches(image_bytes: bytes) -> list[dict]:
         results.append(
             {
                 "image_bytes": patch_bytes,
-                "bbox": (ox1, oy1, ox2, oy2),
-                "width": ox2 - ox1 + 1,
-                "height": oy2 - oy1 + 1,
+                "bbox": (x1, y1, x2, y2),
+                "width": x2 - x1 + 1,
+                "height": y2 - y1 + 1,
             }
         )
 
