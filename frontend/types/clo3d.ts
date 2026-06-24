@@ -16,7 +16,9 @@ export interface Clo3dProject {
 
 export interface Clo3dRenderRequest {
   project_id: number;
-  material_assignments: Record<string, number>;
+  material_assignments: Record<string, number | string>;
+  // number = material_id from library
+  // string = "data:image/png;base64,..." from screenshot extraction
 }
 
 export interface Clo3dRenderSubmitResponse {

@@ -98,3 +98,34 @@ export async function fetchRenderHistory(
   const qs = searchParams.toString();
   return apiRequest(`/api/clo3d/projects/${projectId}/render-history${qs ? `?${qs}` : ''}`);
 }
+
+export interface ExtractedPiece {
+  index: number;
+  image_b64: string;
+  bounds: { x: number; y: number; width: number; height: number };
+}
+
+export interface ExtractPiecesResponse {
+  piece_count: number;
+  pieces: ExtractedPiece[];
+}
+
+export async function extractPiecesFromScreenshot(
+  file: File
+): Promise<ExtractPiecesResponse> {
+  const formData = new FormData();
+  formData.append('screenshot', file);
+
+  const response = await fetch('/api/clo3d/extract-pieces', {
+    method: 'POST',
+    credentials: 'include',
+    body: formData,
+  });
+
+  if (!response.ok) {
+    const errorData = await response.json().catch(() => ({}));
+    throw new Error(errorData.detail || `提取失败: ${response.status}`);
+  }
+
+  return response.json();
+}

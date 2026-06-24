@@ -4,8 +4,14 @@ Upload .zprj files, list fabric pieces, assign materials per piece,
 trigger CLO3D rendering, and poll render task status.
 """
 
+import base64
 import json
-from typing import Annotated
+import logging
+from io import BytesIO
+from pathlib import Path
+from typing import Annotated, Any
+
+from PIL import Image
 
 from fastapi import (
     APIRouter,
@@ -28,6 +34,7 @@ from api.auth.dependencies import get_current_user
 from api.db.base import get_session
 from api.db.models import Clo3dProject, Clo3dRenderTask, User
 from api.storage.storages import clo3d_project_storage, clo3d_render_storage, preview_storage
+from config import get_settings
 from shared.task_queue import enqueue_task, get_task_status
 
 router = APIRouter(prefix="/api/clo3d", tags=["clo3d"])
@@ -59,8 +66,10 @@ class Clo3dProjectResponse(BaseModel):
 
 class Clo3dRenderRequest(BaseModel):
     project_id: int
-    material_assignments: dict[str, int] = {}
-    # {"前片": 5, "后片": 12, "左袖": 8, "右袖": 8, "领口": 3}
+    material_assignments: dict[str, int | str] = {}
+    # Supports both:
+    #   {"前片": 5}                    → material_id from library
+    #   {"前片": "data:image/png;base64,..."} → base64 from screenshot extraction
 
 
 class Clo3dRenderSubmitResponse(BaseModel):
@@ -288,7 +297,9 @@ async def submit_render(
 ):
     """Submit a CLO3D render task with per-piece material assignments.
 
-    material_assignments maps piece NAME (string) to material_id (int).
+    material_assignments values can be:
+      - int: material_id from the materials library
+      - str starting with "data:": base64 image from screenshot extraction
     """
     # Verify project exists and belongs to user
     result = await session.execute(
@@ -310,6 +321,26 @@ async def submit_render(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Project has no pieces defined — upload piece metadata first",
         )
+
+    # Normalize material_assignments: convert base64 strings to temp file paths
+    normalized: dict[str, int | str] = {}
+    for piece_name, value in request.material_assignments.items():
+        if isinstance(value, str) and value.startswith("data:"):
+            # Save base64 image to temp file for CLO3D access
+            temp_dir = Path(get_settings().storage.local_storage_path) / "clo3d_temp"
+            temp_dir.mkdir(parents=True, exist_ok=True)
+            import uuid as _uuid
+            fname = f"extracted_{_uuid.uuid4().hex[:8]}.png"
+            fpath = temp_dir / fname
+            # Decode base64 data URL
+            if "," in value:
+                b64 = value.split(",", 1)[1]
+            else:
+                b64 = value
+            fpath.write_bytes(base64.b64decode(b64))
+            normalized[piece_name] = str(fpath)
+        else:
+            normalized[piece_name] = value
 
     # Create render task record
     render_task = Clo3dRenderTask(
@@ -334,7 +365,7 @@ async def submit_render(
         data={
             "render_task_id": render_task.id,
             "project_id": request.project_id,
-            "material_assignments": request.material_assignments,
+            "material_assignments": normalized,
         },
     )
 
@@ -438,8 +469,142 @@ async def get_render_history(
                 status=rt.status or "unknown",
                 front_url=front_url,
                 back_url=back_url,
-                error=rt.error_message,
+                 error=rt.error_message,
             )
         )
 
     return create_page(items, total=page.total, params=params)
+
+
+# ── Screenshot Piece Extraction ──────────────────────────────────────────────
+
+class ExtractedPiece(BaseModel):
+    index: int
+    image_b64: str
+    bounds: dict[str, int]
+
+
+class ExtractPiecesResponse(BaseModel):
+    piece_count: int
+    pieces: list[ExtractedPiece]
+
+
+def _find_background_color(img: Image.Image) -> tuple[int, int, int]:
+    """Sample border pixels to determine dominant background color."""
+    w, h = img.size
+    samples: list[tuple[int, int, int]] = []
+    margin = min(10, w // 4, h // 4)
+
+    for x in range(0, w, max(1, w // 20)):
+        for y in (margin, h - 1 - margin):
+            px = img.getpixel((min(x, w - 1), y))
+            if isinstance(px, tuple) and len(px) >= 3:
+                samples.append(px[:3])
+    for y in range(0, h, max(1, h // 20)):
+        for x in (margin, w - 1 - margin):
+            px = img.getpixel((x, min(y, h - 1)))
+            if isinstance(px, tuple) and len(px) >= 3:
+                samples.append(px[:3])
+
+    if not samples:
+        return (255, 255, 255)
+    samples.sort()
+    return samples[len(samples) // 2]
+
+
+def _color_distance(a: tuple[int, ...], b: tuple[int, ...]) -> float:
+    return ((a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2 + (a[2] - b[2]) ** 2) ** 0.5
+
+
+def _extract_pieces_from_image(
+    img_bytes: bytes, threshold: int = 40, min_area: int = 500
+) -> list[dict[str, Any]]:
+    """Detect fabric pieces in a PS screenshot via background-color BFS.
+
+    Works best when pieces are separated by a uniform background with
+    clear gaps.
+    """
+    from io import BytesIO
+
+    img = Image.open(BytesIO(img_bytes)).convert("RGB")
+    w, h = img.size
+    bg = _find_background_color(img)
+
+    # Binary mask: True = foreground piece pixel
+    mask = [[False] * w for _ in range(h)]
+    for y in range(h):
+        for x in range(w):
+            if _color_distance(img.getpixel((x, y)), bg) > threshold:
+                mask[y][x] = True
+
+    # BFS connected components
+    visited = [[False] * w for _ in range(h)]
+    regions: list[tuple[int, int, int, int]] = []
+
+    for sy in range(h):
+        for sx in range(w):
+            if not mask[sy][sx] or visited[sy][sx]:
+                continue
+
+            queue = [(sx, sy)]
+            visited[sy][sx] = True
+            mx, my, Mx, My = sx, sy, sx, sy
+            px_count = 0
+
+            while queue:
+                cx, cy = queue.pop(0)
+                px_count += 1
+                mx, my = min(mx, cx), min(my, cy)
+                Mx, My = max(Mx, cx), max(My, cy)
+
+                for nx, ny in ((cx - 1, cy), (cx + 1, cy), (cx, cy - 1), (cx, cy + 1)):
+                    if 0 <= nx < w and 0 <= ny < h and mask[ny][nx] and not visited[ny][nx]:
+                        visited[ny][nx] = True
+                        queue.append((nx, ny))
+
+            if px_count >= min_area:
+                pad = 4
+                regions.append((
+                    max(0, mx - pad), max(0, my - pad),
+                    min(w, Mx + pad + 1), min(h, My + pad + 1),
+                ))
+
+    # Sort: top-to-bottom, left-to-right
+    regions.sort(key=lambda r: (r[1], r[0]))
+
+    pieces: list[dict[str, Any]] = []
+    for i, (x1, y1, x2, y2) in enumerate(regions):
+        cropped = img.crop((x1, y1, x2, y2))
+        buf = BytesIO()
+        cropped.save(buf, format="PNG")
+        pieces.append({
+            "index": i,
+            "image_b64": base64.b64encode(buf.getvalue()).decode(),
+            "bounds": {"x": x1, "y": y1, "width": x2 - x1, "height": y2 - y1},
+        })
+
+    return pieces
+
+
+@router.post("/extract-pieces", response_model=ExtractPiecesResponse)
+async def extract_pieces_from_screenshot(
+    screenshot: UploadFile = File(...),
+    current_user: _user_dep = Depends(),
+):
+    """Upload a PS screenshot — auto-detect individual fabric piece images."""
+    if not screenshot.content_type or not screenshot.content_type.startswith("image/"):
+        raise HTTPException(400, detail="Must be an image (PNG/JPEG)")
+
+    img_bytes = await screenshot.read()
+    if len(img_bytes) > 20 * 1024 * 1024:
+        raise HTTPException(413, detail="Image too large (max 20MB)")
+
+    try:
+        pieces = _extract_pieces_from_image(img_bytes)
+    except Exception as exc:
+        raise HTTPException(422, detail=f"Extraction failed: {exc}") from exc
+
+    return ExtractPiecesResponse(
+        piece_count=len(pieces),
+        pieces=[ExtractedPiece(**p) for p in pieces],
+    )

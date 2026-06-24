@@ -4,7 +4,8 @@ import { useState, useMemo, useCallback, useEffect } from 'react';
 import Image from 'next/image';
 import type { Clo3dProject, Clo3dRenderTaskStatus } from '@/types/clo3d';
 import type { Material } from '@/types/upload';
-import { submitClo3dRender, pollClo3dTask } from '@/lib/clo3d';
+import { submitClo3dRender, pollClo3dTask, extractPiecesFromScreenshot } from '@/lib/clo3d';
+import type { ExtractedPiece } from '@/lib/clo3d';
 
 // ---------------------------------------------------------------------------
 // Piece region — normalized (%) overlay coordinates on the pattern image
@@ -180,6 +181,106 @@ function MaterialGridPanel({
 }
 
 // ---------------------------------------------------------------------------
+// DetectedPiecesStrip — shows PS screenshot extracted pieces for drag-to-assign
+// ---------------------------------------------------------------------------
+function DetectedPiecesStrip({
+  pieces,
+  activeIndex,
+  assignments,
+  onSelectPiece,
+  onUpload,
+  isUploading,
+}: {
+  pieces: ExtractedPiece[];
+  activeIndex: number | null;
+  assignments: Record<string, string>;  // piece_name → data_url
+  onSelectPiece: (idx: number | null) => void;
+  onUpload: (file: File) => void;
+  isUploading: boolean;
+}) {
+  const assignedIndices = new Set(
+    Object.values(assignments).map((v) => pieces.findIndex((p) => p.image_b64 === v))
+  );
+
+  return (
+    <div className="rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-950 p-4">
+      <div className="flex items-center justify-between mb-3">
+        <span className="text-sm font-medium text-zinc-700 dark:text-zinc-300">
+          从截图识别布料片
+        </span>
+        <label className={`
+          px-3 py-1.5 rounded-lg text-xs font-medium cursor-pointer transition-colors
+          ${isUploading
+            ? 'bg-zinc-200 dark:bg-zinc-800 text-zinc-400'
+            : 'bg-zinc-950 dark:bg-zinc-50 text-white dark:text-zinc-950 hover:opacity-85'}
+        `}>
+          {isUploading ? '识别中...' : pieces.length > 0 ? '重新上传' : '上传 PS 截图'}
+          <input
+            type="file"
+            accept="image/png,image/jpeg,image/webp"
+            className="hidden"
+            disabled={isUploading}
+            onChange={(e) => {
+              const file = e.target.files?.[0];
+              if (file) onUpload(file);
+              e.target.value = '';
+            }}
+          />
+        </label>
+      </div>
+
+      {pieces.length === 0 ? (
+        <p className="text-xs text-zinc-400 dark:text-zinc-500">
+          上传 Photoshop 截图，自动识别每块布料 →
+          点击布料再点击衣片完成分配
+        </p>
+      ) : (
+        <div className="flex gap-3 overflow-x-auto pb-1">
+          {pieces.map((piece, idx) => {
+            const isActive = activeIndex === idx;
+            const isAssigned = assignedIndices.has(idx);
+            const src = `data:image/png;base64,${piece.image_b64}`;
+
+            return (
+              <button
+                key={idx}
+                onClick={() => onSelectPiece(isActive ? null : idx)}
+                className={`
+                  relative flex-shrink-0 w-24 h-24 rounded-lg overflow-hidden border-2 transition-all
+                  ${isActive
+                    ? 'border-zinc-950 dark:border-zinc-50 ring-2 ring-zinc-950/20 dark:ring-zinc-50/20'
+                    : 'border-zinc-200 dark:border-zinc-800 hover:border-zinc-400'}
+                  ${isAssigned ? 'opacity-60' : ''}
+                `}
+              >
+                <img src={src} alt={`布料 ${idx + 1}`} className="w-full h-full object-cover" />
+                <span className="absolute bottom-1 left-1 px-1.5 py-0.5 rounded text-[10px] font-medium bg-black/60 text-white">
+                  #{idx + 1}
+                </span>
+                {isAssigned && (
+                  <div className="absolute inset-0 flex items-center justify-center bg-zinc-950/30">
+                    <svg className="w-6 h-6 text-green-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 13l4 4L19 7" />
+                    </svg>
+                  </div>
+                )}
+              </button>
+            );
+          })}
+        </div>
+      )}
+
+      {activeIndex !== null && (
+        <p className="mt-2 text-xs text-zinc-500 dark:text-zinc-400">
+          已选中布料 #{activeIndex + 1} — 点击上方衣片完成分配
+        </p>
+      )}
+    </div>
+  );
+}
+
+
+// ---------------------------------------------------------------------------
 // PieceSelector — main component
 // ---------------------------------------------------------------------------
 export default function PieceSelector({
@@ -195,9 +296,36 @@ export default function PieceSelector({
   const [isRendering, setIsRendering] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const handlePieceClick = useCallback((pieceName: string) => {
-    setSelectedPieceName((prev) => (prev === pieceName ? null : pieceName));
+  // Screenshot piece extraction
+  const [screenshotPieces, setScreenshotPieces] = useState<ExtractedPiece[]>([]);
+  const [activeDetectedIdx, setActiveDetectedIdx] = useState<number | null>(null);
+  const [screenshotAssignments, setScreenshotAssignments] = useState<Record<string, string>>({}); // piece_name → data_url
+  const [isExtracting, setIsExtracting] = useState(false);
+
+  const handleScreenshotUpload = useCallback(async (file: File) => {
+    setIsExtracting(true);
+    try {
+      const result = await extractPiecesFromScreenshot(file);
+      setScreenshotPieces(result.pieces);
+      setActiveDetectedIdx(null);
+      setScreenshotAssignments({});
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '识别失败');
+    } finally {
+      setIsExtracting(false);
+    }
   }, []);
+
+  const handlePieceClick = useCallback((pieceName: string) => {
+    // If a detected piece is active, assign it to this garment piece
+    if (activeDetectedIdx !== null && screenshotPieces[activeDetectedIdx]) {
+      const dataUrl = `data:image/png;base64,${screenshotPieces[activeDetectedIdx].image_b64}`;
+      setScreenshotAssignments((prev) => ({ ...prev, [pieceName]: dataUrl }));
+      setActiveDetectedIdx(null);
+      return;
+    }
+    setSelectedPieceName((prev) => (prev === pieceName ? null : pieceName));
+  }, [activeDetectedIdx, screenshotPieces]);
 
   const handleSelectMaterial = useCallback(
     (material: Material) => {
@@ -215,10 +343,13 @@ export default function PieceSelector({
     setIsRendering(true);
     setError(null);
 
-    // Build material_assignments map: piece_name → material_id
-    const assignments: Record<string, number> = {};
+    const assignments: Record<string, number | string> = {};
     for (const [pieceName, material] of Object.entries(materialAssignments)) {
       assignments[pieceName] = material.id;
+    }
+    // Include screenshot assignments as data URLs
+    for (const [pieceName, dataUrl] of Object.entries(screenshotAssignments)) {
+      assignments[pieceName] = dataUrl;
     }
 
     try {
@@ -233,9 +364,9 @@ export default function PieceSelector({
     } finally {
       setIsRendering(false);
     }
-  }, [materialAssignments, project.id, onRenderComplete]);
+  }, [materialAssignments, screenshotAssignments, project.id, onRenderComplete]);
 
-  const renderCount = Object.keys(materialAssignments).length;
+  const renderCount = Object.keys(materialAssignments).length + Object.keys(screenshotAssignments).length;
   const totalCount = pieces.length;
   const allAssigned = renderCount > 0 && renderCount >= totalCount;
   const hasPieces = pieces.length > 0;
@@ -285,6 +416,16 @@ export default function PieceSelector({
           {error}
         </div>
       )}
+
+      {/* Screenshot extraction strip */}
+      <DetectedPiecesStrip
+        pieces={screenshotPieces}
+        activeIndex={activeDetectedIdx}
+        assignments={screenshotAssignments}
+        onSelectPiece={setActiveDetectedIdx}
+        onUpload={handleScreenshotUpload}
+        isUploading={isExtracting}
+      />
 
       {/* Pattern layout canvas with piece overlays */}
       <div className="relative w-full rounded-xl overflow-hidden border border-zinc-200 dark:border-zinc-800 bg-zinc-100 dark:bg-zinc-900">
@@ -385,18 +526,17 @@ export default function PieceSelector({
           </span>
           {pieces.slice(0, 6).map((piece) => {
             const mat = materialAssignments[piece.name];
+            const dataUrl = screenshotAssignments[piece.name];
             return (
               <div
                 key={piece.name}
                 className="flex items-center gap-1.5 px-2 py-1 rounded-md bg-zinc-100 dark:bg-zinc-800 text-xs text-zinc-700 dark:text-zinc-300"
               >
-                {mat?.thumbnail_url && (
-                  <img
-                    src={mat.thumbnail_url}
-                    alt=""
-                    className="w-4 h-4 rounded object-cover"
-                  />
-                )}
+                {mat?.thumbnail_url ? (
+                  <img src={mat.thumbnail_url} alt="" className="w-4 h-4 rounded object-cover" />
+                ) : dataUrl ? (
+                  <img src={dataUrl} alt="" className="w-4 h-4 rounded object-cover" />
+                ) : null}
                 <span>{piece.label ?? piece.name}</span>
               </div>
             );

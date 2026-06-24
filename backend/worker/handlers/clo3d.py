@@ -202,44 +202,59 @@ class Clo3dRenderHandler(TaskHandler):
         return prj_file
 
     async def _stage_materials(
-        self, assignments: dict[str, int], output_dir: Path
+        self, assignments: dict[str, int | str], output_dir: Path
     ) -> dict[str, str]:
-        """Copy materials to output dir, return piece_name → local_path map."""
+        """Resolve material assignments to local file paths.
+
+        values can be:
+          - int: material_id → look up from DB, copy to output dir
+          - str: already a local file path (from screenshot extraction)
+        """
         from api.db.models import Material
         from api.storage.storages import material_storage
 
-        result: dict[str, str] = {}
-        unique_ids = set(assignments.values())
+        resolved: dict[str, str] = {}  # original_value → local_path
         mats_dir = output_dir / "materials"
         mats_dir.mkdir(exist_ok=True)
 
-        session_factory = await self._get_session_factory()
-        async with session_factory() as session:
-            for mid in unique_ids:
-                db_result = await session.execute(
-                    select(Material).where(Material.id == mid)
-                )
-                material = db_result.scalar_one_or_none()
-                if not material or not material.file:
-                    continue
+        # Separate int (DB) values from str (file path) values
+        db_ids: set[int] = set()
+        for val in assignments.values():
+            if isinstance(val, int):
+                db_ids.add(val)
 
-                try:
-                    img_bytes = await material_storage.download(str(material.file))
-                except Exception as exc:
-                    self.logger.warning(f"Material {mid} download failed: {exc}")
-                    continue
+        # Resolve DB materials
+        if db_ids:
+            session_factory = await self._get_session_factory()
+            async with session_factory() as session:
+                for mid in db_ids:
+                    db_result = await session.execute(
+                        select(Material).where(Material.id == mid)
+                    )
+                    material = db_result.scalar_one_or_none()
+                    if not material or not material.file:
+                        continue
+                    try:
+                        img_bytes = await material_storage.download(str(material.file))
+                    except Exception as exc:
+                        self.logger.warning(f"Material {mid} download failed: {exc}")
+                        continue
+                    ext = (
+                        Path(str(material.original_filename or "material.png")).suffix
+                        or ".png"
+                    )
+                    dest = mats_dir / f"material_{mid}{ext}"
+                    dest.write_bytes(img_bytes)
+                    resolved[str(mid)] = str(dest)
 
-                ext = (
-                    Path(str(material.original_filename or "material.png")).suffix
-                    or ".png"
-                )
-                dest = mats_dir / f"material_{mid}{ext}"
-                dest.write_bytes(img_bytes)
-                result[str(mid)] = str(dest)
+        # Resolve file path values (already saved by the route handler)
+        for val in assignments.values():
+            if isinstance(val, str) and Path(val).exists():
+                resolved[val] = val
 
         return {
-            name: result.get(str(mid), "")
-            for name, mid in assignments.items()
+            name: resolved.get(str(val), val if isinstance(val, str) else "")
+            for name, val in assignments.items()
         }
 
     async def _save_render_images(
