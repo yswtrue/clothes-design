@@ -1,12 +1,12 @@
 'use client';
 
 import { useState } from 'react';
-import { segmentFabricPatches } from '@/lib/fabric';
+import { uploadFabricImage, pollSegmentStatus } from '@/lib/fabric';
 import DropZone from '@/components/upload/DropZone';
 import PatchGallery from '@/components/fabric/PatchGallery';
 import type { UploadProgress, FabricPatch } from '@/types/fabric';
 
-type UploadState = 'idle' | 'uploading' | 'processing' | 'complete' | 'error';
+type UploadState = 'idle' | 'uploading' | 'segmenting' | 'complete' | 'error';
 
 export default function FabricPatchUploader() {
   const [state, setState] = useState<UploadState>('idle');
@@ -21,11 +21,11 @@ export default function FabricPatchUploader() {
     setState('uploading');
 
     try {
-      const response = await segmentFabricPatches(file, setUploadProgress);
+      const taskId = await uploadFabricImage(file, setUploadProgress);
+      setState('segmenting');
 
-      setState('processing');
-
-      setPatches(response.patches);
+      const result = await pollSegmentStatus(taskId);
+      setPatches(result);
       setState('complete');
     } catch (err) {
       setError(err instanceof Error ? err.message : '分割失败，请重试。');
@@ -76,7 +76,7 @@ export default function FabricPatchUploader() {
         </div>
       )}
 
-      {state === 'processing' && (
+      {state === 'segmenting' && (
         <div className="bg-white dark:bg-zinc-900 rounded-lg border border-zinc-200 dark:border-zinc-800 p-6">
           <div className="flex items-center space-x-3">
             <div className="animate-spin rounded-full h-5 w-5 border-2 border-zinc-950 dark:border-zinc-50 border-t-transparent" />
@@ -85,7 +85,7 @@ export default function FabricPatchUploader() {
                 正在分割布块...
               </h2>
               <p className="text-sm text-zinc-600 dark:text-zinc-400">
-                检测并提取图片中的布料区域
+                后台处理中，请耐心等待
               </p>
             </div>
           </div>

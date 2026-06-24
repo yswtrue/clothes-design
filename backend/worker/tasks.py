@@ -75,11 +75,20 @@ async def clo3d_render_task(task_data: dict[str, Any]) -> dict[str, Any]:
     return await handler.handle(task_data)
 
 
+@broker.task(task_name="worker.tasks.fabric_segment")
+async def fabric_segment_task(task_data: dict[str, Any]) -> dict[str, Any]:
+    from worker.handlers.fabric_segmentation import FabricSegmentHandler
+
+    handler = FabricSegmentHandler()
+    return await handler.handle(task_data)
+
+
 __all__ = [
     "analyze_task",
     "clo3d_render_task",
     "ecommerce_poster_task",
     "export_pattern_task",
+    "fabric_segment_task",
     "generate_task",
     "mockup_task",
     "model_preview_task",

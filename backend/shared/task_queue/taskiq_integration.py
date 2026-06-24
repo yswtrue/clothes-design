@@ -11,6 +11,7 @@ from worker.tasks import (
     clo3d_render_task,
     ecommerce_poster_task,
     export_pattern_task,
+    fabric_segment_task,
     generate_task,
     mockup_task,
     model_preview_task,
@@ -28,14 +29,15 @@ class QueueError(Exception):
 
 TASK_MAP = {
     "analyze": analyze_task,
+    "clo3d_render": clo3d_render_task,
+    "ecommerce_poster": ecommerce_poster_task,
+    "export_pattern": export_pattern_task,
+    "fabric_segment": fabric_segment_task,
     "generate": generate_task,
-    "upscale": upscale_task,
-    "vectorize": vectorize_task,
     "mockup": mockup_task,
     "model_preview": model_preview_task,
-    "export_pattern": export_pattern_task,
-    "ecommerce_poster": ecommerce_poster_task,
-    "clo3d_render": clo3d_render_task,
+    "upscale": upscale_task,
+    "vectorize": vectorize_task,
 }
 
 
