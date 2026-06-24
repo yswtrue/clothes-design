@@ -44,7 +44,7 @@ def log(msg):
 # ── CLO3D API ──────────────────────────────────────────────────────────────
 try:
     from import_api import ImportFile
-    from export_api import ExportRenderingImage, Export2DPatternImage
+    from export_api import ExportRenderingImage
     from fabric_api import AddFabric, AssignFabricToPattern, ApplyTextureToPatternFace
     from pattern_api import GetPatternCount, GetPatternName
     from utility_api import Simulate, SetFrontView, SetBackView, RotateCamera
@@ -71,10 +71,7 @@ def do_extract(prj_path: str, output_dir: str) -> dict:
     try:
         ExportRenderingImage(layout, False, 0)
     except Exception:
-        try:
-            Export2DPatternImage(layout)
-        except Exception:
-            layout = ""
+        layout = ""
     return {"status": "success", "piece_count": count, "pieces": pieces, "layout_image": layout}
 
 
