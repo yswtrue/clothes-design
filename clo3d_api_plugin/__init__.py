@@ -199,7 +199,8 @@ class _Handler(BaseHTTPRequestHandler):
 
     def do_GET(self) -> None:
         if self.path == "/health":
-            count = GetPatternCount() if INSIDE_CLO3D else 0
+            with LOCK:
+                count = GetPatternCount() if INSIDE_CLO3D else 0
             self._send(200, {"status": "ok", "pieces": count, "inside_clo3d": INSIDE_CLO3D})
         else:
             self._send(404, {"error": "not found"})
