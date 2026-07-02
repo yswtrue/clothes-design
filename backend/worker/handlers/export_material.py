@@ -22,7 +22,6 @@ from shared.ai.factory import Capability, get_provider_by_capability
 from starlette.datastructures import UploadFile
 
 from .base import TaskHandler, WorkerError
-from .tile_upscale import tile_upscale, TILE_SIZE
 
 logger = logging.getLogger(__name__)
 
@@ -119,32 +118,15 @@ class ExportMaterialHandler(TaskHandler):
             original_size = Image.open(io.BytesIO(original_bytes)).size[0]
             self.logger.info(f"Original image size: {original_size}px, {len(original_bytes)} bytes")
 
-            # Step 2: AI upscale — use tile-based upscaling for large images,
-            # single-shot for GPU-safe sizes
+            # Step 2: AI upscale
             upscaler = await self._get_upscaler()
+            self.logger.info(f"Upscaling to {target_resolution}px via {upscaler.__class__.__name__}")
 
-            GPU_SAFE_PIXELS = 2_000_000  # Replicate ESRGAN all models: 2,096,704 limit
-            img = Image.open(io.BytesIO(original_bytes))
-            w, h = img.size
-            needs_tiling = w * h > GPU_SAFE_PIXELS
-
-            if needs_tiling:
-                self.logger.info(
-                    f"Image too large for GPU ({w}×{h} = {w * h:,} px), "
-                    f"using tiled upscaling ({TILE_SIZE}px tiles)"
-                )
-                upscaled_bytes = await tile_upscale(
-                    original_bytes,
-                    target_resolution,
-                    lambda tile_bytes, tile_target: upscaler.upscale_image(tile_bytes, tile_target),
-                )
-            else:
-                self.logger.info(f"Upscaling to {target_resolution}px via {upscaler.__class__.__name__}")
-                try:
-                    upscaled_bytes = await upscaler.upscale_image(original_bytes, target_resolution)
-                except AIProviderError as e:
-                    self.logger.error(f"Upscale failed: {e}", exc_info=True)
-                    raise WorkerError(f"Upscale failed: {e}") from e
+            try:
+                upscaled_bytes = await upscaler.upscale_image(original_bytes, target_resolution)
+            except AIProviderError as e:
+                self.logger.error(f"Upscale failed: {e}", exc_info=True)
+                raise WorkerError(f"Upscale failed: {e}") from e
 
             upscaled_size = Image.open(io.BytesIO(upscaled_bytes)).size[0]
             self.logger.info(

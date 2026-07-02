@@ -53,6 +53,10 @@ FLUX_MODEL = "black-forest-labs/flux-schnell"
 ESRGAN_MODEL = (
     "nightmareai/real-esrgan:f121d640bd286e1fdc67f9799164c1d5be36ff74576ee11c803ae5b665dd46aa"
 )
+SWINIR_MODEL = (
+    "jingyunliang/swinir:660d922d33153019e8c263a3bba265de882e7f4f70396546b6c9c8f9d47a021a"
+)
+UPSCALE_MODEL = SWINIR_MODEL  # default upscaler
 SDXL_IMG2IMG_MODEL = (
     "stability-ai/sdxl:7762fd07cf82c948538e41f63f77d685e02b063e37e496e96eefd46c929f9bdc"
 )
@@ -302,7 +306,7 @@ class ReplicateProvider(AIProvider):
         raise ProviderError("Generation failed")
 
     async def upscale_image(self, image: bytes, target_size: int) -> bytes:
-        """Upscale image using Real-ESRGAN on Replicate."""
+        """Upscale image using SwinIR or Real-ESRGAN on Replicate."""
         if not 1024 <= target_size <= 16384:
             raise ValueError(f"Target size must be 1024-16384, got {target_size}")
 
@@ -311,27 +315,47 @@ class ReplicateProvider(AIProvider):
         input_size = max(input_width, input_height)
 
         raw_scale = target_size / input_size
-        if raw_scale <= 2.5:
-            scale = 2
-        elif raw_scale <= 6.0:
-            scale = 4
-        else:
-            scale = 8
 
         for attempt in range(self.max_retries):
             try:
                 with self._image_file_input(image) as image_file:
-                    output = await self._run_prediction(
-                        ESRGAN_MODEL,
-                        {
-                            "image": image_file,
-                            "scale": scale,
-                            "face_enhance": False,
-                        },
-                    )
+                    if "swinir" in UPSCALE_MODEL.lower():
+                        task_type = (
+                            "Real-World Image Super-Resolution-Large"
+                            if raw_scale > 2.0
+                            else "Real-World Image Super-Resolution-Medium"
+                        )
+                        output = await self._run_prediction(
+                            UPSCALE_MODEL,
+                            {"image": image_file, "task_type": task_type},
+                        )
+                    else:
+                        if raw_scale <= 2.5:
+                            scale = 2
+                        elif raw_scale <= 6.0:
+                            scale = 4
+                        else:
+                            scale = 8
+                        output = await self._run_prediction(
+                            UPSCALE_MODEL,
+                            {"image": image_file, "scale": scale, "face_enhance": False},
+                        )
+
                 upscaled_bytes = await self._replicate_output_to_bytes(output)
 
-                logger.info(f"Image upscaled: {input_size}px -> {target_size}px (scale={scale})")
+                # Resize to target if AI output is smaller than target
+                upscaled_img = Image.open(io.BytesIO(upscaled_bytes))
+                longest = max(upscaled_img.width, upscaled_img.height)
+                if longest < target_size:
+                    ratio = target_size / longest
+                    new_w = int(upscaled_img.width * ratio)
+                    new_h = int(upscaled_img.height * ratio)
+                    upscaled_img = upscaled_img.resize((new_w, new_h), Image.LANCZOS)
+                    buf = io.BytesIO()
+                    upscaled_img.save(buf, format="PNG")
+                    upscaled_bytes = buf.getvalue()
+
+                logger.info(f"Image upscaled: {input_size}px -> {target_size}px")
                 return upscaled_bytes
 
             except ProviderRateLimitError:
