@@ -171,14 +171,23 @@ async def tile_upscale(
         )
         upscaled_tile = Image.open(io.BytesIO(upscaled_bytes))
 
-        # Crop out padding regions from the upscaled tile
-        inner_left = t.pad_left * scale
-        inner_top = t.pad_top * scale
-        inner_right = inner_left + t.w * scale
-        inner_bottom = inner_top + t.h * scale
+        # Compute actual scale ratio (ESRGAN may not match our planned scale)
+        actual_ratio_w = upscaled_tile.width / tile_img.width
+        actual_ratio_h = upscaled_tile.height / tile_img.height
+
+        # Crop out padding using the actual upscale ratio
+        inner_left = int(t.pad_left * actual_ratio_w)
+        inner_top = int(t.pad_top * actual_ratio_h)
+        inner_right = int(inner_left + t.w * actual_ratio_w)
+        inner_bottom = int(inner_top + t.h * actual_ratio_h)
         inner_right = min(inner_right, upscaled_tile.width)
         inner_bottom = min(inner_bottom, upscaled_tile.height)
         inner = upscaled_tile.crop((inner_left, inner_top, inner_right, inner_bottom))
+
+        # Resize inner region to target dimensions for consistent stitching
+        target_w = t.w * scale
+        target_h = t.h * scale
+        inner = inner.resize((target_w, target_h), Image.LANCZOS)
 
         paste_x = t.x * scale
         paste_y = t.y * scale
