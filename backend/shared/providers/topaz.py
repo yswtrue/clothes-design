@@ -24,7 +24,7 @@ from shared.providers.config_loader import ProviderConfig
 logger = logging.getLogger(__name__)
 
 TOPAZ_API_BASE = "https://api.topazlabs.com/image/v1"
-TOPAZ_DEFAULT_MODEL = "Standard V2"  # best for fabric/print
+TOPAZ_DEFAULT_MODEL = "High Fidelity V2"  # best for detailed fabric/texture
 TOPAZ_POLL_INTERVAL = 3  # seconds
 TOPAZ_MAX_WAIT = 300  # seconds
 
