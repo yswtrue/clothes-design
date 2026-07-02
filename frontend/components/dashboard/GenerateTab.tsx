@@ -12,6 +12,7 @@ import { GenerateRequest, TaskStatusResponse } from '@/types/generate';
 import MaterialSelector from '@/components/generate/MaterialSelector';
 import { LazyGenerationProgress, LazyPatternResult } from '@/components/LazyComponents';
 import { apiRequest } from '@/lib/api';
+import { triggerMaterialExport } from '@/lib/export';
 
 type GenerateState = 'idle' | 'loading_materials' | 'ready' | 'generating' | 'complete' | 'error' | 'pending_background';
 
@@ -46,6 +47,7 @@ export default function GenerateTab() {
   const [resultDesignId, setResultDesignId] = useState<number | null>(null);
   const [resultPatternUrl, setResultPatternUrl] = useState<string | null>(null);
   const [resultFileName, setResultFileName] = useState<string>('');
+  const [materialTifExporting, setMaterialTifExporting] = useState(false);
 
   useEffect(() => {
     let isMounted = true;
@@ -156,6 +158,25 @@ export default function GenerateTab() {
     } catch (err) {
       setError(err instanceof Error ? err.message : '生成图案失败');
       setState('error');
+    }
+  };
+
+  const handleExportMaterialTif = async () => {
+    if (!selectedMaterial) return;
+
+    setMaterialTifExporting(true);
+    try {
+      const result = await triggerMaterialExport(selectedMaterial.id, 'tif');
+      const link = document.createElement('a');
+      link.href = result.download_url;
+      link.download = `material-${selectedMaterial.id}-CMYK.tif`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '导出原图TIF失败');
+    } finally {
+      setMaterialTifExporting(false);
     }
   };
 
@@ -314,6 +335,14 @@ export default function GenerateTab() {
                   className="w-full rounded-md bg-zinc-950 dark:bg-zinc-50 px-4 py-3 text-sm font-medium text-white dark:text-zinc-950 hover:bg-zinc-800 dark:hover:bg-zinc-200 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   {state === 'generating' ? '生成中...' : '生成图案'}
+                </button>
+
+                <button
+                  onClick={handleExportMaterialTif}
+                  disabled={materialTifExporting || state === 'generating'}
+                  className="w-full rounded-md border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 px-4 py-3 text-sm font-medium text-zinc-950 dark:text-zinc-50 hover:bg-zinc-50 dark:hover:bg-zinc-800 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {materialTifExporting ? '导出中...' : '导出原图TIF (CMYK · 300DPI)'}
                 </button>
               </>
             )}

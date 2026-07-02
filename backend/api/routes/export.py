@@ -1,5 +1,6 @@
 """Export API endpoints for high-resolution SVG and TIF CMYK exports."""
 
+from pathlib import Path
 from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -10,7 +11,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from api.auth.dependencies import get_current_user
 from api.db.base import get_session
 from api.db.models import GeneratedDesign, Material, User
-from api.storage.storages import output_tif_storage, upscaled_storage, vector_storage
+from api.storage.converter import png_to_tif
+from api.storage.storages import (
+    material_storage,
+    output_tif_storage,
+    upscaled_storage,
+    vector_storage,
+)
 from shared.task_queue import (
     enqueue_task,
     get_task_status,
@@ -156,6 +163,70 @@ async def trigger_export(
         generated_design_id=generated_design_id,
         format=format,
         status="pending",
+    )
+
+
+class MaterialExportResponse(BaseModel):
+    material_id: int
+    format: ExportFormat
+    status: str = "exported"
+    download_url: str
+    file_size: int | None = None
+
+
+@router.post(
+    "/materials/{material_id}",
+    response_model=MaterialExportResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def export_material_as_tif(
+    material_id: int,
+    session: _session_dep,
+    current_user: _user_dep,
+    format: ExportFormat = Query(default="tif", description="Export format (only tif supported)"),
+):
+    if format != "tif":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Only TIF format is supported for material direct export",
+        )
+
+    result = await session.execute(
+        select(Material).where(
+            Material.id == material_id,
+            Material.uploaded_by == current_user.id,
+        )
+    )
+    material = result.scalar_one_or_none()
+
+    if not material:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Material not found",
+        )
+
+    if not material.file or not material.stored_filename:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Material has no file to export",
+        )
+
+    image_bytes = await material_storage.download(material.stored_filename)
+    tif_bytes = png_to_tif(image_bytes, color_space="CMYK", dpi=300)
+
+    original_stem = material.original_filename or f"material-{material_id}"
+    stem = Path(original_stem).stem if "." in (original_stem or "") else original_stem
+    tif_filename = f"material_{material_id}_{stem}_CMYK.tif"
+
+    await output_tif_storage.upload(tif_bytes, tif_filename)
+    download_url = output_tif_storage.get_url(tif_filename)
+
+    return MaterialExportResponse(
+        material_id=material_id,
+        format=format,
+        status="exported",
+        download_url=download_url,
+        file_size=len(tif_bytes),
     )
 
 

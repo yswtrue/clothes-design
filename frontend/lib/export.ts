@@ -10,6 +10,23 @@ export async function triggerExport(designId: number, format: ExportFormat = 'sv
   );
 }
 
+export interface MaterialExportResponse {
+  material_id: number;
+  format: ExportFormat;
+  status: string;
+  download_url: string;
+  file_size: number | null;
+}
+
+export async function triggerMaterialExport(materialId: number, format: ExportFormat = 'tif'): Promise<MaterialExportResponse> {
+  return apiRequest<MaterialExportResponse>(
+    `/api/export/materials/${materialId}?format=${format}`,
+    {
+      method: 'POST',
+    }
+  );
+}
+
 export async function fetchExportStatus(taskId: string): Promise<ExportStatusResponse> {
   return apiRequest<ExportStatusResponse>(`/api/export/tasks/${taskId}`);
 }
