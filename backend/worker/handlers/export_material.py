@@ -113,6 +113,9 @@ class ExportMaterialHandler(TaskHandler):
                 f"(target: {target_resolution}px, {color_space}, {dpi} DPI)"
             )
 
+            # Allow large images (Topaz output can exceed PIL default limit)
+            Image.MAX_IMAGE_PIXELS = None
+
             # Step 1: Download original material image
             self.logger.info(f"Downloading material image: {stored_filename}")
             original_bytes = await material_storage.download(stored_filename)
