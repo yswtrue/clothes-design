@@ -43,6 +43,7 @@ export default function GenerateTab() {
   const [customPrompt, setCustomPrompt] = useState('');
   const [taskStatus, setTaskStatus] = useState<TaskStatusResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [resultDesignId, setResultDesignId] = useState<number | null>(null);
   const [resultPatternUrl, setResultPatternUrl] = useState<string | null>(null);
   const [resultFileName, setResultFileName] = useState<string>('');
 
@@ -118,6 +119,7 @@ export default function GenerateTab() {
       };
 
       const response = await submitGeneration(request);
+      setResultDesignId(response.design_id);
       setTaskStatus(response);
 
       const completedTask = await pollTaskStatus(response.task_id, (task) => {
@@ -165,6 +167,7 @@ export default function GenerateTab() {
     setError(null);
     setResultPatternUrl(null);
     setResultFileName('');
+    setResultDesignId(null);
     setState('ready');
   };
 
@@ -328,11 +331,12 @@ export default function GenerateTab() {
         </div>
       )}
 
-      {state === 'complete' && resultPatternUrl && (
+      {state === 'complete' && resultPatternUrl && resultDesignId && (
         <div className="max-w-2xl mx-auto">
           <LazyPatternResult
             patternUrl={resultPatternUrl}
             fileName={resultFileName}
+            designId={resultDesignId}
             onGenerateAnother={handleReset}
           />
         </div>
