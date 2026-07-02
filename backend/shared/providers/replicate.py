@@ -334,7 +334,16 @@ class ReplicateProvider(AIProvider):
                 logger.info(f"Image upscaled: {input_size}px -> {target_size}px (scale={scale})")
                 return upscaled_bytes
 
-            except (ProviderTimeoutError, ProviderRateLimitError):
+            except ProviderRateLimitError:
+                if attempt == self.max_retries - 1:
+                    raise
+                wait = 15 * (attempt + 1)  # 15s, 30s, 45s — rate limit window is 60s
+                logger.warning(
+                    f"Rate limited on upscale attempt {attempt + 1}/{self.max_retries}, "
+                    f"waiting {wait}s..."
+                )
+                await asyncio.sleep(wait)
+            except ProviderTimeoutError:
                 if attempt == self.max_retries - 1:
                     raise
                 await asyncio.sleep(2**attempt)
