@@ -104,6 +104,15 @@ class Material(SoftDeleteMixin, table=True):
     file_size: Optional[int] = Field(default=None)
     mime_type: Optional[str] = Field(default=None, max_length=100)
     file: Any = Field(default=None, sa_column=Column("storage_path", FileType(storage=material_storage), nullable=False))
+    upscaled_image: Any = Field(
+        default=None,
+        sa_column=Column("upscaled_path", FileType(storage=upscaled_storage), nullable=True),
+    )
+    export_tif: Any = Field(
+        default=None,
+        sa_column=Column("export_tif_path", FileType(storage=output_tif_storage), nullable=True),
+    )
+    exported_at: Optional[datetime] = Field(default=None)
     meta: Optional[dict] = Field(default=None, sa_column=Column(JSON))
     created_at: Optional[datetime] = Field(
         default=None, sa_column_kwargs={"server_default": func.now()}, index=True

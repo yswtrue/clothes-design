@@ -12,7 +12,7 @@ import { GenerateRequest, TaskStatusResponse } from '@/types/generate';
 import MaterialSelector from '@/components/generate/MaterialSelector';
 import { LazyGenerationProgress, LazyPatternResult } from '@/components/LazyComponents';
 import { apiRequest } from '@/lib/api';
-import { triggerMaterialExport } from '@/lib/export';
+import { triggerMaterialExport, pollExportStatus } from '@/lib/export';
 
 type GenerateState = 'idle' | 'loading_materials' | 'ready' | 'generating' | 'complete' | 'error' | 'pending_background';
 
@@ -165,14 +165,38 @@ export default function GenerateTab() {
     if (!selectedMaterial) return;
 
     setMaterialTifExporting(true);
+    setError(null);
     try {
-      const result = await triggerMaterialExport(selectedMaterial.id, 'tif');
-      const link = document.createElement('a');
-      link.href = result.download_url;
-      link.download = `material-${selectedMaterial.id}-CMYK.tif`;
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
+      const response = await triggerMaterialExport(selectedMaterial.id, 'tif', 12000);
+
+      // Already exported (cached) — direct download
+      if (!response.task_id && response.status === 'exported' && response.download_url) {
+        const link = document.createElement('a');
+        link.href = response.download_url;
+        link.download = `material-${selectedMaterial.id}-12K-CMYK.tif`;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        return;
+      }
+
+      if (!response.task_id) {
+        throw new Error('未获取到任务ID');
+      }
+
+      // Poll until complete
+      const completedStatus = await pollExportStatus(response.task_id);
+
+      if (completedStatus.status === 'exported' && completedStatus.download_url) {
+        const link = document.createElement('a');
+        link.href = completedStatus.download_url;
+        link.download = `material-${selectedMaterial.id}-12K-CMYK.tif`;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+      } else if (completedStatus.status === 'failed') {
+        throw new Error(completedStatus.error || '导出TIF失败');
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : '导出原图TIF失败');
     } finally {

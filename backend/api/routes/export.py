@@ -1,6 +1,5 @@
 """Export API endpoints for high-resolution SVG and TIF CMYK exports."""
 
-from pathlib import Path
 from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -11,9 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from api.auth.dependencies import get_current_user
 from api.db.base import get_session
 from api.db.models import GeneratedDesign, Material, User
-from api.storage.converter import png_to_tif
 from api.storage.storages import (
-    material_storage,
     output_tif_storage,
     upscaled_storage,
     vector_storage,
@@ -167,11 +164,11 @@ async def trigger_export(
 
 
 class MaterialExportResponse(BaseModel):
+    task_id: str | None = None
     material_id: int
     format: ExportFormat
-    status: str = "exported"
-    download_url: str
-    file_size: int | None = None
+    status: str = "pending"
+    download_url: str | None = None
 
 
 @router.post(
@@ -179,11 +176,12 @@ class MaterialExportResponse(BaseModel):
     response_model=MaterialExportResponse,
     status_code=status.HTTP_201_CREATED,
 )
-async def export_material_as_tif(
+async def export_material(
     material_id: int,
     session: _session_dep,
     current_user: _user_dep,
     format: ExportFormat = Query(default="tif", description="Export format (only tif supported)"),
+    target_resolution: int = Query(default=12000, ge=1024, le=16384, description="Target resolution in pixels"),
 ):
     if format != "tif":
         raise HTTPException(
@@ -211,22 +209,44 @@ async def export_material_as_tif(
             detail="Material has no file to export",
         )
 
-    image_bytes = await material_storage.download(material.stored_filename)
-    tif_bytes = png_to_tif(image_bytes, color_space="CMYK", dpi=300)
+    # Check for cached export — if already exported via this endpoint, return immediately
+    existing_tif = _get_file_path(material.export_tif) if hasattr(material, "export_tif") else None
+    if existing_tif:
+        return MaterialExportResponse(
+            task_id=None,
+            material_id=material_id,
+            format=format,
+            status="exported",
+            download_url=output_tif_storage.get_url(existing_tif),
+        )
 
-    original_stem = material.original_filename or f"material-{material_id}"
-    stem = Path(original_stem).stem if "." in (original_stem or "") else original_stem
-    tif_filename = f"material_{material_id}_{stem}_CMYK.tif"
+    acquired = await acquire_export_slot()
+    if not acquired:
+        current_count = await get_export_slot_count()
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=f"Export queue full ({current_count}/{EXPORT_MAX_CONCURRENT}). Please try again later.",
+        )
 
-    await output_tif_storage.upload(tif_bytes, tif_filename)
-    download_url = output_tif_storage.get_url(tif_filename)
+    task_data = {
+        "material_id": material_id,
+        "stored_filename": material.stored_filename,
+        "target_resolution": target_resolution,
+        "color_space": "CMYK",
+        "dpi": 300,
+    }
+
+    task_id = await enqueue_task(
+        task_type="export_material",
+        user_id=current_user.id,
+        data=task_data,
+    )
 
     return MaterialExportResponse(
+        task_id=task_id,
         material_id=material_id,
         format=format,
-        status="exported",
-        download_url=download_url,
-        file_size=len(tif_bytes),
+        status="pending",
     )
 
 
@@ -251,7 +271,9 @@ async def get_export_status(
         )
 
     generated_design_id = task_status.data.get("generated_design_id") if task_status.data else None
-    export_format = task_status.data.get("format", "svg") if task_status.data else "svg"
+    mat_id = task_status.data.get("material_id") if task_status.data else None
+    design_id = generated_design_id or mat_id
+    export_format = task_status.data.get("format", "tif") if task_status.data else "tif"
     current_step = None
     progress = 0
     download_url = None
@@ -286,7 +308,7 @@ async def get_export_status(
 
     return ExportStatusResponse(
         task_id=task_id,
-        generated_design_id=generated_design_id,
+        generated_design_id=design_id,
         format=export_format,
         status=export_status,
         progress=progress,

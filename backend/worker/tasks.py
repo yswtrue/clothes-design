@@ -83,10 +83,19 @@ async def fabric_segment_task(task_data: dict[str, Any]) -> dict[str, Any]:
     return await handler.handle(task_data)
 
 
+@broker.task(task_name="worker.tasks.export_material")
+async def export_material_task(task_data: dict[str, Any]) -> dict[str, Any]:
+    from worker.handlers.export_material import ExportMaterialHandler
+
+    handler = ExportMaterialHandler()
+    return await handler.handle(task_data)
+
+
 __all__ = [
     "analyze_task",
     "clo3d_render_task",
     "ecommerce_poster_task",
+    "export_material_task",
     "export_pattern_task",
     "fabric_segment_task",
     "generate_task",
