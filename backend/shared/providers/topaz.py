@@ -143,7 +143,7 @@ class TopazProvider(AIProvider):
     async def _download_result(self, process_id: str) -> bytes:
         """Download the enhanced image."""
         data = await self._request("GET", f"/download/{process_id}")
-        download_url = data.get("url")
+        download_url = data.get("download_url") or data.get("url")
         if not download_url:
             raise ProviderError(f"No download URL in response: {data}")
 
