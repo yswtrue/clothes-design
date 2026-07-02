@@ -5,12 +5,11 @@ Authentication via X-API-KEY header.
 """
 
 import asyncio
-import io
 import logging
 import os
 from typing import Any
 
-import aiohttp
+import httpx
 
 from shared.ai.base import AIProvider
 from shared.ai.exceptions import (
@@ -52,6 +51,11 @@ class TopazProvider(AIProvider):
         self.model = model or TOPAZ_DEFAULT_MODEL
         self.timeout = timeout
         self.max_retries = max_retries
+        self._http = httpx.AsyncClient(
+            base_url=TOPAZ_API_BASE,
+            headers={"X-API-KEY": self.api_key},
+            timeout=httpx.Timeout(60),
+        )
 
     @classmethod
     def from_config(cls, config: ProviderConfig) -> "TopazProvider":
@@ -60,57 +64,54 @@ class TopazProvider(AIProvider):
             model=config.config.get("model") if config.config else None,
         )
 
-    async def _request(self, method: str, path: str, **kwargs) -> dict[str, Any]:
+    async def _request(
+        self, method: str, path: str, timeout: float | None = None, **kwargs
+    ) -> dict[str, Any]:
         """Make an authenticated request to the Topaz API."""
-        headers = {"X-API-KEY": self.api_key}
-        if "headers" in kwargs:
-            headers.update(kwargs.pop("headers"))
-        timeout = kwargs.pop("timeout", aiohttp.ClientTimeout(total=60))
+        req = self._http.build_request(method, path, **kwargs)
+        resp = await self._http.send(
+            req, timeout=httpx.Timeout(timeout) if timeout else None
+        )
 
-        url = f"{TOPAZ_API_BASE}{path}"
-        async with aiohttp.ClientSession() as session:
-            async with session.request(
-                method,
-                url,
-                headers=headers,
-                timeout=timeout,
-                **kwargs,
-            ) as response:
-                if response.status == 429:
-                    raise ProviderRateLimitError("Topaz API rate limited")
-                if response.status == 401:
-                    raise ProviderConfigurationError("Invalid Topaz API key")
-                if response.status >= 500:
-                    raise ProviderError(f"Topaz server error: {response.status}")
-                response.raise_for_status()
-                return await response.json()
+        if resp.status_code == 429:
+            raise ProviderRateLimitError("Topaz API rate limited")
+        if resp.status_code == 401:
+            raise ProviderConfigurationError("Invalid Topaz API key")
+        if resp.status_code >= 500:
+            raise ProviderError(f"Topaz server error: {resp.status_code}")
+        resp.raise_for_status()
+        return resp.json()
 
     async def _submit_enhance(self, image_bytes: bytes, output_width: int) -> str:
         """Submit an async enhance job. Returns process_id."""
-        form = aiohttp.FormData()
-        form.add_field("model", self.model)
-        form.add_field("output_format", "png")
-        form.add_field("output_width", str(output_width))
-        form.add_field("image", image_bytes, content_type="image/png", filename="input.png")
+        files = {"image": ("input.png", image_bytes, "image/png")}
+        data = {
+            "model": self.model,
+            "output_format": "png",
+            "output_width": str(output_width),
+        }
 
         for attempt in range(self.max_retries):
             try:
-                data = await self._request(
+                resp_data = await self._request(
                     "POST",
                     "/enhance/async",
-                    data=form,
-                    timeout=aiohttp.ClientTimeout(total=120),
+                    timeout=120,
+                    data=data,
+                    files=files,
                 )
-                process_id = data.get("process_id")
+                process_id = resp_data.get("process_id")
                 if not process_id:
-                    raise ProviderError(f"No process_id in response: {data}")
+                    raise ProviderError(f"No process_id in response: {resp_data}")
                 logger.info(f"Topaz enhance submitted: process_id={process_id}")
                 return process_id
             except (ProviderRateLimitError, ProviderTimeoutError) as e:
                 if attempt == self.max_retries - 1:
                     raise
                 wait = 5 * (attempt + 1)
-                logger.warning(f"Topaz submit retry {attempt + 1}/{self.max_retries} in {wait}s: {e}")
+                logger.warning(
+                    f"Topaz submit retry {attempt + 1}/{self.max_retries} in {wait}s: {e}"
+                )
                 await asyncio.sleep(wait)
 
         raise ProviderError("Failed to submit Topaz enhance job")
@@ -147,24 +148,12 @@ class TopazProvider(AIProvider):
             raise ProviderError(f"No download URL in response: {data}")
 
         logger.info(f"Downloading Topaz result: {download_url}")
-        async with aiohttp.ClientSession() as session:
-            async with session.get(
-                download_url,
-                timeout=aiohttp.ClientTimeout(total=120),
-            ) as response:
-                response.raise_for_status()
-                return await response.read()
+        resp = await self._http.get(download_url, timeout=httpx.Timeout(120))
+        resp.raise_for_status()
+        return resp.content
 
     async def upscale_image(self, image: bytes, target_size: int) -> bytes:
-        """Upscale image to target_size using Topaz Gigapixel.
-
-        Args:
-            image: Source image bytes
-            target_size: Target width/height in pixels
-
-        Returns:
-            Upscaled image as PNG bytes
-        """
+        """Upscale image to target_size using Topaz Gigapixel."""
         if not 256 <= target_size <= 32768:
             raise ValueError(f"Target size must be 256-32768, got {target_size}")
 
@@ -174,7 +163,7 @@ class TopazProvider(AIProvider):
         await self._poll_status(process_id)
         result = await self._download_result(process_id)
 
-        logger.info(f"Topaz upscale complete: {len(image)} → {len(result)} bytes")
+        logger.info(f"Topaz upscale complete: {len(image)} -> {len(result)} bytes")
         return result
 
     # Stub methods — Topaz is upscale-only
