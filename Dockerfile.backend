@@ -17,8 +17,10 @@ FROM python:3.13-slim
 
 WORKDIR /app
 
-# Install runtime dependencies
-RUN apt-get update && apt-get install -y --no-install-recommends \
+# Install runtime dependencies (with apt cache mount)
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt,sharing=locked \
+    apt-get update && apt-get install -y --no-install-recommends \
     curl \
     postgresql-client \
     && rm -rf /var/lib/apt/lists/*

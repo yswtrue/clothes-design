@@ -1,0 +1,49 @@
+# Python
+**/__pycache__
+**/*.pyc
+**/*.pyo
+**/*.egg-info
+**/.venv
+**/venv
+**/.ruff_cache
+**/.pytest_cache
+**/*.egg
+
+# Node / Frontend (not needed in backend/worker context)
+frontend/
+**/node_modules
+**/.next
+
+# IDE & OS
+**/.vscode
+**/.idea
+**/.DS_Store
+Thumbs.db
+
+# Git
+.git
+.gitignore
+.gitattributes
+
+# Uploads & local data
+**/uploads
+**/*.db
+**/*.sqlite3
+
+# Docker
+.docker
+docker-compose*.yml
+Dockerfile*
+
+# CI/CD
+.github
+
+# Docs & misc
+docs/
+*.md
+LICENSE
+
+# Environment
+.env
+.env.*
+*.log
