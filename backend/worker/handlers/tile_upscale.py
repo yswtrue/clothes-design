@@ -133,7 +133,19 @@ async def tile_upscale(
 
     # Build tile grid
     tiles = _grid_tiles(src_w, src_h, tile_size, pad)
-    tile_target_max = min(tile_size * scale, 4096)  # cap per-tile output at 4K
+    # Target tile output so ESRGAN uses the right scale factor:
+    #   scale=2 →  output ~2× input  (for scale=2 plans)
+    #   scale=4 →  output ~4× input  (for scale=4 plans)  
+    #   scale=8 →  output ~8× input  (for scale=6,8 plans — oversample then downscale)
+    # ESRGAN rounds 2/4/8 based on raw_scale = target/input:
+    #   raw_scale ≤ 2.5 → 2x,  ≤ 6.0 → 4x,  > 6.0 → 8x
+    # To force 8x when we need it, set tile_target > input * 6.0
+    if scale <= 3:
+        tile_target_ratio = 2.5  # triggers scale=2
+    elif scale <= 5:
+        tile_target_ratio = 5.0  # triggers scale=4
+    else:
+        tile_target_ratio = 8.0  # triggers scale=8 — oversample for quality
 
     logger.info(
         f"Tile upscale: {src_w}×{src_h} → {canvas_w}×{canvas_h} "
@@ -150,9 +162,9 @@ async def tile_upscale(
         crop_bottom = t.y + t.h + t.pad_bottom
         tile_img = img.crop((crop_left, crop_top, crop_right, crop_bottom))
 
-        # Determine upscale target for this tile
+        # Determine upscale target for this tile — oversample then downscale
         tile_longest = max(tile_img.width, tile_img.height)
-        tile_target = min(tile_longest * scale, tile_target_max)
+        tile_target = int(tile_longest * tile_target_ratio)
 
         # Convert to bytes and upscale
         buf = io.BytesIO()
