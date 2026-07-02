@@ -51,7 +51,7 @@ logger = logging.getLogger(__name__)
 SDXL_MODEL = "stability-ai/sdxl:7762fd07cf82c948538e41f63f77d685e02b063e37e496e96eefd46c929f9bdc"
 FLUX_MODEL = "black-forest-labs/flux-schnell"
 ESRGAN_MODEL = (
-    "lucataco/real-esrgan:3febd19381dd7e1f52a3ed3260b5b0a5636353de45e37e7c1c3cd814b24077a3"
+    "daanelson/real-esrgan-a100:bc890b34097a3a84a2a62182ef669a984311e457d97bd78a37b3382adec57121"
 )
 SDXL_IMG2IMG_MODEL = (
     "stability-ai/sdxl:7762fd07cf82c948538e41f63f77d685e02b063e37e496e96eefd46c929f9bdc"
