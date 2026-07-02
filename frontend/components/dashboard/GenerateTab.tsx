@@ -48,6 +48,7 @@ export default function GenerateTab() {
   const [resultPatternUrl, setResultPatternUrl] = useState<string | null>(null);
   const [resultFileName, setResultFileName] = useState<string>('');
   const [materialTifExporting, setMaterialTifExporting] = useState(false);
+  const [materialTifError, setMaterialTifError] = useState<string | null>(null);
 
   useEffect(() => {
     let isMounted = true;
@@ -165,6 +166,7 @@ export default function GenerateTab() {
     if (!selectedMaterial) return;
 
     setMaterialTifExporting(true);
+    setMaterialTifError(null);
     setError(null);
     try {
       const response = await triggerMaterialExport(selectedMaterial.id, 'tif', 12000);
@@ -198,7 +200,7 @@ export default function GenerateTab() {
         throw new Error(completedStatus.error || '导出TIF失败');
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : '导出原图TIF失败');
+      setMaterialTifError(err instanceof Error ? err.message : '导出原图TIF失败');
     } finally {
       setMaterialTifExporting(false);
     }
@@ -368,6 +370,12 @@ export default function GenerateTab() {
                 >
                   {materialTifExporting ? '导出中...' : '导出原图TIF (CMYK · 300DPI)'}
                 </button>
+
+                {materialTifError && (
+                  <div className="rounded-md border border-red-200 dark:border-red-800 bg-red-50 dark:bg-red-900/20 px-4 py-3">
+                    <p className="text-sm text-red-700 dark:text-red-300">{materialTifError}</p>
+                  </div>
+                )}
               </>
             )}
           </div>
