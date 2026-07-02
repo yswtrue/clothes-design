@@ -212,6 +212,25 @@ class ExportPatternHandler(TaskHandler):
         self.logger.info(f"Downloading pattern: {context.image_filename}")
         upscaler = await self._get_upscaler()
         self.logger.info(f"Upscaling pattern to {target_resolution}px")
+
+        # Pre-resize if image exceeds GPU memory limits
+        GPU_SAFE_PIXELS = 2_000_000  # Replicate ESRGAN GPU limit ≈ 2,096,704
+        img = Image.open(io.BytesIO(pattern_bytes))
+        w, h = img.size
+        if w * h > GPU_SAFE_PIXELS:
+            ratio = (GPU_SAFE_PIXELS / (w * h)) ** 0.5
+            new_w = int(w * ratio)
+            new_h = int(h * ratio)
+            img = img.resize((new_w, new_h), Image.LANCZOS)
+            buf = io.BytesIO()
+            img.save(buf, format="PNG")
+            pattern_bytes = buf.getvalue()
+            original_size = max(new_w, new_h)
+            self.logger.info(
+                f"Pre-resized for GPU: {w}×{h} → {new_w}×{new_h} "
+                f"({w * h:,} → {new_w * new_h:,} pixels)"
+            )
+
         try:
             upscaled_bytes = await upscaler.upscale_image(pattern_bytes, target_resolution)
         except AIProviderError as e:
