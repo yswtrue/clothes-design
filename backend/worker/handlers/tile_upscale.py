@@ -4,17 +4,24 @@ Splits large images into overlapping tiles, upscales each tile via the
 AI upscaler, then stitches them back into a single high-resolution image.
 """
 
+import asyncio
 import io
 import logging
 from dataclasses import dataclass
 
 from PIL import Image
 
+from shared.ai.exceptions import ProviderRateLimitError
+
 logger = logging.getLogger(__name__)
 
 # GPU-safe tile size — ESRGAN on Replicate handles up to ~2M pixels per tile
 TILE_SIZE = 1024
 TILE_PAD = 64  # overlap padding to avoid seam artifacts
+# Replicate free tier: 6 requests/min, burst=1 → ~12s between tiles safely
+TILE_DELAY_SECONDS = 12.0
+# Rate limit retry
+MAX_RATE_LIMIT_RETRIES = 5
 
 
 @dataclass
@@ -61,12 +68,38 @@ def _grid_tiles(img_w: int, img_h: int, tile_size: int, pad: int) -> list[_TileM
     return tiles
 
 
+async def _upscale_with_retry(
+    upscale_fn,
+    tile_bytes: bytes,
+    tile_target: int,
+    tile_idx: int,
+    total_tiles: int,
+    delay: float,
+) -> bytes:
+    """Upscale a single tile with rate-limit retry logic."""
+    for retry in range(MAX_RATE_LIMIT_RETRIES):
+        try:
+            return await upscale_fn(tile_bytes, tile_target)
+        except ProviderRateLimitError:
+            if retry == MAX_RATE_LIMIT_RETRIES - 1:
+                raise
+            wait = delay * (retry + 1)
+            logger.warning(
+                f"Tile {tile_idx + 1}/{total_tiles} rate limited, "
+                f"retry {retry + 1}/{MAX_RATE_LIMIT_RETRIES} in {wait:.0f}s"
+            )
+            await asyncio.sleep(wait)
+    # This line is unreachable but keeps type checkers happy
+    raise ProviderRateLimitError("Max rate-limit retries exceeded")
+
+
 async def tile_upscale(
     img_bytes: bytes,
     target_size: int,
     upscale_fn,
     tile_size: int = TILE_SIZE,
     pad: int = TILE_PAD,
+    delay_between_tiles: float = TILE_DELAY_SECONDS,
 ) -> bytes:
     """Upscale an image via tiled processing.
 
@@ -80,6 +113,7 @@ async def tile_upscale(
         upscale_fn: Async fn(tile_bytes, tile_target) -> upscaled_bytes
         tile_size: Size of each tile in pixels (source resolution)
         pad: Overlap padding around each tile to avoid seams
+        delay_between_tiles: Seconds to wait between tiles (for rate limiting)
 
     Returns:
         Upscaled stitched image as PNG bytes
@@ -131,26 +165,28 @@ async def tile_upscale(
                 f"{tile_img.width}×{tile_img.height} → {tile_target}px"
             )
 
-        upscaled_bytes = await upscale_fn(tile_bytes, tile_target)
+        upscaled_bytes = await _upscale_with_retry(
+            upscale_fn, tile_bytes, tile_target,
+            idx, len(tiles), delay_between_tiles,
+        )
         upscaled_tile = Image.open(io.BytesIO(upscaled_bytes))
 
         # Crop out padding regions from the upscaled tile
-        # The padding was scaled up along with the core region
         inner_left = t.pad_left * scale
         inner_top = t.pad_top * scale
         inner_right = inner_left + t.w * scale
         inner_bottom = inner_top + t.h * scale
-
-        # Clamp to actual upscaled tile size (may differ from expected)
         inner_right = min(inner_right, upscaled_tile.width)
         inner_bottom = min(inner_bottom, upscaled_tile.height)
-
         inner = upscaled_tile.crop((inner_left, inner_top, inner_right, inner_bottom))
 
-        # Paste onto canvas at the correct position
         paste_x = t.x * scale
         paste_y = t.y * scale
         canvas.paste(inner, (paste_x, paste_y))
+
+        # Rate-limit delay between tiles
+        if idx < len(tiles) - 1:
+            await asyncio.sleep(delay_between_tiles)
 
     # Final resize if canvas doesn't match target exactly
     canvas_longest = max(canvas_w, canvas_h)
