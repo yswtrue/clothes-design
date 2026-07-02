@@ -68,9 +68,9 @@ class TopazProvider(AIProvider):
         self, method: str, path: str, timeout: float | None = None, **kwargs
     ) -> dict[str, Any]:
         """Make an authenticated request to the Topaz API."""
-        req = self._http.build_request(method, path, **kwargs)
-        resp = await self._http.send(
-            req, timeout=httpx.Timeout(timeout) if timeout else None
+        req_timeout = httpx.Timeout(timeout) if timeout else None
+        resp = await self._http.request(
+            method, path, timeout=req_timeout, **kwargs
         )
 
         if resp.status_code == 429:
