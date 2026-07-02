@@ -184,8 +184,8 @@ export default function GenerateTab() {
         throw new Error('未获取到任务ID');
       }
 
-      // Poll until complete
-      const completedStatus = await pollExportStatus(response.task_id);
+      // Poll until complete (longer timeout for tiled upscaling)
+      const completedStatus = await pollExportStatus(response.task_id, undefined, 60, 5000);
 
       if (completedStatus.status === 'exported' && completedStatus.download_url) {
         const link = document.createElement('a');

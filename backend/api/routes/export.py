@@ -22,6 +22,7 @@ from shared.task_queue import (
     get_export_slot_count,
     EXPORT_MAX_CONCURRENT,
 )
+from shared.task_queue.redis_client import get_redis_client
 
 router = APIRouter(prefix="/api/export", tags=["export"])
 
@@ -220,6 +221,21 @@ async def export_material(
             download_url=output_tif_storage.get_url(existing_tif),
         )
 
+    # Check for already-running export task (dedup)
+    redis_client = await get_redis_client()
+    if redis_client:
+        existing_task_id = await redis_client.get(f"mat_export:{material_id}")
+        if existing_task_id:
+            existing_task_id = existing_task_id.decode() if isinstance(existing_task_id, bytes) else existing_task_id
+            task_status = await get_task_status(existing_task_id)
+            if task_status and task_status.status in ("pending", "processing"):
+                return MaterialExportResponse(
+                    task_id=existing_task_id,
+                    material_id=material_id,
+                    format=format,
+                    status="pending",
+                )
+
     acquired = await acquire_export_slot()
     if not acquired:
         current_count = await get_export_slot_count()
@@ -241,6 +257,10 @@ async def export_material(
         user_id=current_user.id,
         data=task_data,
     )
+
+    # Set dedup key so re-clicks return the same task_id
+    if redis_client:
+        await redis_client.setex(f"mat_export:{material_id}", 600, task_id)
 
     return MaterialExportResponse(
         task_id=task_id,
