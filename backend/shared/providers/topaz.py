@@ -65,6 +65,7 @@ class TopazProvider(AIProvider):
         headers = {"X-API-KEY": self.api_key}
         if "headers" in kwargs:
             headers.update(kwargs.pop("headers"))
+        timeout = kwargs.pop("timeout", aiohttp.ClientTimeout(total=60))
 
         url = f"{TOPAZ_API_BASE}{path}"
         async with aiohttp.ClientSession() as session:
@@ -72,7 +73,7 @@ class TopazProvider(AIProvider):
                 method,
                 url,
                 headers=headers,
-                timeout=aiohttp.ClientTimeout(total=60),
+                timeout=timeout,
                 **kwargs,
             ) as response:
                 if response.status == 429:
