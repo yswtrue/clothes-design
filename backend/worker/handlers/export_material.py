@@ -123,7 +123,7 @@ class ExportMaterialHandler(TaskHandler):
             # single-shot for GPU-safe sizes
             upscaler = await self._get_upscaler()
 
-            GPU_SAFE_PIXELS = 2_000_000  # Replicate ESRGAN GPU limit ≈ 2,096,704
+            GPU_SAFE_PIXELS = 50_000_000  # A100 80GB — only tile for truly massive images
             img = Image.open(io.BytesIO(original_bytes))
             w, h = img.size
             needs_tiling = w * h > GPU_SAFE_PIXELS
