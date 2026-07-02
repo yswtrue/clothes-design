@@ -119,13 +119,16 @@ class ExportMaterialHandler(TaskHandler):
             original_size = Image.open(io.BytesIO(original_bytes)).size[0]
             self.logger.info(f"Original image size: {original_size}px, {len(original_bytes)} bytes")
 
-            # Step 2: AI upscale — tile for GPU-safe single tiles
+            # Step 2: AI upscale — tile for GPU-limited models, direct for Topaz
             upscaler = await self._get_upscaler()
 
             GPU_SAFE_PIXELS = 2_000_000  # All Replicate models: 2,096,704 pixel limit
             img = Image.open(io.BytesIO(original_bytes))
             w, h = img.size
-            needs_tiling = w * h > GPU_SAFE_PIXELS
+            needs_tiling = (
+                w * h > GPU_SAFE_PIXELS
+                and "topaz" not in upscaler.__class__.__name__.lower()
+            )
 
             if needs_tiling:
                 self.logger.info(

@@ -13,6 +13,7 @@ DEFAULT_BASE_URLS = {
     "openai": "https://api.openai.com/v1",
     "openai_image_edit": "https://api.openai.com/v1",
     "replicate": "https://api.replicate.com/v1",
+    "topaz": "https://api.topazlabs.com/image/v1",
     "vectorizer_ai": "https://api.vectorizer.ai/api/v1",
 }
 
