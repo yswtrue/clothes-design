@@ -1,3 +1,5 @@
+export type ExportContentType = 'line-art' | 'pattern';
+
 export type ExportFormat = 'svg' | 'tif';
 
 export interface ExportResponse {

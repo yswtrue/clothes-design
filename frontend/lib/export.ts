@@ -1,9 +1,14 @@
-import type { ExportFormat, ExportResponse, ExportStatusResponse } from '@/types/export';
+import type { ExportContentType, ExportFormat, ExportResponse, ExportStatusResponse } from '@/types/export';
 import { apiRequest } from './api';
 
-export async function triggerExport(designId: number, format: ExportFormat = 'svg'): Promise<ExportResponse> {
+export async function triggerExport(
+  designId: number,
+  format: ExportFormat = 'svg',
+  contentType: ExportContentType = 'pattern',
+  sharpen: boolean = false,
+): Promise<ExportResponse> {
   return apiRequest<ExportResponse>(
-    `/api/export/generated-designs/${designId}?format=${format}`,
+    `/api/export/generated-designs/${designId}?format=${format}&content_type=${contentType}&sharpen=${sharpen}`,
     {
       method: 'POST',
     }
@@ -21,10 +26,12 @@ export interface MaterialExportResponse {
 export async function triggerMaterialExport(
   materialId: number,
   format: ExportFormat = 'tif',
+  contentType: ExportContentType = 'pattern',
+  sharpen: boolean = false,
   targetResolution: number = 12000,
 ): Promise<MaterialExportResponse> {
   return apiRequest<MaterialExportResponse>(
-    `/api/export/materials/${materialId}?format=${format}&target_resolution=${targetResolution}`,
+    `/api/export/materials/${materialId}?format=${format}&content_type=${contentType}&sharpen=${sharpen}&target_resolution=${targetResolution}`,
     {
       method: 'POST',
     }
