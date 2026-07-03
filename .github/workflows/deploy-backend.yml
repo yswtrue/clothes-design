@@ -2,14 +2,6 @@ name: Deploy Backend
 
 on:
   workflow_dispatch:
-  push:
-    branches:
-      - main
-    paths:
-      - 'backend/**'
-      - 'Dockerfile.backend'
-      - 'Dockerfile.worker'
-      - 'docker-compose.yml'
 
 jobs:
   build-and-push:
