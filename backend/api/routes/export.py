@@ -73,6 +73,8 @@ async def trigger_export(
     session: _session_dep,
     current_user: _user_dep,
     format: ExportFormat = Query(default="svg", description="Export format: svg or tif"),
+    content_type: str = Query(default="pattern", pattern="^(line-art|pattern)$", description="Content type: line-art for sharp-edged designs, pattern for textured/photographic"),
+    sharpen: bool = Query(default=False, description="Apply post-upscale sharpening"),
 ):
     result = await session.execute(
         select(GeneratedDesign).where(GeneratedDesign.id == generated_design_id)
@@ -148,6 +150,8 @@ async def trigger_export(
         "target_resolution": 12000,
         "color_space": "CMYK",
         "format": format,
+        "content_type": content_type,
+        "sharpen": sharpen,
     }
 
     task_id = await enqueue_task(
@@ -183,6 +187,8 @@ async def export_material(
     current_user: _user_dep,
     format: ExportFormat = Query(default="tif", description="Export format (only tif supported)"),
     target_resolution: int = Query(default=12000, ge=1024, le=16384, description="Target resolution in pixels"),
+    content_type: str = Query(default="pattern", pattern="^(line-art|pattern)$", description="Content type: line-art for sharp-edged designs, pattern for textured/photographic"),
+    sharpen: bool = Query(default=False, description="Apply post-upscale sharpening"),
 ):
     if format != "tif":
         raise HTTPException(
@@ -250,6 +256,8 @@ async def export_material(
         "target_resolution": target_resolution,
         "color_space": "CMYK",
         "dpi": 300,
+        "content_type": content_type,
+        "sharpen": sharpen,
     }
 
     task_id = await enqueue_task(
