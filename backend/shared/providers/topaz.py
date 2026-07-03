@@ -5,11 +5,13 @@ Authentication via X-API-KEY header.
 """
 
 import asyncio
+import io
 import logging
 import os
 from typing import Any
 
 import httpx
+from PIL import Image, ImageFilter
 
 from shared.ai.base import AIProvider
 from shared.ai.exceptions import (
@@ -152,16 +154,39 @@ class TopazProvider(AIProvider):
         resp.raise_for_status()
         return resp.content
 
-    async def upscale_image(self, image: bytes, target_size: int) -> bytes:
-        """Upscale image to target_size using Topaz Gigapixel."""
+    async def upscale_image(
+        self,
+        image: bytes,
+        target_size: int,
+        *,
+        content_type: str = "pattern",
+        sharpen: bool = False,
+    ) -> bytes:
+        """Upscale image to target_size using Topaz Gigapixel.
+
+        Topaz handles any scale in one pass (no progressive multi-pass needed).
+        """
         if not 256 <= target_size <= 32768:
             raise ValueError(f"Target size must be 256-32768, got {target_size}")
 
-        logger.info(f"Topaz upscale: target={target_size}px, model={self.model}")
+        logger.info(
+            f"Topaz upscale: target={target_size}px, model={self.model}, "
+            f"content_type={content_type}, sharpen={sharpen}"
+        )
 
         process_id = await self._submit_enhance(image, target_size)
         await self._poll_status(process_id)
         result = await self._download_result(process_id)
+
+        # Apply post-upscale sharpen if requested
+        if sharpen:
+            img = Image.open(io.BytesIO(result))
+            img = img.filter(
+                ImageFilter.UnsharpMask(radius=1.5, percent=80, threshold=2)
+            )
+            buf = io.BytesIO()
+            img.save(buf, format="PNG")
+            result = buf.getvalue()
 
         logger.info(f"Topaz upscale complete: {len(image)} -> {len(result)} bytes")
         return result

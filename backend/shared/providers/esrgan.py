@@ -1,10 +1,11 @@
 """Real-ESRGAN provider for image upscaling."""
 
 import io
+import math
 import os
 
 import aiohttp
-from PIL import Image
+from PIL import Image, ImageFilter
 
 from shared.ai.base import AIProvider
 from shared.ai.exceptions import (
@@ -53,12 +54,21 @@ class ESRGANProvider(AIProvider):
             api_url=config.base_url,
         )
 
-    async def upscale_image(self, image: bytes, target_size: int) -> bytes:  # noqa: C901
+    async def upscale_image(
+        self,
+        image: bytes,
+        target_size: int,
+        *,
+        content_type: str = "pattern",
+        sharpen: bool = False,
+    ) -> bytes:  # noqa: C901
         """Upscale image to target size using Real-ESRGAN.
 
         Args:
             image: Image bytes to upscale
             target_size: Target width/height in pixels (1024-16384)
+            content_type: Content type hint (unused in ESRGAN API, kept for ABC compat)
+            sharpen: Apply post-upscale sharpening (UnsharpMask)
 
         Returns:
             Upscaled image as bytes
@@ -82,62 +92,91 @@ class ESRGANProvider(AIProvider):
         except Exception as e:
             raise ValueError(f"Invalid image format: {e}") from e
 
-        # Calculate scale factor (round to nearest supported scale: 2x, 4x, 8x)
+        # Calculate number of progressive 2x passes
         raw_scale = target_size / input_size
-        if raw_scale <= 2.5:
-            scale = 2
-        elif raw_scale <= 6.0:
-            scale = 4
+        if raw_scale > 2.5:
+            num_passes = max(1, min(4, math.ceil(math.log2(raw_scale))))
         else:
-            scale = 8
-
-        # Prepare streaming upload
-        form = aiohttp.FormData()
-        form.add_field("image", image, content_type="image/png", filename="input.png")
-        form.add_field("scale", str(scale))
+            num_passes = 1
 
         for attempt in range(self.max_retries):
             try:
                 async with aiohttp.ClientSession() as session:
-                    async with session.post(
-                        f"{self.api_url}/upscale",
-                        headers={"Authorization": f"Bearer {self.api_key}"},
-                        data=form,
-                        timeout=aiohttp.ClientTimeout(total=self.timeout),
-                    ) as response:
-                        # Handle rate limiting
-                        if response.status == 429:
-                            retry_after = int(response.headers.get("Retry-After", 2**attempt))
-                            raise ProviderRateLimitError(
-                                f"Rate limited (attempt {attempt + 1}/{self.max_retries}). "
-                                f"Retry after {retry_after}s"
-                            )
+                    current_image = image
+                    for pass_idx in range(num_passes):
+                        # Prepare streaming upload
+                        form = aiohttp.FormData()
+                        form.add_field(
+                            "image", current_image,
+                            content_type="image/png", filename="input.png",
+                        )
+                        form.add_field("scale", "2")
 
-                        # Handle authentication errors
-                        if response.status == 401:
-                            raise ProviderConfigurationError("Invalid API key")
+                        async with session.post(
+                            f"{self.api_url}/upscale",
+                            headers={"Authorization": f"Bearer {self.api_key}"},
+                            data=form,
+                            timeout=aiohttp.ClientTimeout(total=self.timeout),
+                        ) as response:
+                            # Handle rate limiting
+                            if response.status == 429:
+                                retry_after = int(
+                                    response.headers.get("Retry-After", 2**attempt)
+                                )
+                                raise ProviderRateLimitError(
+                                    f"Rate limited (attempt {attempt + 1}/"
+                                    f"{self.max_retries}). Retry after {retry_after}s"
+                                )
 
-                        # Handle file size errors
-                        if response.status == 413:
-                            raise ValueError("Image too large for upscaling (>50MB)")
+                            # Handle authentication errors
+                            if response.status == 401:
+                                raise ProviderConfigurationError("Invalid API key")
 
-                        # Handle server errors (retry on 5xx)
-                        if response.status >= 500:
-                            if attempt == self.max_retries - 1:
-                                raise ESRGANProviderError(f"Server error: {response.status}")
-                            continue
+                            # Handle file size errors
+                            if response.status == 413:
+                                raise ValueError(
+                                    "Image too large for upscaling (>50MB)"
+                                )
 
-                        response.raise_for_status()
+                            # Handle server errors (retry on 5xx)
+                            if response.status >= 500:
+                                raise ESRGANProviderError(
+                                    f"Server error: {response.status}"
+                                )
 
-                        # Streaming download to handle large files
-                        chunks = []
-                        async for chunk in response.content.iter_chunked(8192):
-                            chunks.append(chunk)
+                            response.raise_for_status()
 
-                        return b"".join(chunks)
+                            # Streaming download to handle large files
+                            chunks = []
+                            async for chunk in response.content.iter_chunked(8192):
+                                chunks.append(chunk)
+
+                            current_image = b"".join(chunks)
+
+                    upscaled_bytes = current_image
+
+                # Apply post-upscale sharpen (UnsharpMask counteracts GAN smoothing)
+                if sharpen:
+                    sharp_img = Image.open(io.BytesIO(upscaled_bytes))
+                    sharp_img = sharp_img.filter(
+                        ImageFilter.UnsharpMask(radius=1.5, percent=80, threshold=2)
+                    )
+                    buf = io.BytesIO()
+                    sharp_img.save(buf, format="PNG")
+                    upscaled_bytes = buf.getvalue()
+
+                return upscaled_bytes
+
+            except ESRGANProviderError as e:
+                # 5xx errors — retry from the beginning
+                if attempt == self.max_retries - 1:
+                    raise
+                continue
 
             except aiohttp.ServerTimeoutError as e:
-                raise ProviderTimeoutError(f"Request timed out after {self.timeout}s") from e
+                raise ProviderTimeoutError(
+                    f"Request timed out after {self.timeout}s"
+                ) from e
 
             except aiohttp.ClientError as e:
                 if attempt == self.max_retries - 1:
