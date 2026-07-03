@@ -163,7 +163,7 @@ class MockupsProvider(AIProvider):
             "MockupsProvider does not support pattern generation. Use StabilityProvider."
         )
 
-    async def upscale_image(self, image: bytes, target_size: int) -> bytes:
+    async def upscale_image(self, image: bytes, target_size: int, *, content_type: str = "pattern", sharpen: bool = False) -> bytes:
         """Upscale image to target size.
 
         Note: MockupsProvider doesn't support upscaling.
@@ -171,6 +171,8 @@ class MockupsProvider(AIProvider):
         Args:
             image: Image bytes to upscale
             target_size: Target width/height in pixels
+            content_type: Content type hint ("line-art" or "pattern")
+            sharpen: Whether to apply post-upscale sharpening
 
         Returns:
             Upscaled image as bytes

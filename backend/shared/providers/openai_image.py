@@ -622,7 +622,7 @@ class OpenAIImageProvider(AIProvider):
     ) -> StyleAnalysis:
         raise NotImplementedError("Use GPT4VProvider for style analysis")
 
-    async def upscale_image(self, image: bytes, target_size: int) -> bytes:
+    async def upscale_image(self, image: bytes, target_size: int, *, content_type: str = "pattern", sharpen: bool = False) -> bytes:
         raise NotImplementedError("Use ReplicateProvider for upscaling")
 
     async def vectorize(self, image: bytes, color_space: str = "rgb") -> bytes:

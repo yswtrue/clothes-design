@@ -179,7 +179,7 @@ Extract 3-5 dominant colors as hex codes. Suggest optimal tiling mode and scale.
     async def generate_pattern(self, style: StyleAnalysis, params: GenerationParams) -> bytes:
         raise NotImplementedError("Pattern generation not yet implemented")
 
-    async def upscale_image(self, image: bytes, target_size: int) -> bytes:
+    async def upscale_image(self, image: bytes, target_size: int, *, content_type: str = "pattern", sharpen: bool = False) -> bytes:
         raise NotImplementedError("Image upscaling not yet implemented")
 
     async def vectorize(self, image: bytes, color_space: str = "rgb") -> bytes:

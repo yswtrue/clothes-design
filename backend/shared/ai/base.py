@@ -33,12 +33,24 @@ class AIProvider(ABC):
         pass
 
     @abstractmethod
-    async def upscale_image(self, image: bytes, target_size: int) -> bytes:
+    async def upscale_image(
+        self,
+        image: bytes,
+        target_size: int,
+        *,
+        content_type: str = "pattern",
+        sharpen: bool = False,
+    ) -> bytes:
         """Upscale image to target size using super-resolution.
 
         Args:
             image: Image bytes to upscale
             target_size: Target width/height in pixels
+            content_type: Content type for model selection — "line-art" for
+                sharp-edged vector/geometric designs, "pattern" for
+                textured/photographic patterns.
+            sharpen: Apply post-upscale sharpening (unsharp mask) to
+                counteract GAN smoothing.
 
         Returns:
             Upscaled image as bytes

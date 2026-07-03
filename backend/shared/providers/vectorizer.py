@@ -181,7 +181,7 @@ class VectorizerProvider(AIProvider):
         """Not implemented by Vectorizer provider."""
         raise NotImplementedError("Pattern generation not supported by Vectorizer.ai")
 
-    async def upscale_image(self, image: bytes, target_size: int) -> bytes:
+    async def upscale_image(self, image: bytes, target_size: int, *, content_type: str = "pattern", sharpen: bool = False) -> bytes:
         """Not implemented by Vectorizer provider."""
         raise NotImplementedError("Image upscaling not supported by Vectorizer.ai")
 

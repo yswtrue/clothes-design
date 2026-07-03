@@ -152,7 +152,7 @@ class StabilityProvider(AIProvider):
             logger.error(f"Stability AI client error: {e}")
             raise ProviderError(f"HTTP client error: {e}") from e
 
-    async def upscale_image(self, image: bytes, target_size: int) -> bytes:
+    async def upscale_image(self, image: bytes, target_size: int, *, content_type: str = "pattern", sharpen: bool = False) -> bytes:
         """Upscale image to target size.
 
         Note: Stability AI upscaling requires different API endpoint.
@@ -161,6 +161,8 @@ class StabilityProvider(AIProvider):
         Args:
             image: Image bytes to upscale
             target_size: Target width/height in pixels
+            content_type: Content type hint ("line-art" or "pattern")
+            sharpen: Whether to apply post-upscale sharpening
 
         Returns:
             Upscaled image as bytes
