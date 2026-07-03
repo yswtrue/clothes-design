@@ -106,6 +106,8 @@ class ExportMaterialHandler(TaskHandler):
         target_resolution: int = task_data.get("target_resolution", 12000)
         color_space: ColorSpace = task_data.get("color_space", "CMYK")
         dpi: int = task_data.get("dpi", 300)
+        content_type = task_data.get("content_type", "pattern")
+        sharpen = task_data.get("sharpen", False)
 
         try:
             self.logger.info(
@@ -141,12 +143,12 @@ class ExportMaterialHandler(TaskHandler):
                 upscaled_bytes = await tile_upscale(
                     original_bytes,
                     target_resolution,
-                    lambda tile_bytes, tile_target: upscaler.upscale_image(tile_bytes, tile_target),
+                    lambda tile_bytes, tile_target: upscaler.upscale_image(tile_bytes, tile_target, content_type=content_type, sharpen=sharpen),
                 )
             else:
                 self.logger.info(f"Upscaling to {target_resolution}px via {upscaler.__class__.__name__}")
                 try:
-                    upscaled_bytes = await upscaler.upscale_image(original_bytes, target_resolution)
+                    upscaled_bytes = await upscaler.upscale_image(original_bytes, target_resolution, content_type=content_type, sharpen=sharpen)
                 except AIProviderError as e:
                     self.logger.error(f"Upscale failed: {e}", exc_info=True)
                     raise WorkerError(f"Upscale failed: {e}") from e

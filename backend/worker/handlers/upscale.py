@@ -42,17 +42,28 @@ class UpscaleHandler(TaskHandler):
         if not 1024 <= target_size <= 16384:
             raise WorkerError(f"target_size must be 1024-16384, got {target_size}")
 
+        content_type = task_data.get("content_type")
+        if content_type is not None and content_type not in ("line-art", "pattern"):
+            raise WorkerError(f"Invalid content_type: {content_type}")
+
+        sharpen = task_data.get("sharpen")
+        if sharpen is not None and not isinstance(sharpen, bool):
+            raise WorkerError("Field 'sharpen' must be bool")
+
     async def handle(self, task_data: dict[str, Any]) -> dict[str, Any]:
         await self.validate_input(task_data)
 
         image = task_data["image"]
         target_size = task_data["target_size"]
 
-        self.logger.info(f"Starting upscale to target_size={target_size}")
+        content_type = task_data.get("content_type", "pattern")
+        sharpen = task_data.get("sharpen", False)
+
+        self.logger.info(f"Starting upscale to target_size={target_size} (content_type={content_type}, sharpen={sharpen})")
 
         try:
             provider = await self._get_provider()
-            upscaled = await provider.upscale_image(image, target_size)
+            upscaled = await provider.upscale_image(image, target_size, content_type=content_type, sharpen=sharpen)
 
             self.logger.info(
                 f"Upscale completed: input={len(image)} bytes, output={len(upscaled)} bytes"

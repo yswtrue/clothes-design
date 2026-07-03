@@ -196,6 +196,8 @@ class ExportPatternHandler(TaskHandler):
         generated_design_id: int,
         target_resolution: int,
         context: ExportContext,
+        content_type: str = "pattern",
+        sharpen: bool = False,
     ) -> UpscaledImage:
         pattern_bytes = await generated_image_storage.download(context.image_filename)
         original_size = Image.open(io.BytesIO(pattern_bytes)).size[0]
@@ -232,7 +234,7 @@ class ExportPatternHandler(TaskHandler):
             )
 
         try:
-            upscaled_bytes = await upscaler.upscale_image(pattern_bytes, target_resolution)
+            upscaled_bytes = await upscaler.upscale_image(pattern_bytes, target_resolution, content_type=content_type, sharpen=sharpen)
         except AIProviderError as e:
             self.logger.error(
                 f"Upscale failed, reverting status to completed: {e}", exc_info=True
@@ -258,6 +260,8 @@ class ExportPatternHandler(TaskHandler):
         target_resolution = task_data.get("target_resolution", 12000)
         color_space: ColorSpace = task_data.get("color_space", "CMYK")
         export_format: ExportFormat = task_data.get("format", "svg")
+        content_type = task_data.get("content_type", "pattern")
+        sharpen = task_data.get("sharpen", False)
 
         try:
             context = await self._load_export_context(generated_design_id)
@@ -275,6 +279,8 @@ class ExportPatternHandler(TaskHandler):
                 generated_design_id,
                 target_resolution,
                 context,
+                content_type=content_type,
+                sharpen=sharpen,
             )
 
             upscaled_size = Image.open(io.BytesIO(upscaled.data)).size[0]
