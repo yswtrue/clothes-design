@@ -3,7 +3,7 @@
 import { use, useState, useEffect } from 'react';
 import { triggerExport, pollExportStatus } from '@/lib/export';
 import { fetchGeneratedDesign } from '@/lib/history';
-import type { ExportFormat, ExportStatusResponse } from '@/types/export';
+import type { ExportContentType, ExportFormat, ExportStatusResponse } from '@/types/export';
 import ExportProgress from '@/components/export/ExportProgress';
 import DownloadButton from '@/components/export/DownloadButton';
 
@@ -24,6 +24,8 @@ export default function ExportPage({ params }: PageProps) {
   const [exportFormat, setExportFormat] = useState<ExportFormat | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const [contentType, setContentType] = useState<ExportContentType>('pattern');
+  const [sharpen, setSharpen] = useState(false);
 
   useEffect(() => {
     loadDesignPreview();
@@ -49,7 +51,7 @@ export default function ExportPage({ params }: PageProps) {
     setExportStatus(null);
 
     try {
-      const response = await triggerExport(designIdNum, format);
+      const response = await triggerExport(designIdNum, format, contentType, sharpen);
 
       if (!response.task_id && response.status === 'exported' && response.download_url) {
         setExportStatus({
@@ -189,6 +191,59 @@ export default function ExportPage({ params }: PageProps) {
                     <span className="text-sm text-zinc-600 dark:text-zinc-400">
                       ~1-2 minutes
                     </span>
+                  </div>
+                </div>
+
+                <div className="space-y-3 mb-6">
+                  <div className="flex justify-between items-center py-2 border-b border-zinc-200 dark:border-zinc-800">
+                    <span className="text-sm font-medium text-zinc-700 dark:text-zinc-300">
+                      图案类型
+                    </span>
+                    <div className="flex rounded-md border border-zinc-200 dark:border-zinc-800 overflow-hidden">
+                      <button
+                        onClick={() => setContentType('line-art')}
+                        className={`px-3 py-1.5 text-xs font-medium transition-colors ${
+                          contentType === 'line-art'
+                            ? 'bg-zinc-950 dark:bg-zinc-50 text-white dark:text-zinc-950'
+                            : 'bg-white dark:bg-zinc-900 text-zinc-600 dark:text-zinc-400 hover:bg-zinc-50 dark:hover:bg-zinc-800'
+                        }`}
+                      >
+                        线条型
+                      </button>
+                      <button
+                        onClick={() => setContentType('pattern')}
+                        className={`px-3 py-1.5 text-xs font-medium transition-colors ${
+                          contentType === 'pattern'
+                            ? 'bg-zinc-950 dark:bg-zinc-50 text-white dark:text-zinc-950'
+                            : 'bg-white dark:bg-zinc-900 text-zinc-600 dark:text-zinc-400 hover:bg-zinc-50 dark:hover:bg-zinc-800'
+                        }`}
+                      >
+                        图案型
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="flex justify-between items-center py-2">
+                    <div>
+                      <span className="text-sm font-medium text-zinc-700 dark:text-zinc-300">
+                        后期锐化
+                      </span>
+                      <p className="text-xs text-zinc-500 dark:text-zinc-500 mt-0.5">
+                        减少放大后的模糊感，线条图案推荐开启
+                      </p>
+                    </div>
+                    <button
+                      onClick={() => setSharpen(!sharpen)}
+                      className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
+                        sharpen ? 'bg-zinc-950 dark:bg-zinc-50' : 'bg-zinc-200 dark:bg-zinc-700'
+                      }`}
+                    >
+                      <span
+                        className={`inline-block h-4 w-4 transform rounded-full bg-white dark:bg-zinc-900 transition-transform ${
+                          sharpen ? 'translate-x-6' : 'translate-x-1'
+                        }`}
+                      />
+                    </button>
                   </div>
                 </div>
 

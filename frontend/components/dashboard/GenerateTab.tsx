@@ -169,7 +169,7 @@ export default function GenerateTab() {
     setMaterialTifError(null);
     setError(null);
     try {
-      const response = await triggerMaterialExport(selectedMaterial.id, 'tif', 12000);
+      const response = await triggerMaterialExport(selectedMaterial.id, 'tif', 'pattern', false, 12000);
 
       // Already exported (cached) — direct download
       if (!response.task_id && response.status === 'exported' && response.download_url) {
