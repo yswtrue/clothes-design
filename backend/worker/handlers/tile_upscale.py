@@ -9,7 +9,7 @@ import io
 import logging
 from dataclasses import dataclass
 
-from PIL import Image
+from PIL import Image, ImageFilter
 
 from shared.ai.exceptions import ProviderRateLimitError
 
@@ -100,6 +100,7 @@ async def tile_upscale(
     tile_size: int = TILE_SIZE,
     pad: int = TILE_PAD,
     delay_between_tiles: float = TILE_DELAY_SECONDS,
+    sharpen: bool = False,
 ) -> bytes:
     """Upscale an image via tiled processing.
 
@@ -114,6 +115,7 @@ async def tile_upscale(
         tile_size: Size of each tile in pixels (source resolution)
         pad: Overlap padding around each tile to avoid seams
         delay_between_tiles: Seconds to wait between tiles (for rate limiting)
+        sharpen: Apply post-upscale sharpening to the final stitched canvas
 
     Returns:
         Upscaled stitched image as PNG bytes
@@ -199,7 +201,7 @@ async def tile_upscale(
         # Resize inner region to target dimensions for consistent stitching
         target_w = t.w * scale
         target_h = t.h * scale
-        inner = inner.resize((target_w, target_h), Image.LANCZOS)
+        inner = inner.resize((target_w, target_h), Image.BICUBIC)
 
         paste_x = t.x * scale
         paste_y = t.y * scale
@@ -215,8 +217,12 @@ async def tile_upscale(
         ratio = target_size / canvas_longest
         final_w = int(canvas_w * ratio)
         final_h = int(canvas_h * ratio)
-        canvas = canvas.resize((final_w, final_h), Image.LANCZOS)
+        canvas = canvas.resize((final_w, final_h), Image.BICUBIC)
         logger.info(f"Final resize: {canvas_w}×{canvas_h} → {final_w}×{final_h}")
+
+    # Apply post-upscale sharpen if requested
+    if sharpen:
+        canvas = canvas.filter(ImageFilter.SHARPEN)
 
     output = io.BytesIO()
     canvas.save(output, format="PNG")
