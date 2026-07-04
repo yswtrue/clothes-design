@@ -10,7 +10,7 @@ import logging
 import math
 from dataclasses import dataclass
 
-from PIL import Image, ImageFilter
+from PIL import Image, ImageFilter, ImageStat
 
 from shared.ai.exceptions import ProviderRateLimitError
 
@@ -32,6 +32,7 @@ MIN_TILE_INPUT_FOR_SINGLE_PASS = math.ceil(MIN_TILE_TARGET_SIZE / MAX_TILE_TARGE
 # Rate limit retry
 MAX_RATE_LIMIT_RETRIES = 5
 STAGE_UPSCALE_FACTOR = 2
+UNIFORM_TILE_CHANNEL_DELTA = 2
 
 
 @dataclass
@@ -123,6 +124,15 @@ def _resize_longest(img: Image.Image, longest: int) -> Image.Image:
     )
 
 
+def _is_uniform_image(img: Image.Image) -> bool:
+    """Return true when an image is blank, solid, or visually near-solid."""
+    stat = ImageStat.Stat(img.convert("RGB"))
+    return all(
+        channel_max - channel_min <= UNIFORM_TILE_CHANNEL_DELTA
+        for channel_min, channel_max in stat.extrema
+    )
+
+
 def _prepare_model_input(img: Image.Image, target_size: int) -> tuple[Image.Image, int]:
     """Return model-safe input image and target size for one Replicate call."""
     tile_longest = max(img.width, img.height)
@@ -142,11 +152,25 @@ def _prepare_model_input(img: Image.Image, target_size: int) -> tuple[Image.Imag
 async def _upscale_direct_stage(
     img: Image.Image,
     stage_target_size: int,
+    stage_index: int,
+    total_stages: int,
     upscale_fn,
     delay_between_tiles: float,
 ) -> Image.Image:
     """Upscale a stage with one model call when the image is already model-safe."""
+    if _is_uniform_image(img):
+        logger.info(
+            f"Stage {stage_index}/{total_stages} image 1/1 uniform direct: "
+            f"{img.width}x{img.height} -> longest {stage_target_size}px locally"
+        )
+        return _resize_longest(img, stage_target_size)
+
     model_img, model_target = _prepare_model_input(img, stage_target_size)
+    logger.info(
+        f"Stage {stage_index}/{total_stages} image 1/1 direct model: "
+        f"{img.width}x{img.height} -> {model_img.width}x{model_img.height} "
+        f"-> {model_target}px"
+    )
     upscaled_bytes = await _upscale_with_retry(
         upscale_fn,
         _image_to_png(model_img),
@@ -162,6 +186,8 @@ async def _upscale_direct_stage(
 async def _upscale_tiled_stage(
     img: Image.Image,
     stage_target_size: int,
+    stage_index: int,
+    total_stages: int,
     upscale_fn,
     tile_size: int,
     pad: int,
@@ -178,8 +204,9 @@ async def _upscale_tiled_stage(
     effective_tile_size = min(tile_size, max(1, MAX_TILE_MODEL_INPUT_SIZE - (pad * 2)))
     tiles = _grid_tiles(src_w, src_h, effective_tile_size, pad)
     logger.info(
-        f"Tile stage: {src_w}x{src_h} -> {canvas_w}x{canvas_h} "
-        f"({len(tiles)} tiles, core={effective_tile_size}px)"
+        f"Stage {stage_index}/{total_stages} tiled: "
+        f"{src_w}x{src_h} -> {canvas_w}x{canvas_h} "
+        f"({len(tiles)} images, core={effective_tile_size}px)"
     )
 
     for idx, t in enumerate(tiles):
@@ -190,24 +217,36 @@ async def _upscale_tiled_stage(
         tile_img = img.crop((crop_left, crop_top, crop_right, crop_bottom))
 
         tile_stage_target = max(1, round(max(tile_img.width, tile_img.height) * stage_ratio))
-        model_tile_img, tile_target = _prepare_model_input(tile_img, tile_stage_target)
+        used_model = False
+        if _is_uniform_image(tile_img):
+            if idx % 10 == 0 or idx == len(tiles) - 1:
+                logger.info(
+                    f"Stage {stage_index}/{total_stages} image {idx + 1}/{len(tiles)} uniform tile "
+                    f"[{t.y // effective_tile_size},{t.x // effective_tile_size}] "
+                    f"{tile_img.width}x{tile_img.height} -> {tile_stage_target}px locally"
+                )
+            upscaled_tile = _resize_longest(tile_img, tile_stage_target)
+        else:
+            model_tile_img, tile_target = _prepare_model_input(tile_img, tile_stage_target)
 
-        if idx % 10 == 0 or idx == len(tiles) - 1:
-            logger.info(
-                f"Tile {idx + 1}/{len(tiles)} [{t.y // effective_tile_size},{t.x // effective_tile_size}] "
-                f"{tile_img.width}x{tile_img.height} -> "
-                f"{model_tile_img.width}x{model_tile_img.height} -> {tile_target}px"
+            if idx % 10 == 0 or idx == len(tiles) - 1:
+                logger.info(
+                    f"Stage {stage_index}/{total_stages} image {idx + 1}/{len(tiles)} model tile "
+                    f"[{t.y // effective_tile_size},{t.x // effective_tile_size}] "
+                    f"{tile_img.width}x{tile_img.height} -> "
+                    f"{model_tile_img.width}x{model_tile_img.height} -> {tile_target}px"
+                )
+
+            upscaled_bytes = await _upscale_with_retry(
+                upscale_fn,
+                _image_to_png(model_tile_img),
+                tile_target,
+                idx,
+                len(tiles),
+                delay_between_tiles,
             )
-
-        upscaled_bytes = await _upscale_with_retry(
-            upscale_fn,
-            _image_to_png(model_tile_img),
-            tile_target,
-            idx,
-            len(tiles),
-            delay_between_tiles,
-        )
-        upscaled_tile = Image.open(io.BytesIO(upscaled_bytes)).convert("RGB")
+            upscaled_tile = Image.open(io.BytesIO(upscaled_bytes)).convert("RGB")
+            used_model = True
 
         actual_ratio_w = upscaled_tile.width / tile_img.width
         actual_ratio_h = upscaled_tile.height / tile_img.height
@@ -224,7 +263,7 @@ async def _upscale_tiled_stage(
         inner = inner.resize((target_w, target_h), Image.Resampling.BICUBIC)
         canvas.paste(inner, (paste_x, paste_y))
 
-        if idx < len(tiles) - 1:
+        if used_model and idx < len(tiles) - 1:
             await asyncio.sleep(delay_between_tiles)
 
     return canvas
@@ -233,6 +272,8 @@ async def _upscale_tiled_stage(
 async def _upscale_stage(
     img: Image.Image,
     stage_target_size: int,
+    stage_index: int,
+    total_stages: int,
     upscale_fn,
     tile_size: int,
     pad: int,
@@ -241,11 +282,14 @@ async def _upscale_stage(
     """Run one <=2x stage, deciding whether this stage needs tiling."""
     if max(img.width, img.height) <= MAX_TILE_MODEL_INPUT_SIZE:
         logger.info(
-            f"Direct stage: {img.width}x{img.height} -> longest {stage_target_size}px"
+            f"Stage {stage_index}/{total_stages} direct: "
+            f"{img.width}x{img.height} -> longest {stage_target_size}px"
         )
         return await _upscale_direct_stage(
             img,
             stage_target_size,
+            stage_index,
+            total_stages,
             upscale_fn,
             delay_between_tiles,
         )
@@ -253,6 +297,8 @@ async def _upscale_stage(
     return await _upscale_tiled_stage(
         img,
         stage_target_size,
+        stage_index,
+        total_stages,
         upscale_fn,
         tile_size,
         pad,
@@ -294,19 +340,28 @@ async def tile_upscale(
 
     current = img
     current_longest = src_longest
-    stage = 0
-    logger.info(f"Progressive tile upscale: {src_w}x{src_h} -> longest {target_size}px")
+    stage_targets: list[int] = []
+    planned_longest = src_longest
+    while planned_longest < target_size:
+        planned_longest = min(target_size, planned_longest * STAGE_UPSCALE_FACTOR)
+        stage_targets.append(planned_longest)
 
-    while current_longest < target_size:
-        stage += 1
-        stage_target_size = min(target_size, current_longest * STAGE_UPSCALE_FACTOR)
+    total_stages = len(stage_targets)
+    logger.info(
+        f"Progressive tile upscale: {src_w}x{src_h} -> longest {target_size}px "
+        f"in {total_stages} stage(s)"
+    )
+
+    for stage_index, stage_target_size in enumerate(stage_targets, start=1):
         logger.info(
-            f"Upscale stage {stage}: {current.width}x{current.height} "
+            f"Upscale stage {stage_index}/{total_stages}: {current.width}x{current.height} "
             f"-> longest {stage_target_size}px"
         )
         current = await _upscale_stage(
             current,
             stage_target_size,
+            stage_index,
+            total_stages,
             upscale_fn,
             tile_size,
             pad,
@@ -337,5 +392,6 @@ __all__ = [
     "MIN_TILE_TARGET_SIZE",
     "STAGE_UPSCALE_FACTOR",
     "TILE_SIZE",
+    "UNIFORM_TILE_CHANNEL_DELTA",
     "tile_upscale",
 ]

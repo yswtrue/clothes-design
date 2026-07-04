@@ -1,7 +1,9 @@
 from io import BytesIO
 
 from PIL import Image
+from pytest import MonkeyPatch
 
+import worker.handlers.tile_upscale as tile_upscale_module
 from worker.handlers.tile_upscale import (
     MAX_TILE_MODEL_INPUT_SIZE,
     MAX_TILE_TARGET_RATIO,
@@ -13,7 +15,14 @@ from worker.handlers.tile_upscale import (
 
 
 def _png(width: int, height: int) -> bytes:
-    image = Image.new("RGB", (width, height), color=(24, 48, 96))
+    image = Image.effect_noise((width, height), 32).convert("RGB")
+    output = BytesIO()
+    image.save(output, format="PNG")
+    return output.getvalue()
+
+
+def _solid_png(width: int, height: int, color: tuple[int, int, int] = (255, 255, 255)) -> bytes:
+    image = Image.new("RGB", (width, height), color=color)
     output = BytesIO()
     image.save(output, format="PNG")
     return output.getvalue()
@@ -163,3 +172,85 @@ async def test_tile_upscale_expands_small_inputs_for_replicate_target_floor() ->
         <= int(MIN_TILE_INPUT_FOR_SINGLE_PASS * MAX_TILE_TARGET_RATIO)
         for index in small_tile_indexes
     )
+
+
+async def test_tile_upscale_skips_replicate_for_solid_direct_stage() -> None:
+    calls = 0
+
+    async def fake_upscale(tile_bytes: bytes, _tile_target: int) -> bytes:
+        nonlocal calls
+        calls += 1
+        return tile_bytes
+
+    result = await tile_upscale(
+        _solid_png(300, 240, (255, 255, 255)),
+        target_size=1200,
+        upscale_fn=fake_upscale,
+        tile_size=1024,
+        pad=64,
+        delay_between_tiles=0,
+    )
+
+    assert calls == 0
+    assert _image_size(result) == (1200, 960)
+
+
+async def test_tile_upscale_skips_only_solid_tiles_when_tiled() -> None:
+    calls = 0
+
+    image = Image.new("RGB", (1200, 1200), color=(255, 255, 255))
+    image.paste((20, 40, 80), (0, 0, 576, 576))
+    image.paste((200, 40, 20), (0, 0, 288, 288))
+    source = BytesIO()
+    image.save(source, format="PNG")
+
+    async def fake_upscale(tile_bytes: bytes, tile_target: int) -> bytes:
+        nonlocal calls
+        calls += 1
+        tile = Image.open(BytesIO(tile_bytes)).convert("RGB")
+        ratio = tile_target / max(tile.size)
+        upscaled = tile.resize(
+            (int(tile.width * ratio), int(tile.height * ratio)),
+            Image.Resampling.BICUBIC,
+        )
+        output = BytesIO()
+        upscaled.save(output, format="PNG")
+        return output.getvalue()
+
+    result = await tile_upscale(
+        source.getvalue(),
+        target_size=2400,
+        upscale_fn=fake_upscale,
+        tile_size=1024,
+        pad=0,
+        delay_between_tiles=0,
+    )
+
+    assert _image_size(result) == (2400, 2400)
+    assert calls == 1
+
+
+async def test_tile_upscale_skips_sleep_when_all_tiled_crops_are_solid(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    sleep_delays: list[float] = []
+
+    async def fake_sleep(delay: float) -> None:
+        sleep_delays.append(delay)
+
+    async def fake_upscale(_tile_bytes: bytes, _tile_target: int) -> bytes:
+        raise AssertionError("solid tiled crops should not call the model")
+
+    monkeypatch.setattr(tile_upscale_module.asyncio, "sleep", fake_sleep)
+
+    result = await tile_upscale(
+        _solid_png(1200, 1200),
+        target_size=2400,
+        upscale_fn=fake_upscale,
+        tile_size=1024,
+        pad=0,
+        delay_between_tiles=12,
+    )
+
+    assert _image_size(result) == (2400, 2400)
+    assert sleep_delays == []
