@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlmodel import col
 
 from api.auth.dependencies import get_current_user
 from api.db.base import get_session
@@ -15,12 +16,17 @@ from api.storage.storages import (
     upscaled_storage,
     vector_storage,
 )
+from shared.export_settings import (
+    export_settings_match,
+    get_export_settings,
+    normalize_content_type,
+)
 from shared.task_queue import (
-    enqueue_task,
-    get_task_status,
-    acquire_export_slot,
-    get_export_slot_count,
     EXPORT_MAX_CONCURRENT,
+    acquire_export_slot,
+    enqueue_task,
+    get_export_slot_count,
+    get_task_status,
 )
 from shared.task_queue.redis_client import get_redis_client
 
@@ -30,6 +36,16 @@ ExportFormat = Literal["svg", "tif"]
 
 _session_dep = Annotated[AsyncSession, Depends(get_session)]
 _user_dep = Annotated[User, Depends(get_current_user)]
+
+
+def _require_user_id(user: User) -> int:
+    user_id = user.id
+    if user_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Authenticated user has no ID",
+        )
+    return user_id
 
 
 def _get_file_path(file_obj) -> str | None:
@@ -49,6 +65,8 @@ class ExportResponse(BaseModel):
     status: str = "pending"
     download_url: str | None = None
     upscaled_url: str | None = None
+    content_type: str = "pattern"
+    sharpen: bool = False
 
 
 class ExportStatusResponse(BaseModel):
@@ -60,6 +78,8 @@ class ExportStatusResponse(BaseModel):
     current_step: str | None = None
     download_url: str | None = None
     upscaled_url: str | None = None
+    content_type: str | None = None
+    sharpen: bool | None = None
     error: str | None = None
 
 
@@ -72,12 +92,14 @@ async def trigger_export(
     generated_design_id: int,
     session: _session_dep,
     current_user: _user_dep,
-    format: ExportFormat = Query(default="svg", description="Export format: svg or tif"),
+    export_format: ExportFormat = Query(default="svg", alias="format", description="Export format: svg or tif"),
     content_type: str = Query(default="pattern", pattern="^(line-art|pattern)$", description="Content type: line-art for sharp-edged designs, pattern for textured/photographic"),
     sharpen: bool = Query(default=False, description="Apply post-upscale sharpening"),
 ):
+    user_id = _require_user_id(current_user)
+
     result = await session.execute(
-        select(GeneratedDesign).where(GeneratedDesign.id == generated_design_id)
+        select(GeneratedDesign).where(col(GeneratedDesign.id) == generated_design_id)
     )
     generated_design = result.scalar_one_or_none()
 
@@ -89,8 +111,8 @@ async def trigger_export(
 
     material_result = await session.execute(
         select(Material).where(
-            Material.id == generated_design.material_id,
-            Material.uploaded_by == current_user.id,
+            col(Material.id) == generated_design.material_id,
+            col(Material.uploaded_by) == user_id,
         )
     )
     material = material_result.scalar_one_or_none()
@@ -114,27 +136,40 @@ async def trigger_export(
         )
 
     existing_vector = _get_file_path(generated_design.vector_svg)
-    existing_upscaled = _get_file_path(generated_design.upscaled_image)
     existing_tif = _get_file_path(generated_design.export_tif)
+    export_settings = get_export_settings(generated_design.generation_params, export_format)
+    settings_match = export_settings_match(
+        export_settings,
+        export_format=export_format,
+        target_resolution=12000,
+        color_space="CMYK",
+        content_type=content_type,
+        sharpen=sharpen,
+    )
+    settings_upscaled = export_settings.get("upscaled_filename") if export_settings else None
 
-    if format == "svg" and existing_vector and existing_upscaled:
+    if export_format == "svg" and existing_vector and settings_match and settings_upscaled:
         return ExportResponse(
             task_id=None,
             generated_design_id=generated_design_id,
-            format=format,
+            format=export_format,
             status="exported",
             download_url=vector_storage.get_url(existing_vector),
-            upscaled_url=upscaled_storage.get_url(existing_upscaled),
+            upscaled_url=upscaled_storage.get_url(settings_upscaled),
+            content_type=normalize_content_type(content_type),
+            sharpen=sharpen,
         )
 
-    if format == "tif" and existing_tif and existing_upscaled:
+    if export_format == "tif" and existing_tif and settings_match and settings_upscaled:
         return ExportResponse(
             task_id=None,
             generated_design_id=generated_design_id,
-            format=format,
+            format=export_format,
             status="exported",
             download_url=output_tif_storage.get_url(existing_tif),
-            upscaled_url=upscaled_storage.get_url(existing_upscaled),
+            upscaled_url=upscaled_storage.get_url(settings_upscaled),
+            content_type=normalize_content_type(content_type),
+            sharpen=sharpen,
         )
 
     acquired = await acquire_export_slot()
@@ -149,22 +184,24 @@ async def trigger_export(
         "generated_design_id": generated_design_id,
         "target_resolution": 12000,
         "color_space": "CMYK",
-        "format": format,
+        "format": export_format,
         "content_type": content_type,
         "sharpen": sharpen,
     }
 
     task_id = await enqueue_task(
         task_type="export_pattern",
-        user_id=current_user.id,
+        user_id=user_id,
         data=task_data,
     )
 
     return ExportResponse(
         task_id=task_id,
         generated_design_id=generated_design_id,
-        format=format,
+        format=export_format,
         status="pending",
+        content_type=normalize_content_type(content_type),
+        sharpen=sharpen,
     )
 
 
@@ -185,12 +222,14 @@ async def export_material(
     material_id: int,
     session: _session_dep,
     current_user: _user_dep,
-    format: ExportFormat = Query(default="tif", description="Export format (only tif supported)"),
+    export_format: ExportFormat = Query(default="tif", alias="format", description="Export format (only tif supported)"),
     target_resolution: int = Query(default=12000, ge=1024, le=16384, description="Target resolution in pixels"),
     content_type: str = Query(default="pattern", pattern="^(line-art|pattern)$", description="Content type: line-art for sharp-edged designs, pattern for textured/photographic"),
     sharpen: bool = Query(default=False, description="Apply post-upscale sharpening"),
 ):
-    if format != "tif":
+    user_id = _require_user_id(current_user)
+
+    if export_format != "tif":
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Only TIF format is supported for material direct export",
@@ -198,8 +237,8 @@ async def export_material(
 
     result = await session.execute(
         select(Material).where(
-            Material.id == material_id,
-            Material.uploaded_by == current_user.id,
+            col(Material.id) == material_id,
+            col(Material.uploaded_by) == user_id,
         )
     )
     material = result.scalar_one_or_none()
@@ -222,7 +261,7 @@ async def export_material(
         return MaterialExportResponse(
             task_id=None,
             material_id=material_id,
-            format=format,
+            format=export_format,
             status="exported",
             download_url=output_tif_storage.get_url(existing_tif),
         )
@@ -238,7 +277,7 @@ async def export_material(
                 return MaterialExportResponse(
                     task_id=existing_task_id,
                     material_id=material_id,
-                    format=format,
+                    format=export_format,
                     status="pending",
                 )
 
@@ -262,7 +301,7 @@ async def export_material(
 
     task_id = await enqueue_task(
         task_type="export_material",
-        user_id=current_user.id,
+        user_id=user_id,
         data=task_data,
     )
 
@@ -273,7 +312,7 @@ async def export_material(
     return MaterialExportResponse(
         task_id=task_id,
         material_id=material_id,
-        format=format,
+        format=export_format,
         status="pending",
     )
 
@@ -281,7 +320,6 @@ async def export_material(
 @router.get("/tasks/{task_id}", response_model=ExportStatusResponse)
 async def get_export_status(
     task_id: str,
-    session: _session_dep,
     current_user: _user_dep,
 ):
     task_status = await get_task_status(task_id)
@@ -302,6 +340,8 @@ async def get_export_status(
     mat_id = task_status.data.get("material_id") if task_status.data else None
     design_id = generated_design_id or mat_id
     export_format = task_status.data.get("format", "tif") if task_status.data else "tif"
+    content_type = task_status.data.get("content_type") if task_status.data else None
+    sharpen = task_status.data.get("sharpen") if task_status.data else None
     current_step = None
     progress = 0
     download_url = None
@@ -343,5 +383,7 @@ async def get_export_status(
         current_step=current_step,
         download_url=download_url,
         upscaled_url=upscaled_url,
+        content_type=normalize_content_type(content_type),
+        sharpen=bool(sharpen),
         error=task_status.error,
     )

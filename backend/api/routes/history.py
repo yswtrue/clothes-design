@@ -1,9 +1,10 @@
-from typing import Annotated
+from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlmodel import col
 
 from api.auth.dependencies import get_current_user
 from api.db.base import get_session
@@ -15,6 +16,7 @@ from api.storage.storages import (
     upscaled_storage,
     vector_storage,
 )
+from shared.export_settings import ExportFormat, get_export_settings
 
 router = APIRouter(prefix="/api/history", tags=["history"])
 
@@ -32,6 +34,28 @@ def _get_file_path(file_obj) -> str | None:
     return str(file_obj) if file_obj else None
 
 
+class ExportSettingsResponse(BaseModel):
+    format: str
+    target_resolution: int | None = None
+    color_space: str | None = None
+    content_type: str | None = None
+    sharpen: bool | None = None
+    upscaled_filename: str | None = None
+    output_filename: str | None = None
+
+
+def _get_export_settings_response(
+    generation_params: dict[str, Any] | None,
+) -> dict[str, ExportSettingsResponse] | None:
+    settings_by_format: dict[str, ExportSettingsResponse] = {}
+    export_formats: tuple[ExportFormat, ExportFormat] = ("svg", "tif")
+    for export_format in export_formats:
+        settings = get_export_settings(generation_params, export_format)
+        if settings:
+            settings_by_format[export_format] = ExportSettingsResponse(**settings)
+    return settings_by_format or None
+
+
 class GeneratedDesignResponse(BaseModel):
     id: int
     material_id: int
@@ -46,6 +70,7 @@ class GeneratedDesignResponse(BaseModel):
     is_selected: bool
     created_at: str | None = None
     exported_at: str | None = None
+    export_settings: dict[str, ExportSettingsResponse] | None = None
 
 
 class MaterialWithDesignsResponse(BaseModel):
@@ -67,22 +92,29 @@ class PaginatedHistoryResponse(BaseModel):
 
 @router.get("", response_model=PaginatedHistoryResponse)
 async def get_history(
+    session: _session_dep,
+    current_user: _user_dep,
     page: int = 1,
     size: int = 10,
-    session: _session_dep = None,
-    current_user: _user_dep = None,
 ):
+    user_id = current_user.id
+    if user_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Authenticated user has no ID",
+        )
+
     offset = (page - 1) * size
 
     count_result = await session.execute(
-        select(func.count(Material.id)).where(Material.uploaded_by == current_user.id)
+        select(func.count(col(Material.id))).where(col(Material.uploaded_by) == user_id)
     )
     total = count_result.scalar() or 0
 
     materials_result = await session.execute(
         select(Material)
-        .where(Material.uploaded_by == current_user.id)
-        .order_by(Material.created_at.desc())
+        .where(col(Material.uploaded_by) == user_id)
+        .order_by(col(Material.created_at).desc())
         .offset(offset)
         .limit(size)
     )
@@ -92,8 +124,8 @@ async def get_history(
     for material in materials:
         designs_result = await session.execute(
             select(GeneratedDesign)
-            .where(GeneratedDesign.material_id == material.id)
-            .order_by(GeneratedDesign.created_at.desc())
+            .where(col(GeneratedDesign.material_id) == material.id)
+            .order_by(col(GeneratedDesign.created_at).desc())
         )
         designs = designs_result.scalars().all()
 
@@ -108,8 +140,12 @@ async def get_history(
             upscaled_path = _get_file_path(d.upscaled_image)
             vector_path = _get_file_path(d.vector_svg)
 
+            design_id = d.id
+            if design_id is None:
+                continue
+
             design_responses.append(GeneratedDesignResponse(
-                id=d.id,
+                id=design_id,
                 material_id=d.material_id,
                 status=d.status,
                 image_url=generated_image_storage.get_url(image_path) if image_path else None,
@@ -122,10 +158,15 @@ async def get_history(
                 is_selected=bool(d.is_selected),
                 created_at=d.created_at.isoformat() if d.created_at else None,
                 exported_at=d.exported_at.isoformat() if d.exported_at else None,
+                export_settings=_get_export_settings_response(d.generation_params),
             ))
 
+        material_id = material.id
+        if material_id is None:
+            continue
+
         items.append(MaterialWithDesignsResponse(
-            id=material.id,
+            id=material_id,
             original_filename=material.original_filename,
             thumbnail_url=material_thumb,
             created_at=material.created_at.isoformat() if material.created_at else None,
@@ -151,7 +192,7 @@ async def get_generated_design(
     current_user: _user_dep,
 ):
     result = await session.execute(
-        select(GeneratedDesign).where(GeneratedDesign.id == generated_design_id)
+        select(GeneratedDesign).where(col(GeneratedDesign.id) == generated_design_id)
     )
     design = result.scalar_one_or_none()
 
@@ -161,10 +202,17 @@ async def get_generated_design(
             detail="Generated design not found",
         )
 
+    user_id = current_user.id
+    if user_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Authenticated user has no ID",
+        )
+
     material_result = await session.execute(
         select(Material).where(
-            Material.id == design.material_id,
-            Material.uploaded_by == current_user.id,
+            col(Material.id) == design.material_id,
+            col(Material.uploaded_by) == user_id,
         )
     )
     if not material_result.scalar_one_or_none():
@@ -178,8 +226,15 @@ async def get_generated_design(
     upscaled_path = _get_file_path(design.upscaled_image)
     vector_path = _get_file_path(design.vector_svg)
 
+    design_id = design.id
+    if design_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Generated design not found",
+        )
+
     return GeneratedDesignResponse(
-        id=design.id,
+        id=design_id,
         material_id=design.material_id,
         status=design.status,
         image_url=generated_image_storage.get_url(image_path) if image_path else None,
@@ -192,6 +247,7 @@ async def get_generated_design(
         is_selected=bool(design.is_selected),
         created_at=design.created_at.isoformat() if design.created_at else None,
         exported_at=design.exported_at.isoformat() if design.exported_at else None,
+        export_settings=_get_export_settings_response(design.generation_params),
     )
 
 
@@ -202,7 +258,7 @@ async def delete_generated_design(
     current_user: _user_dep,
 ):
     result = await session.execute(
-        select(GeneratedDesign).where(GeneratedDesign.id == generated_design_id)
+        select(GeneratedDesign).where(col(GeneratedDesign.id) == generated_design_id)
     )
     design = result.scalar_one_or_none()
 
@@ -212,10 +268,17 @@ async def delete_generated_design(
             detail="Generated design not found",
         )
 
+    user_id = current_user.id
+    if user_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Authenticated user has no ID",
+        )
+
     material_result = await session.execute(
         select(Material).where(
-            Material.id == design.material_id,
-            Material.uploaded_by == current_user.id,
+            col(Material.id) == design.material_id,
+            col(Material.uploaded_by) == user_id,
         )
     )
     if not material_result.scalar_one_or_none():
