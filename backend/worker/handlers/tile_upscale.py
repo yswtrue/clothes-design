@@ -25,6 +25,9 @@ TILE_DELAY_SECONDS = 12.0
 # provider's progressive ESRGAN loop, which feeds 2x intermediate tiles back
 # into Replicate and can exceed the model's input pixel limit.
 MAX_TILE_TARGET_RATIO = 2.5
+# Keep Replicate model outputs under roughly 2M pixels. Real-ESRGAN returns a
+# fixed 2x output, so a 704px square input becomes 1408px square (~1.98M px).
+MAX_TILE_MODEL_INPUT_SIZE = 704
 MIN_TILE_TARGET_SIZE = 1024
 MIN_TILE_INPUT_FOR_SINGLE_PASS = math.ceil(MIN_TILE_TARGET_SIZE / MAX_TILE_TARGET_RATIO)
 # Rate limit retry
@@ -161,23 +164,37 @@ async def tile_upscale(
         crop_bottom = t.y + t.h + t.pad_bottom
         tile_img = img.crop((crop_left, crop_top, crop_right, crop_bottom))
 
-        # Determine upscale target for this tile. Replicate rejects target_size
-        # below 1024, while targets above 2.5x input trigger provider multi-pass.
-        # Very small edge tiles are first resized locally so the model request
-        # remains both >=1024 target and <=2.5x raw scale.
+        # Determine model input and target for this tile. Replicate rejects
+        # target_size below 1024, while targets above 2.5x input trigger provider
+        # multi-pass. The Real-ESRGAN Cog image can also fail while uploading
+        # oversized 2x outputs, so large padded tiles are downscaled locally
+        # before the model call; final canvas quality is restored by stitching
+        # and deterministic resize below.
         tile_longest = max(tile_img.width, tile_img.height)
         model_tile_img = tile_img
-        tile_target = int(tile_longest * tile_target_ratio)
-        if tile_target < MIN_TILE_TARGET_SIZE:
-            input_ratio = MIN_TILE_INPUT_FOR_SINGLE_PASS / tile_longest
+        if tile_longest > MAX_TILE_MODEL_INPUT_SIZE:
+            input_ratio = MAX_TILE_MODEL_INPUT_SIZE / tile_longest
             model_tile_img = tile_img.resize(
                 (
-                    math.ceil(tile_img.width * input_ratio),
-                    math.ceil(tile_img.height * input_ratio),
+                    max(1, math.ceil(tile_img.width * input_ratio)),
+                    max(1, math.ceil(tile_img.height * input_ratio)),
                 ),
                 Image.Resampling.BICUBIC,
             )
-            tile_target = MIN_TILE_TARGET_SIZE
+        elif tile_longest < MIN_TILE_INPUT_FOR_SINGLE_PASS:
+            input_ratio = MIN_TILE_INPUT_FOR_SINGLE_PASS / tile_longest
+            model_tile_img = tile_img.resize(
+                (
+                    max(1, math.ceil(tile_img.width * input_ratio)),
+                    max(1, math.ceil(tile_img.height * input_ratio)),
+                ),
+                Image.Resampling.BICUBIC,
+            )
+        model_tile_longest = max(model_tile_img.width, model_tile_img.height)
+        tile_target = max(
+            MIN_TILE_TARGET_SIZE,
+            int(model_tile_longest * tile_target_ratio),
+        )
 
         # Convert to bytes and upscale
         buf = io.BytesIO()
@@ -244,6 +261,7 @@ async def tile_upscale(
 
 
 __all__ = [
+    "MAX_TILE_MODEL_INPUT_SIZE",
     "MAX_TILE_TARGET_RATIO",
     "MIN_TILE_INPUT_FOR_SINGLE_PASS",
     "MIN_TILE_TARGET_SIZE",
