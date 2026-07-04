@@ -11,10 +11,14 @@ interface ExportProgressProps {
 export default function ExportProgress({ status, isPolling, error }: ExportProgressProps) {
   if (!isPolling && !status && !error) return null;
 
-  const getStepText = (currentStep: string | null, format: string | null): string => {
+  const getResolutionText = (targetResolution: number | null | undefined): string => (
+    targetResolution ? `${targetResolution.toLocaleString()}px` : 'target'
+  );
+
+  const getStepText = (currentStep: string | null, format: string | null, targetResolution: number | null | undefined): string => {
     const formatLabel = format === 'tif' ? 'TIF' : 'SVG';
     if (currentStep === 'upscaling') {
-      return 'Step 1/2: Upscaling to 12K resolution...';
+      return `Step 1/2: Upscaling to ${getResolutionText(targetResolution)} resolution...`;
     }
     if (currentStep === 'vectorizing') {
       return `Step 2/2: Vectorizing to ${formatLabel}...`;
@@ -89,7 +93,7 @@ export default function ExportProgress({ status, isPolling, error }: ExportProgr
             </div>
             <div className="text-center w-full">
               <h3 className="text-lg font-medium text-zinc-950 dark:text-zinc-50">
-                {getStepText(status?.current_step || null, status?.format || null)}
+                {getStepText(status?.current_step || null, status?.format || null, status?.target_resolution)}
               </h3>
               <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-400">
                 Processing high-resolution export... this may take 1-2 minutes

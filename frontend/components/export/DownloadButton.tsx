@@ -6,6 +6,7 @@ interface DownloadButtonProps {
   downloadUrl: string;
   designId: number;
   format: ExportFormat;
+  targetResolution?: number | null;
 }
 
 const formatLabels: Record<ExportFormat, { name: string; extension: string; description: string }> = {
@@ -21,8 +22,18 @@ const formatLabels: Record<ExportFormat, { name: string; extension: string; desc
   },
 };
 
-export default function DownloadButton({ downloadUrl, designId, format }: DownloadButtonProps) {
+function formatResolutionLabel(targetResolution?: number | null): string {
+  return targetResolution ? `${targetResolution}px` : 'export';
+}
+
+function formatResolutionSlug(targetResolution?: number | null): string {
+  return targetResolution ? `${targetResolution}px` : 'export';
+}
+
+export default function DownloadButton({ downloadUrl, designId, format, targetResolution }: DownloadButtonProps) {
   const formatInfo = formatLabels[format];
+  const resolutionLabel = formatResolutionLabel(targetResolution);
+  const resolutionSlug = formatResolutionSlug(targetResolution);
 
   return (
     <div className="rounded-lg border border-green-200 dark:border-green-800 bg-green-50 dark:bg-green-900/20 p-6">
@@ -47,12 +58,12 @@ export default function DownloadButton({ downloadUrl, designId, format }: Downlo
             Export Complete!
           </h3>
           <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-400">
-            Your {formatInfo.name} file is ready for download
+            Your {formatInfo.name} file is ready for download{targetResolution ? ` (${resolutionLabel})` : ''}
           </p>
         </div>
         <a
           href={downloadUrl}
-          download={`design-${designId}-12K.${formatInfo.extension}`}
+          download={`design-${designId}-${resolutionSlug}.${formatInfo.extension}`}
           className="inline-flex items-center gap-2 rounded-md bg-zinc-950 dark:bg-zinc-50 px-6 py-3 text-sm font-medium text-white dark:text-zinc-950 hover:bg-zinc-800 dark:hover:bg-zinc-200 transition-colors"
         >
           <svg

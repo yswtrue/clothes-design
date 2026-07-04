@@ -131,7 +131,7 @@ export async function startExportAndDownload(page: Page) {
   await expect(page.getByText('Exporting...')).toBeVisible({ timeout: 20000 });
   await expect(page.getByText('Export Complete!')).toBeVisible({ timeout: 180000 });
   const downloadPromise = page.waitForEvent('download', { timeout: 20000 });
-  await page.getByRole('link', { name: 'Download TIF (CMYK, 12K)' }).click();
+  await page.getByRole('link', { name: 'Download TIF' }).click();
   const download = await downloadPromise;
   const suggested = download.suggestedFilename();
   const downloadPath = `${DOWNLOAD_DIR}/${suggested}`;
