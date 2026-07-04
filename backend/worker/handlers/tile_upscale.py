@@ -32,7 +32,12 @@ MIN_TILE_INPUT_FOR_SINGLE_PASS = math.ceil(MIN_TILE_TARGET_SIZE / MAX_TILE_TARGE
 # Rate limit retry
 MAX_RATE_LIMIT_RETRIES = 5
 STAGE_UPSCALE_FACTOR = 2
-UNIFORM_TILE_CHANNEL_DELTA = 2
+UNIFORM_TILE_CHANNEL_DELTA = 8
+BLANK_TILE_WHITE_MIN = 235
+BLANK_TILE_BLACK_MAX = 10
+BLANK_TILE_WHITE_CONTENT_MAX = 248
+BLANK_TILE_BLACK_CONTENT_MIN = 7
+BLANK_TILE_NOISE_MAX_RATIO = 0.20
 
 
 @dataclass
@@ -86,17 +91,27 @@ async def _upscale_with_retry(
     tile_idx: int,
     total_tiles: int,
     delay: float,
+    tile_label: str,
 ) -> bytes:
     """Upscale a single tile with rate-limit retry logic."""
     for retry in range(MAX_RATE_LIMIT_RETRIES):
         try:
-            return await upscale_fn(tile_bytes, tile_target)
+            if retry == 0:
+                logger.info(f"{tile_label} Replicate request start: target {tile_target}px")
+            else:
+                logger.info(
+                    f"{tile_label} Replicate request retry {retry + 1}/{MAX_RATE_LIMIT_RETRIES}: "
+                    f"target {tile_target}px"
+                )
+            result = await upscale_fn(tile_bytes, tile_target)
+            logger.info(f"{tile_label} Replicate request complete: {len(result)} bytes")
+            return result
         except ProviderRateLimitError:
             if retry == MAX_RATE_LIMIT_RETRIES - 1:
                 raise
             wait = delay * (retry + 1)
             logger.warning(
-                f"Tile {tile_idx + 1}/{total_tiles} rate limited, "
+                f"{tile_label} rate limited ({tile_idx + 1}/{total_tiles}), "
                 f"retry {retry + 1}/{MAX_RATE_LIMIT_RETRIES} in {wait:.0f}s"
             )
             await asyncio.sleep(wait)
@@ -126,11 +141,40 @@ def _resize_longest(img: Image.Image, longest: int) -> Image.Image:
 
 def _is_uniform_image(img: Image.Image) -> bool:
     """Return true when an image is blank, solid, or visually near-solid."""
-    stat = ImageStat.Stat(img.convert("RGB"))
-    return all(
+    rgb_img = img.convert("RGB")
+    stat = ImageStat.Stat(rgb_img)
+    channel_ranges = [
         channel_max - channel_min <= UNIFORM_TILE_CHANNEL_DELTA
         for channel_min, channel_max in stat.extrema
-    )
+    ]
+    if all(channel_ranges):
+        return True
+
+    # Production assets often contain compression/antialiasing noise that is
+    # visually blank but not strictly uniform. Treat near-white and near-black
+    # tiles as blank only when visibly non-blank pixels are sparse, so faint but
+    # structured artwork does not get skipped just because it is close to white
+    # or black.
+    pixel_count = max(1, rgb_img.width * rgb_img.height)
+    if all(channel_min >= BLANK_TILE_WHITE_MIN for channel_min, _ in stat.extrema):
+        pixels = rgb_img.tobytes()
+        non_blank_pixels = sum(
+            1
+            for index in range(0, len(pixels), 3)
+            if min(pixels[index : index + 3]) < BLANK_TILE_WHITE_CONTENT_MAX
+        )
+        return non_blank_pixels / pixel_count <= BLANK_TILE_NOISE_MAX_RATIO
+
+    if all(channel_max <= BLANK_TILE_BLACK_MAX for _, channel_max in stat.extrema):
+        pixels = rgb_img.tobytes()
+        non_blank_pixels = sum(
+            1
+            for index in range(0, len(pixels), 3)
+            if max(pixels[index : index + 3]) > BLANK_TILE_BLACK_CONTENT_MIN
+        )
+        return non_blank_pixels / pixel_count <= BLANK_TILE_NOISE_MAX_RATIO
+
+    return False
 
 
 def _prepare_model_input(img: Image.Image, target_size: int) -> tuple[Image.Image, int]:
@@ -178,6 +222,7 @@ async def _upscale_direct_stage(
         0,
         1,
         delay_between_tiles,
+        f"Stage {stage_index}/{total_stages} image 1/1 direct model",
     )
     upscaled = Image.open(io.BytesIO(upscaled_bytes)).convert("RGB")
     return _resize_longest(upscaled, stage_target_size)
@@ -215,10 +260,11 @@ async def _upscale_tiled_stage(
         crop_right = t.x + t.w + t.pad_right
         crop_bottom = t.y + t.h + t.pad_bottom
         tile_img = img.crop((crop_left, crop_top, crop_right, crop_bottom))
+        tile_core = img.crop((t.x, t.y, t.x + t.w, t.y + t.h))
 
         tile_stage_target = max(1, round(max(tile_img.width, tile_img.height) * stage_ratio))
         used_model = False
-        if _is_uniform_image(tile_img):
+        if _is_uniform_image(tile_core) or _is_uniform_image(tile_img):
             if idx % 10 == 0 or idx == len(tiles) - 1:
                 logger.info(
                     f"Stage {stage_index}/{total_stages} image {idx + 1}/{len(tiles)} uniform tile "
@@ -228,11 +274,14 @@ async def _upscale_tiled_stage(
             upscaled_tile = _resize_longest(tile_img, tile_stage_target)
         else:
             model_tile_img, tile_target = _prepare_model_input(tile_img, tile_stage_target)
+            tile_label = (
+                f"Stage {stage_index}/{total_stages} image {idx + 1}/{len(tiles)} "
+                f"[{t.y // effective_tile_size},{t.x // effective_tile_size}]"
+            )
 
             if idx % 10 == 0 or idx == len(tiles) - 1:
                 logger.info(
-                    f"Stage {stage_index}/{total_stages} image {idx + 1}/{len(tiles)} model tile "
-                    f"[{t.y // effective_tile_size},{t.x // effective_tile_size}] "
+                    f"{tile_label} model tile "
                     f"{tile_img.width}x{tile_img.height} -> "
                     f"{model_tile_img.width}x{model_tile_img.height} -> {tile_target}px"
                 )
@@ -244,6 +293,7 @@ async def _upscale_tiled_stage(
                 idx,
                 len(tiles),
                 delay_between_tiles,
+                tile_label,
             )
             upscaled_tile = Image.open(io.BytesIO(upscaled_bytes)).convert("RGB")
             used_model = True
@@ -386,6 +436,11 @@ async def tile_upscale(
 
 
 __all__ = [
+    "BLANK_TILE_BLACK_CONTENT_MIN",
+    "BLANK_TILE_BLACK_MAX",
+    "BLANK_TILE_NOISE_MAX_RATIO",
+    "BLANK_TILE_WHITE_CONTENT_MAX",
+    "BLANK_TILE_WHITE_MIN",
     "MAX_TILE_MODEL_INPUT_SIZE",
     "MAX_TILE_TARGET_RATIO",
     "MIN_TILE_INPUT_FOR_SINGLE_PASS",

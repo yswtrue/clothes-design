@@ -195,6 +195,99 @@ async def test_tile_upscale_skips_replicate_for_solid_direct_stage() -> None:
     assert _image_size(result) == (1200, 960)
 
 
+async def test_tile_upscale_skips_replicate_for_near_white_direct_stage() -> None:
+    calls = 0
+    image = Image.new("RGB", (300, 240), color=(255, 255, 255))
+    for x in range(0, image.width, 37):
+        for y in range(0, image.height, 29):
+            image.putpixel((x, y), (240, 241, 242))
+    source = BytesIO()
+    image.save(source, format="PNG")
+
+    async def fake_upscale(tile_bytes: bytes, _tile_target: int) -> bytes:
+        nonlocal calls
+        calls += 1
+        return tile_bytes
+
+    result = await tile_upscale(
+        source.getvalue(),
+        target_size=1200,
+        upscale_fn=fake_upscale,
+        tile_size=1024,
+        pad=64,
+        delay_between_tiles=0,
+    )
+
+    assert calls == 0
+    assert _image_size(result) == (1200, 960)
+
+
+async def test_tile_upscale_keeps_meaningful_low_contrast_content_on_model_path() -> None:
+    calls = 0
+    image = Image.new("RGB", (300, 240), color=(255, 255, 255))
+    image.paste((245, 246, 247), (0, 0, 150, 120))
+    source = BytesIO()
+    image.save(source, format="PNG")
+
+    async def fake_upscale(tile_bytes: bytes, tile_target: int) -> bytes:
+        nonlocal calls
+        calls += 1
+        tile = Image.open(BytesIO(tile_bytes)).convert("RGB")
+        ratio = tile_target / max(tile.size)
+        upscaled = tile.resize(
+            (int(tile.width * ratio), int(tile.height * ratio)),
+            Image.Resampling.BICUBIC,
+        )
+        output = BytesIO()
+        upscaled.save(output, format="PNG")
+        return output.getvalue()
+
+    result = await tile_upscale(
+        source.getvalue(),
+        target_size=1200,
+        upscale_fn=fake_upscale,
+        tile_size=1024,
+        pad=64,
+        delay_between_tiles=0,
+    )
+
+    assert calls > 0
+    assert _image_size(result) == (1200, 960)
+
+
+async def test_tile_upscale_keeps_near_black_detail_on_model_path() -> None:
+    calls = 0
+    image = Image.new("RGB", (300, 240), color=(0, 0, 0))
+    image.paste((10, 9, 8), (0, 0, 150, 120))
+    source = BytesIO()
+    image.save(source, format="PNG")
+
+    async def fake_upscale(tile_bytes: bytes, tile_target: int) -> bytes:
+        nonlocal calls
+        calls += 1
+        tile = Image.open(BytesIO(tile_bytes)).convert("RGB")
+        ratio = tile_target / max(tile.size)
+        upscaled = tile.resize(
+            (int(tile.width * ratio), int(tile.height * ratio)),
+            Image.Resampling.BICUBIC,
+        )
+        output = BytesIO()
+        upscaled.save(output, format="PNG")
+        return output.getvalue()
+
+    result = await tile_upscale(
+        source.getvalue(),
+        target_size=1200,
+        upscale_fn=fake_upscale,
+        tile_size=1024,
+        pad=64,
+        delay_between_tiles=0,
+    )
+
+    assert calls > 0
+    assert _image_size(result) == (1200, 960)
+
+
 async def test_tile_upscale_skips_only_solid_tiles_when_tiled() -> None:
     calls = 0
 
@@ -223,6 +316,40 @@ async def test_tile_upscale_skips_only_solid_tiles_when_tiled() -> None:
         upscale_fn=fake_upscale,
         tile_size=1024,
         pad=0,
+        delay_between_tiles=0,
+    )
+
+    assert _image_size(result) == (2400, 2400)
+    assert calls == 1
+
+
+async def test_tile_upscale_skips_blank_core_even_when_padding_has_content() -> None:
+    calls = 0
+
+    image = Image.new("RGB", (1200, 1200), color=(255, 255, 255))
+    image.paste((20, 40, 80), (520, 0, 560, 120))
+    source = BytesIO()
+    image.save(source, format="PNG")
+
+    async def fake_upscale(tile_bytes: bytes, tile_target: int) -> bytes:
+        nonlocal calls
+        calls += 1
+        tile = Image.open(BytesIO(tile_bytes)).convert("RGB")
+        ratio = tile_target / max(tile.size)
+        upscaled = tile.resize(
+            (int(tile.width * ratio), int(tile.height * ratio)),
+            Image.Resampling.BICUBIC,
+        )
+        output = BytesIO()
+        upscaled.save(output, format="PNG")
+        return output.getvalue()
+
+    result = await tile_upscale(
+        source.getvalue(),
+        target_size=2400,
+        upscale_fn=fake_upscale,
+        tile_size=1024,
+        pad=64,
         delay_between_tiles=0,
     )
 
