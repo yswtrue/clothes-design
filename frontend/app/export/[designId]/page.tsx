@@ -1,7 +1,14 @@
 'use client';
 
 import { use, useState, useEffect } from 'react';
-import { triggerExport, pollExportStatus } from '@/lib/export';
+import {
+  EXPORT_TARGET_MULTIPLIERS,
+  getExportMultiplierForResolution,
+  getExportTargetResolution,
+  triggerExport,
+  pollExportStatus,
+  type ExportTargetMultiplier,
+} from '@/lib/export';
 import { fetchGeneratedDesign } from '@/lib/history';
 import type { ExportContentType, ExportFormat, ExportStatusResponse } from '@/types/export';
 import ExportProgress from '@/components/export/ExportProgress';
@@ -26,6 +33,9 @@ export default function ExportPage({ params }: PageProps) {
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [contentType, setContentType] = useState<ExportContentType>('pattern');
   const [sharpen, setSharpen] = useState(false);
+  const [targetMultiplier, setTargetMultiplier] = useState<ExportTargetMultiplier>(8);
+
+  const targetResolution = getExportTargetResolution(targetMultiplier);
 
   useEffect(() => {
     loadDesignPreview();
@@ -44,6 +54,7 @@ export default function ExportPage({ params }: PageProps) {
       if (historicalSettings?.sharpen !== null && historicalSettings?.sharpen !== undefined) {
         setSharpen(historicalSettings.sharpen);
       }
+      setTargetMultiplier(getExportMultiplierForResolution(historicalSettings?.target_resolution));
       setState('idle');
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load design');
@@ -58,7 +69,7 @@ export default function ExportPage({ params }: PageProps) {
     setExportStatus(null);
 
     try {
-      const response = await triggerExport(designIdNum, format, contentType, sharpen);
+      const response = await triggerExport(designIdNum, format, contentType, sharpen, targetResolution);
 
       if (!response.task_id && response.status === 'exported' && response.download_url) {
         setExportStatus({
@@ -72,6 +83,7 @@ export default function ExportPage({ params }: PageProps) {
           upscaled_url: response.upscaled_url,
           content_type: response.content_type,
           sharpen: response.sharpen,
+          target_resolution: response.target_resolution,
           error: null,
         });
         setState('complete');
@@ -187,10 +199,32 @@ export default function ExportPage({ params }: PageProps) {
                 <div className="space-y-3 mb-6">
                   <div className="flex justify-between items-center py-2 border-b border-zinc-200 dark:border-zinc-800">
                     <span className="text-sm font-medium text-zinc-700 dark:text-zinc-300">
-                      Resolution
+                      目标倍数
+                    </span>
+                    <div className="flex rounded-md border border-zinc-200 dark:border-zinc-800 overflow-hidden">
+                      {EXPORT_TARGET_MULTIPLIERS.map((multiplier) => (
+                        <button
+                          key={multiplier}
+                          type="button"
+                          onClick={() => setTargetMultiplier(multiplier)}
+                          disabled={state === 'exporting'}
+                          className={`px-3 py-1.5 text-xs font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${
+                            targetMultiplier === multiplier
+                              ? 'bg-zinc-950 dark:bg-zinc-50 text-white dark:text-zinc-950'
+                              : 'bg-white dark:bg-zinc-900 text-zinc-600 dark:text-zinc-400 hover:bg-zinc-50 dark:hover:bg-zinc-800'
+                          }`}
+                        >
+                          {multiplier}x
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  <div className="flex justify-between items-center py-2 border-b border-zinc-200 dark:border-zinc-800">
+                    <span className="text-sm font-medium text-zinc-700 dark:text-zinc-300">
+                      输出最长边
                     </span>
                     <span className="text-sm text-zinc-600 dark:text-zinc-400">
-                      12K (12000px)
+                      {targetResolution.toLocaleString()}px
                     </span>
                   </div>
                   <div className="flex justify-between items-center py-2">
@@ -317,6 +351,7 @@ export default function ExportPage({ params }: PageProps) {
               downloadUrl={exportStatus.download_url}
               designId={designIdNum}
               format={exportFormat}
+              targetResolution={exportStatus.target_resolution ?? targetResolution}
             />
             <div className="text-center">
               <button

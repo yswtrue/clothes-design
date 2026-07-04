@@ -1,7 +1,13 @@
 'use client';
 
 import { useState } from 'react';
-import { triggerExport, pollExportStatus } from '@/lib/export';
+import {
+  EXPORT_TARGET_MULTIPLIERS,
+  getExportTargetResolution,
+  pollExportStatus,
+  triggerExport,
+  type ExportTargetMultiplier,
+} from '@/lib/export';
 import type { ExportContentType, ExportStatusResponse } from '@/types/export';
 import ExportProgress from '@/components/export/ExportProgress';
 import DownloadButton from '@/components/export/DownloadButton';
@@ -39,6 +45,9 @@ export default function PatternResult({
   const [tifDownloadUrl, setTifDownloadUrl] = useState<string | null>(null);
   const [contentType, setContentType] = useState<ExportContentType>('pattern');
   const [sharpen, setSharpen] = useState(false);
+  const [targetMultiplier, setTargetMultiplier] = useState<ExportTargetMultiplier>(8);
+
+  const targetResolution = getExportTargetResolution(targetMultiplier);
 
   const handleExportTif = async () => {
     setTifExportState('exporting');
@@ -47,7 +56,7 @@ export default function PatternResult({
     setTifDownloadUrl(null);
 
     try {
-      const response = await triggerExport(designId, 'tif', contentType, sharpen);
+      const response = await triggerExport(designId, 'tif', contentType, sharpen, targetResolution);
 
       if (!response.task_id && response.status === 'exported' && response.download_url) {
         setTifDownloadUrl(response.download_url);
@@ -62,6 +71,7 @@ export default function PatternResult({
           upscaled_url: response.upscaled_url,
           content_type: response.content_type,
           sharpen: response.sharpen,
+          target_resolution: response.target_resolution,
           error: null,
         });
         setTifExportState('complete');
@@ -136,6 +146,37 @@ export default function PatternResult({
           放大选项
         </h3>
         <div className="space-y-3">
+          <div className="flex justify-between items-center py-2 border-b border-zinc-200 dark:border-zinc-800">
+            <span className="text-sm font-medium text-zinc-700 dark:text-zinc-300">
+              目标倍数
+            </span>
+            <div className="flex rounded-md border border-zinc-200 dark:border-zinc-800 overflow-hidden">
+              {EXPORT_TARGET_MULTIPLIERS.map((multiplier) => (
+                <button
+                  key={multiplier}
+                  type="button"
+                  onClick={() => setTargetMultiplier(multiplier)}
+                  className={`px-3 py-1.5 text-xs font-medium transition-colors ${
+                    targetMultiplier === multiplier
+                      ? 'bg-zinc-950 dark:bg-zinc-50 text-white dark:text-zinc-950'
+                      : 'bg-white dark:bg-zinc-900 text-zinc-600 dark:text-zinc-400 hover:bg-zinc-50 dark:hover:bg-zinc-800'
+                  }`}
+                >
+                  {multiplier}x
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="flex justify-between items-center py-2 border-b border-zinc-200 dark:border-zinc-800">
+            <span className="text-sm font-medium text-zinc-700 dark:text-zinc-300">
+              输出最长边
+            </span>
+            <span className="text-sm text-zinc-600 dark:text-zinc-400">
+              {targetResolution.toLocaleString()}px
+            </span>
+          </div>
+
           <div className="flex justify-between items-center py-2 border-b border-zinc-200 dark:border-zinc-800">
             <span className="text-sm font-medium text-zinc-700 dark:text-zinc-300">
               图案类型
@@ -237,6 +278,7 @@ export default function PatternResult({
           downloadUrl={tifDownloadUrl}
           designId={designId}
           format="tif"
+          targetResolution={tifExportStatus?.target_resolution ?? targetResolution}
         />
       )}
 
