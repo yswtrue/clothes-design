@@ -150,26 +150,27 @@ class ExportMaterialHandler(TaskHandler):
             original_size = Image.open(io.BytesIO(original_bytes)).size[0]
             self.logger.info(f"Original image size: {original_size}px, {len(original_bytes)} bytes")
 
-            # Step 2: AI upscale — tile for GPU-limited models, direct for Topaz
+            # Step 2: AI upscale - Replicate providers use progressive 2x stages;
+            # Topaz handles large targets server-side and should stay direct.
             upscaler = await self._get_upscaler()
 
-            GPU_SAFE_PIXELS = 2_000_000  # All Replicate models: 2,096,704 pixel limit
             img = Image.open(io.BytesIO(original_bytes))
             w, h = img.size
-            needs_tiling = (
-                w * h > GPU_SAFE_PIXELS
-                and "topaz" not in upscaler.__class__.__name__.lower()
-            )
+            use_progressive_tiles = "topaz" not in upscaler.__class__.__name__.lower()
 
-            if needs_tiling:
+            if use_progressive_tiles:
                 self.logger.info(
-                    f"Image too large for GPU ({w}x{h} = {w * h:,} px), "
-                    f"using tiled upscaling (1024px tiles)"
+                    f"Upscaling {w}x{h} to {target_resolution}px via progressive tiles"
                 )
                 upscaled_bytes = await tile_upscale(
                     original_bytes,
                     target_resolution,
-                    lambda tile_bytes, tile_target: upscaler.upscale_image(tile_bytes, tile_target, content_type=content_type, sharpen=sharpen),
+                    lambda tile_bytes, tile_target: upscaler.upscale_image(
+                        tile_bytes,
+                        tile_target,
+                        content_type=content_type,
+                        sharpen=sharpen,
+                    ),
                 )
             else:
                 self.logger.info(f"Upscaling to {target_resolution}px via {upscaler.__class__.__name__}")

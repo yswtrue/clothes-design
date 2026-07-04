@@ -32,6 +32,7 @@ from shared.export_settings import (
 from shared.task_queue import release_export_slot
 
 from .base import TaskHandler, WorkerError
+from .tile_upscale import tile_upscale
 
 logger = logging.getLogger(__name__)
 
@@ -251,26 +252,25 @@ class ExportPatternHandler(TaskHandler):
         upscaler = await self._get_upscaler()
         self.logger.info(f"Upscaling pattern to {target_resolution}px")
 
-        # Pre-resize if image exceeds GPU memory limits
-        GPU_SAFE_PIXELS = 2_000_000  # Replicate ESRGAN GPU limit ≈ 2,096,704
-        img = Image.open(io.BytesIO(pattern_bytes))
-        w, h = img.size
-        if w * h > GPU_SAFE_PIXELS:
-            ratio = (GPU_SAFE_PIXELS / (w * h)) ** 0.5
-            new_w = int(w * ratio)
-            new_h = int(h * ratio)
-            img = img.resize((new_w, new_h), Image.Resampling.LANCZOS)
-            buf = io.BytesIO()
-            img.save(buf, format="PNG")
-            pattern_bytes = buf.getvalue()
-            original_size = max(new_w, new_h)
-            self.logger.info(
-                f"Pre-resized for GPU: {w}x{h} → {new_w}x{new_h} "
-                f"({w * h:,} → {new_w * new_h:,} pixels)"
-            )
-
         try:
-            upscaled_bytes = await upscaler.upscale_image(pattern_bytes, target_resolution, content_type=content_type, sharpen=sharpen)
+            if "topaz" in upscaler.__class__.__name__.lower():
+                upscaled_bytes = await upscaler.upscale_image(
+                    pattern_bytes,
+                    target_resolution,
+                    content_type=content_type,
+                    sharpen=sharpen,
+                )
+            else:
+                upscaled_bytes = await tile_upscale(
+                    pattern_bytes,
+                    target_resolution,
+                    lambda tile_bytes, tile_target: upscaler.upscale_image(
+                        tile_bytes,
+                        tile_target,
+                        content_type=content_type,
+                        sharpen=sharpen,
+                    ),
+                )
         except AIProviderError as e:
             self.logger.error(
                 f"Upscale failed, reverting status to completed: {e}", exc_info=True
