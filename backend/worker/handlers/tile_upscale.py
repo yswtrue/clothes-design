@@ -7,6 +7,7 @@ AI upscaler, then stitches them back into a single high-resolution image.
 import asyncio
 import io
 import logging
+import math
 from dataclasses import dataclass
 
 from PIL import Image, ImageFilter
@@ -20,6 +21,12 @@ TILE_SIZE = 1024
 TILE_PAD = 64  # overlap padding to avoid seam artifacts
 # Replicate free tier: 6 requests/min, burst=1 → ~12s between tiles safely
 TILE_DELAY_SECONDS = 12.0
+# Keep tiled Replicate requests single-pass. Higher target ratios trigger the
+# provider's progressive ESRGAN loop, which feeds 2x intermediate tiles back
+# into Replicate and can exceed the model's input pixel limit.
+MAX_TILE_TARGET_RATIO = 2.5
+MIN_TILE_TARGET_SIZE = 1024
+MIN_TILE_INPUT_FOR_SINGLE_PASS = math.ceil(MIN_TILE_TARGET_SIZE / MAX_TILE_TARGET_RATIO)
 # Rate limit retry
 MAX_RATE_LIMIT_RETRIES = 5
 
@@ -126,7 +133,7 @@ async def tile_upscale(
     # Calculate required scale to reach target
     src_longest = max(src_w, src_h)
     scale = max(2, round(target_size / src_longest / 2) * 2)  # round to nearest even
-    scale = min(scale, 8)  # max ESRGAN scale is 8×
+    scale = min(scale, 8)  # max ESRGAN scale is 8x
 
     # Pre-allocate canvas for stitched result
     canvas_w = src_w * scale
@@ -135,23 +142,13 @@ async def tile_upscale(
 
     # Build tile grid
     tiles = _grid_tiles(src_w, src_h, tile_size, pad)
-    # Target tile output so ESRGAN uses the right scale factor:
-    #   scale=2 →  output ~2× input  (for scale=2 plans)
-    #   scale=4 →  output ~4× input  (for scale=4 plans)  
-    #   scale=8 →  output ~8× input  (for scale=6,8 plans — oversample then downscale)
-    # ESRGAN rounds 2/4/8 based on raw_scale = target/input:
-    #   raw_scale ≤ 2.5 → 2x,  ≤ 6.0 → 4x,  > 6.0 → 8x
-    # To force 8x when we need it, set tile_target > input * 6.0
-    if scale <= 3:
-        tile_target_ratio = 2.5  # triggers scale=2
-    elif scale <= 5:
-        tile_target_ratio = 5.0  # triggers scale=4
-    else:
-        tile_target_ratio = 8.0  # triggers scale=8 — oversample for quality
+    # Request only a single model pass per tile. The final canvas still reaches
+    # the requested resolution through deterministic stitching + resize below.
+    tile_target_ratio = MAX_TILE_TARGET_RATIO
 
     logger.info(
-        f"Tile upscale: {src_w}×{src_h} → {canvas_w}×{canvas_h} "
-        f"({len(tiles)} tiles, {scale}×)"
+        f"Tile upscale: {src_w}x{src_h} -> {canvas_w}x{canvas_h} "
+        f"({len(tiles)} tiles, {scale}x)"
     )
 
     for idx, t in enumerate(tiles):
@@ -164,19 +161,34 @@ async def tile_upscale(
         crop_bottom = t.y + t.h + t.pad_bottom
         tile_img = img.crop((crop_left, crop_top, crop_right, crop_bottom))
 
-        # Determine upscale target for this tile — oversample then downscale
+        # Determine upscale target for this tile. Replicate rejects target_size
+        # below 1024, while targets above 2.5x input trigger provider multi-pass.
+        # Very small edge tiles are first resized locally so the model request
+        # remains both >=1024 target and <=2.5x raw scale.
         tile_longest = max(tile_img.width, tile_img.height)
+        model_tile_img = tile_img
         tile_target = int(tile_longest * tile_target_ratio)
+        if tile_target < MIN_TILE_TARGET_SIZE:
+            input_ratio = MIN_TILE_INPUT_FOR_SINGLE_PASS / tile_longest
+            model_tile_img = tile_img.resize(
+                (
+                    math.ceil(tile_img.width * input_ratio),
+                    math.ceil(tile_img.height * input_ratio),
+                ),
+                Image.Resampling.BICUBIC,
+            )
+            tile_target = MIN_TILE_TARGET_SIZE
 
         # Convert to bytes and upscale
         buf = io.BytesIO()
-        tile_img.save(buf, format="PNG")
+        model_tile_img.save(buf, format="PNG")
         tile_bytes = buf.getvalue()
 
         if idx % 10 == 0 or idx == len(tiles) - 1:
             logger.info(
                 f"Tile {idx + 1}/{len(tiles)} [{t.y // tile_size},{t.x // tile_size}] "
-                f"{tile_img.width}×{tile_img.height} → {tile_target}px"
+                f"{tile_img.width}x{tile_img.height} -> "
+                f"{model_tile_img.width}x{model_tile_img.height} -> {tile_target}px"
             )
 
         upscaled_bytes = await _upscale_with_retry(
@@ -201,7 +213,7 @@ async def tile_upscale(
         # Resize inner region to target dimensions for consistent stitching
         target_w = t.w * scale
         target_h = t.h * scale
-        inner = inner.resize((target_w, target_h), Image.BICUBIC)
+        inner = inner.resize((target_w, target_h), Image.Resampling.BICUBIC)
 
         paste_x = t.x * scale
         paste_y = t.y * scale
@@ -217,8 +229,8 @@ async def tile_upscale(
         ratio = target_size / canvas_longest
         final_w = int(canvas_w * ratio)
         final_h = int(canvas_h * ratio)
-        canvas = canvas.resize((final_w, final_h), Image.BICUBIC)
-        logger.info(f"Final resize: {canvas_w}×{canvas_h} → {final_w}×{final_h}")
+        canvas = canvas.resize((final_w, final_h), Image.Resampling.BICUBIC)
+        logger.info(f"Final resize: {canvas_w}x{canvas_h} -> {final_w}x{final_h}")
 
     # Apply post-upscale sharpen if requested
     if sharpen:
@@ -227,8 +239,14 @@ async def tile_upscale(
     output = io.BytesIO()
     canvas.save(output, format="PNG")
     result = output.getvalue()
-    logger.info(f"Tile upscale complete: {len(img_bytes)} → {len(result)} bytes")
+    logger.info(f"Tile upscale complete: {len(img_bytes)} -> {len(result)} bytes")
     return result
 
 
-__all__ = ["tile_upscale", "TILE_SIZE"]
+__all__ = [
+    "MAX_TILE_TARGET_RATIO",
+    "MIN_TILE_INPUT_FOR_SINGLE_PASS",
+    "MIN_TILE_TARGET_SIZE",
+    "TILE_SIZE",
+    "tile_upscale",
+]
