@@ -66,7 +66,11 @@ REAL_ESRGAN_ANIME_MODEL = (
 # Models that use the xinntao/realesrgan input schema (img + version, not image)
 _XINTAO_REALESRGAN_PREFIX = "xinntao/realesrgan"
 UPSCALE_MODEL_BY_CONTENT_TYPE = {
-    "line-art": REAL_ESRGAN_ANIME_MODEL,
+    # xinntao/realesrgan Anime6B can fail with `Cog: Got error trying to upload
+    # output files` during tiled material exports. Keep both content types on
+    # the stable Real-ESRGAN endpoint; line-art differences are handled by
+    # bicubic resize plus optional sharpening below.
+    "line-art": REAL_ESRGAN_X4PLUS_MODEL,
     "pattern": REAL_ESRGAN_X4PLUS_MODEL,
 }
 UPSCALE_MODEL = SWINIR_MODEL  # better texture preservation; ESRGAN_MODEL for GAN upscale
@@ -318,6 +322,86 @@ class ReplicateProvider(AIProvider):
 
         raise ProviderError("Generation failed")
 
+    async def _run_swinir_upscale(self, model: str, image: bytes, raw_scale: float) -> bytes:
+        with self._image_file_input(image) as image_file:
+            task_type = (
+                "Real-World Image Super-Resolution-Large"
+                if raw_scale > 2.0
+                else "Real-World Image Super-Resolution-Medium"
+            )
+            output = await self._run_prediction(
+                model,
+                {"image": image_file, "task_type": task_type},
+            )
+        return await self._replicate_output_to_bytes(output)
+
+    def _esrgan_input_template(self, model: str) -> tuple[dict[str, Any], str]:
+        # Build input dict per model schema:
+        # - nightmareai/real-esrgan: {"image": ..., "scale": 2, "face_enhance": False}
+        # - xinntao/realesrgan:   {"img": ..., "scale": 2, "version": "Anime - anime6B"}
+        if model.startswith(_XINTAO_REALESRGAN_PREFIX):
+            return (
+                {
+                    "img": None,
+                    "scale": 2,
+                    "version": "Anime - anime6B",
+                    "face_enhance": False,
+                },
+                "img",
+            )
+        return {"image": None, "scale": 2, "face_enhance": False}, "image"
+
+    async def _run_esrgan_upscale(self, model: str, image: bytes, raw_scale: float) -> bytes:
+        num_passes = (
+            max(1, min(4, math.ceil(math.log2(raw_scale))))
+            if raw_scale > 2.5
+            else 1
+        )
+        base_input, image_key = self._esrgan_input_template(model)
+
+        current_image = image
+        for _ in range(num_passes):
+            with self._image_file_input(current_image) as image_file:
+                pass_input = {**base_input, image_key: image_file}
+                output = await self._run_prediction(model, pass_input)
+            current_image = await self._replicate_output_to_bytes(output)
+        return current_image
+
+    def _postprocess_upscaled_image(
+        self,
+        upscaled_bytes: bytes,
+        target_size: int,
+        *,
+        content_type: str,
+        sharpen: bool,
+    ) -> bytes:
+        if sharpen:
+            upscaled_img = Image.open(io.BytesIO(upscaled_bytes))
+            upscaled_img = upscaled_img.filter(
+                ImageFilter.UnsharpMask(radius=1.5, percent=80, threshold=2)
+            )
+            buf = io.BytesIO()
+            upscaled_img.save(buf, format="PNG")
+            upscaled_bytes = buf.getvalue()
+
+        upscaled_img = Image.open(io.BytesIO(upscaled_bytes))
+        longest = max(upscaled_img.width, upscaled_img.height)
+        if longest >= target_size:
+            return upscaled_bytes
+
+        ratio = target_size / longest
+        new_w = int(upscaled_img.width * ratio)
+        new_h = int(upscaled_img.height * ratio)
+        resample = (
+            Image.Resampling.BICUBIC
+            if content_type == "line-art"
+            else Image.Resampling.LANCZOS
+        )
+        upscaled_img = upscaled_img.resize((new_w, new_h), resample)
+        buf = io.BytesIO()
+        upscaled_img.save(buf, format="PNG")
+        return buf.getvalue()
+
     async def upscale_image(
         self,
         image: bytes,
@@ -342,71 +426,16 @@ class ReplicateProvider(AIProvider):
         for attempt in range(self.max_retries):
             try:
                 if "swinir" in model.lower():
-                    # SwinIR stays single-pass (task-based, not scale-based)
-                    with self._image_file_input(image) as image_file:
-                        task_type = (
-                            "Real-World Image Super-Resolution-Large"
-                            if raw_scale > 2.0
-                            else "Real-World Image Super-Resolution-Medium"
-                        )
-                        output = await self._run_prediction(
-                            model,
-                            {"image": image_file, "task_type": task_type},
-                        )
-                    upscaled_bytes = await self._replicate_output_to_bytes(output)
+                    upscaled_bytes = await self._run_swinir_upscale(model, image, raw_scale)
                 else:
-                    # ESRGAN model — progressive 2x upscaling
-                    if raw_scale > 2.5:
-                        num_passes = max(1, min(4, math.ceil(math.log2(raw_scale))))
-                    else:
-                        num_passes = 1
+                    upscaled_bytes = await self._run_esrgan_upscale(model, image, raw_scale)
 
-                    # Build input dict per model schema:
-                    # - nightmareai/real-esrgan: {"image": ..., "scale": 2, "face_enhance": False}
-                    # - xinntao/realesrgan:   {"img": ..., "scale": 2, "version": "Anime - anime6B"}
-                    if model.startswith(_XINTAO_REALESRGAN_PREFIX):
-                        base_input: dict[str, Any] = {
-                            "img": None,  # placeholder, set per pass
-                            "scale": 2,
-                            "version": "Anime - anime6B",
-                            "face_enhance": False,
-                        }
-                        image_key = "img"
-                    else:
-                        base_input = {"image": None, "scale": 2, "face_enhance": False}
-                        image_key = "image"
-
-                    current_image = image
-                    for pass_idx in range(num_passes):
-                        with self._image_file_input(current_image) as image_file:
-                            pass_input = {**base_input, image_key: image_file}
-                            output = await self._run_prediction(model, pass_input)
-                        current_image = await self._replicate_output_to_bytes(output)
-                    upscaled_bytes = current_image
-
-                # Apply post-upscale sharpen (UnsharpMask counteracts GAN smoothing)
-                if sharpen:
-                    upscaled_img = Image.open(io.BytesIO(upscaled_bytes))
-                    upscaled_img = upscaled_img.filter(
-                        ImageFilter.UnsharpMask(radius=1.5, percent=80, threshold=2)
-                    )
-                    buf = io.BytesIO()
-                    upscaled_img.save(buf, format="PNG")
-                    upscaled_bytes = buf.getvalue()
-
-                # Resize to target if AI output is smaller than target
-                upscaled_img = Image.open(io.BytesIO(upscaled_bytes))
-                longest = max(upscaled_img.width, upscaled_img.height)
-                if longest < target_size:
-                    ratio = target_size / longest
-                    new_w = int(upscaled_img.width * ratio)
-                    new_h = int(upscaled_img.height * ratio)
-                    # BICUBIC for line-art (sharper edges), LANCZOS for pattern (smoother)
-                    resample = Image.BICUBIC if content_type == "line-art" else Image.LANCZOS
-                    upscaled_img = upscaled_img.resize((new_w, new_h), resample)
-                    buf = io.BytesIO()
-                    upscaled_img.save(buf, format="PNG")
-                    upscaled_bytes = buf.getvalue()
+                upscaled_bytes = self._postprocess_upscaled_image(
+                    upscaled_bytes,
+                    target_size,
+                    content_type=content_type,
+                    sharpen=sharpen,
+                )
 
                 logger.info(f"Image upscaled: {input_size}px -> {target_size}px")
                 return upscaled_bytes

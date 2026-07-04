@@ -153,13 +153,13 @@ async def test_upscale_image_passes_file_input_to_official_sdk(
         base_url="https://replicate.example/v1",
         timeout=1,
     )
-    client = StubReplicateClient(output=AsyncFileOutput(b"upscaled-bytes"))
+    client = StubReplicateClient(output=AsyncFileOutput(make_png(width=1200, height=1200)))
     monkeypatch.setattr(provider, "_client", client)
 
     image_bytes = make_png(width=512, height=512)
     upscaled = await provider.upscale_image(image_bytes, target_size=1200)
 
-    assert upscaled == b"upscaled-bytes"
+    assert Image.open(BytesIO(upscaled)).size == (1200, 1200)
     assert len(client.calls) == 1
     call = client.calls[0]
     assert call["model"] == ESRGAN_MODEL
@@ -168,6 +168,33 @@ async def test_upscale_image_passes_file_input_to_official_sdk(
     assert call["image_bytes"] == image_bytes
     assert call["image_closed_during_call"] is False
     assert not isinstance(call["input"]["image"], str)
+
+
+async def test_line_art_upscale_uses_stable_esrgan_model(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    provider = ReplicateProvider(
+        api_token="test-key",
+        base_url="https://replicate.example/v1",
+        timeout=1,
+    )
+    client = StubReplicateClient(output=AsyncFileOutput(make_png(width=1200, height=1200)))
+    monkeypatch.setattr(provider, "_client", client)
+
+    image_bytes = make_png(width=512, height=512)
+    upscaled = await provider.upscale_image(
+        image_bytes,
+        target_size=1200,
+        content_type="line-art",
+    )
+
+    assert Image.open(BytesIO(upscaled)).size == (1200, 1200)
+    assert len(client.calls) == 1
+    call = client.calls[0]
+    assert call["model"] == ESRGAN_MODEL
+    assert "image" in call["input"]
+    assert "img" not in call["input"]
+    assert call["image_bytes"] == image_bytes
 
 
 async def test_img2img_passes_decoded_file_input_to_official_sdk(
