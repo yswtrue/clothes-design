@@ -58,6 +58,20 @@ def _get_file_path(file_obj) -> str | None:
     return str(file_obj) if file_obj else None
 
 
+def _material_export_dedup_key(
+    *,
+    material_id: int,
+    target_resolution: int,
+    color_space: str,
+    content_type: str,
+    sharpen: bool,
+) -> str:
+    return (
+        f"mat_export:{material_id}:tif:{target_resolution}:"
+        f"{color_space}:{normalize_content_type(content_type)}:{int(bool(sharpen))}"
+    )
+
+
 class ExportResponse(BaseModel):
     task_id: str | None = None
     generated_design_id: int
@@ -211,6 +225,8 @@ class MaterialExportResponse(BaseModel):
     format: ExportFormat
     status: str = "pending"
     download_url: str | None = None
+    content_type: str = "pattern"
+    sharpen: bool = False
 
 
 @router.post(
@@ -255,21 +271,40 @@ async def export_material(
             detail="Material has no file to export",
         )
 
-    # Check for cached export — if already exported via this endpoint, return immediately
+    material_export_settings = get_export_settings(material.meta, "tif")
+    material_settings_match = export_settings_match(
+        material_export_settings,
+        export_format="tif",
+        target_resolution=target_resolution,
+        color_space="CMYK",
+        content_type=content_type,
+        sharpen=sharpen,
+    )
+
+    # Check for cached export only when options match the stored export metadata.
     existing_tif = _get_file_path(material.export_tif) if hasattr(material, "export_tif") else None
-    if existing_tif:
+    if existing_tif and material_settings_match:
         return MaterialExportResponse(
             task_id=None,
             material_id=material_id,
             format=export_format,
             status="exported",
             download_url=output_tif_storage.get_url(existing_tif),
+            content_type=normalize_content_type(content_type),
+            sharpen=sharpen,
         )
 
     # Check for already-running export task (dedup)
+    dedup_key = _material_export_dedup_key(
+        material_id=material_id,
+        target_resolution=target_resolution,
+        color_space="CMYK",
+        content_type=content_type,
+        sharpen=sharpen,
+    )
     redis_client = await get_redis_client()
     if redis_client:
-        existing_task_id = await redis_client.get(f"mat_export:{material_id}")
+        existing_task_id = await redis_client.get(dedup_key)
         if existing_task_id:
             existing_task_id = existing_task_id.decode() if isinstance(existing_task_id, bytes) else existing_task_id
             task_status = await get_task_status(existing_task_id)
@@ -279,6 +314,8 @@ async def export_material(
                     material_id=material_id,
                     format=export_format,
                     status="pending",
+                    content_type=normalize_content_type(content_type),
+                    sharpen=sharpen,
                 )
 
     acquired = await acquire_export_slot()
@@ -307,13 +344,15 @@ async def export_material(
 
     # Set dedup key so re-clicks return the same task_id
     if redis_client:
-        await redis_client.setex(f"mat_export:{material_id}", 600, task_id)
+        await redis_client.setex(dedup_key, 600, task_id)
 
     return MaterialExportResponse(
         task_id=task_id,
         material_id=material_id,
         format=export_format,
         status="pending",
+        content_type=normalize_content_type(content_type),
+        sharpen=sharpen,
     )
 
 

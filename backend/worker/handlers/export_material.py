@@ -1,13 +1,14 @@
 import io
 import logging
 import uuid
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 
 from PIL import Image
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlmodel import col
+from starlette.datastructures import UploadFile
 
 from api.storage.converter import ColorSpace, png_to_tif
 from api.storage.storages import (
@@ -19,7 +20,7 @@ from config import get_settings
 from shared.ai.base import AIProvider
 from shared.ai.exceptions import AIProviderError
 from shared.ai.factory import Capability, get_provider_by_capability
-from starlette.datastructures import UploadFile
+from shared.export_settings import merge_export_settings, normalize_export_settings
 
 from .base import TaskHandler, WorkerError
 from .tile_upscale import tile_upscale
@@ -69,11 +70,23 @@ class ExportMaterialHandler(TaskHandler):
         if color_space not in ("CMYK", "RGB"):
             raise WorkerError(f"Invalid color_space: {color_space}")
 
+        content_type = task_data.get("content_type", "pattern")
+        if content_type not in ("line-art", "pattern"):
+            raise WorkerError(f"Invalid content_type: {content_type}")
+
+        sharpen = task_data.get("sharpen", False)
+        if not isinstance(sharpen, bool):
+            raise WorkerError(f"Invalid sharpen: {sharpen}")
+
     async def _save_material_export(
         self,
         material_id: int,
         upscaled_filename: str,
         tif_filename: str,
+        target_resolution: int,
+        color_space: ColorSpace,
+        content_type: str,
+        sharpen: bool,
     ) -> None:
         from api.db.models import Material
 
@@ -92,10 +105,23 @@ class ExportMaterialHandler(TaskHandler):
                     await output_tif_storage.download(tif_filename),
                     tif_filename,
                 )
-                record.exported_at = datetime.utcnow()
+                record.meta = merge_export_settings(
+                    record.meta,
+                    normalize_export_settings(
+                        export_format="tif",
+                        target_resolution=target_resolution,
+                        color_space=color_space,
+                        content_type=content_type,
+                        sharpen=sharpen,
+                        upscaled_filename=upscaled_filename,
+                        output_filename=tif_filename,
+                    ),
+                )
+                record.exported_at = datetime.now(UTC).replace(tzinfo=None)
                 await session.commit()
                 self.logger.info(
-                    f"Persisted export_tif and upscaled_image to Material {material_id}"
+                    f"Persisted export_tif, upscaled_image, and export settings "
+                    f"to Material {material_id}"
                 )
 
     async def handle(self, task_data: dict[str, Any]) -> dict[str, Any]:
@@ -137,7 +163,7 @@ class ExportMaterialHandler(TaskHandler):
 
             if needs_tiling:
                 self.logger.info(
-                    f"Image too large for GPU ({w}×{h} = {w * h:,} px), "
+                    f"Image too large for GPU ({w}x{h} = {w * h:,} px), "
                     f"using tiled upscaling (1024px tiles)"
                 )
                 upscaled_bytes = await tile_upscale(
@@ -155,8 +181,8 @@ class ExportMaterialHandler(TaskHandler):
 
             upscaled_size = Image.open(io.BytesIO(upscaled_bytes)).size[0]
             self.logger.info(
-                f"Upscaled: {original_size}px → {upscaled_size}px, "
-                f"{len(original_bytes)} → {len(upscaled_bytes)} bytes"
+                f"Upscaled: {original_size}px -> {upscaled_size}px, "
+                f"{len(original_bytes)} -> {len(upscaled_bytes)} bytes"
             )
 
             # Save upscaled intermediate
@@ -175,7 +201,15 @@ class ExportMaterialHandler(TaskHandler):
             await output_tif_storage.upload(tif_bytes, tif_filename)
 
             # Step 5: Persist to Material record
-            await self._save_material_export(material_id, upscaled_filename, tif_filename)
+            await self._save_material_export(
+                material_id,
+                upscaled_filename,
+                tif_filename,
+                target_resolution,
+                color_space,
+                content_type,
+                sharpen,
+            )
 
             tif_url = output_tif_storage.get_url(tif_filename)
             upscaled_url = upscaled_storage.get_url(upscaled_filename)
@@ -189,6 +223,8 @@ class ExportMaterialHandler(TaskHandler):
                 "format": "tif",
                 "file_size": len(tif_bytes),
                 "upscaled_url": upscaled_url,
+                "content_type": content_type,
+                "sharpen": sharpen,
                 "original_size": original_size,
                 "upscaled_size": upscaled_size,
             }
@@ -201,4 +237,3 @@ class ExportMaterialHandler(TaskHandler):
 
 
 __all__ = ["ExportMaterialHandler"]
-
