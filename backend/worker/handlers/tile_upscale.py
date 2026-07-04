@@ -21,9 +21,8 @@ TILE_SIZE = 1024
 TILE_PAD = 64  # overlap padding to avoid seam artifacts
 # Replicate free tier: 6 requests/min, burst=1 → ~12s between tiles safely
 TILE_DELAY_SECONDS = 12.0
-# Keep tiled Replicate requests single-pass. Higher target ratios trigger the
-# provider's progressive ESRGAN loop, which feeds 2x intermediate tiles back
-# into Replicate and can exceed the model's input pixel limit.
+# Keep each Replicate request to a single 2x-ish pass. Larger exports are built
+# as multiple full-image stages so every stage can decide whether to tile again.
 MAX_TILE_TARGET_RATIO = 2.5
 # Keep Replicate model outputs under roughly 2M pixels. Real-ESRGAN returns a
 # fixed 2x output, so a 704px square input becomes 1408px square (~1.98M px).
@@ -32,6 +31,7 @@ MIN_TILE_TARGET_SIZE = 1024
 MIN_TILE_INPUT_FOR_SINGLE_PASS = math.ceil(MIN_TILE_TARGET_SIZE / MAX_TILE_TARGET_RATIO)
 # Rate limit retry
 MAX_RATE_LIMIT_RETRIES = 5
+STAGE_UPSCALE_FACTOR = 2
 
 
 @dataclass
@@ -103,6 +103,163 @@ async def _upscale_with_retry(
     raise ProviderRateLimitError("Max rate-limit retries exceeded")
 
 
+def _image_to_png(img: Image.Image) -> bytes:
+    output = io.BytesIO()
+    img.save(output, format="PNG")
+    return output.getvalue()
+
+
+def _resize_longest(img: Image.Image, longest: int) -> Image.Image:
+    current_longest = max(img.width, img.height)
+    if current_longest == longest:
+        return img
+    ratio = longest / current_longest
+    return img.resize(
+        (
+            max(1, round(img.width * ratio)),
+            max(1, round(img.height * ratio)),
+        ),
+        Image.Resampling.BICUBIC,
+    )
+
+
+def _prepare_model_input(img: Image.Image, target_size: int) -> tuple[Image.Image, int]:
+    """Return model-safe input image and target size for one Replicate call."""
+    tile_longest = max(img.width, img.height)
+    model_img = img
+
+    if tile_longest > MAX_TILE_MODEL_INPUT_SIZE:
+        model_img = _resize_longest(img, MAX_TILE_MODEL_INPUT_SIZE)
+    elif tile_longest < MIN_TILE_INPUT_FOR_SINGLE_PASS:
+        model_img = _resize_longest(img, MIN_TILE_INPUT_FOR_SINGLE_PASS)
+
+    model_longest = max(model_img.width, model_img.height)
+    model_target = max(MIN_TILE_TARGET_SIZE, target_size)
+    model_target = min(model_target, int(model_longest * MAX_TILE_TARGET_RATIO))
+    return model_img, model_target
+
+
+async def _upscale_direct_stage(
+    img: Image.Image,
+    stage_target_size: int,
+    upscale_fn,
+    delay_between_tiles: float,
+) -> Image.Image:
+    """Upscale a stage with one model call when the image is already model-safe."""
+    model_img, model_target = _prepare_model_input(img, stage_target_size)
+    upscaled_bytes = await _upscale_with_retry(
+        upscale_fn,
+        _image_to_png(model_img),
+        model_target,
+        0,
+        1,
+        delay_between_tiles,
+    )
+    upscaled = Image.open(io.BytesIO(upscaled_bytes)).convert("RGB")
+    return _resize_longest(upscaled, stage_target_size)
+
+
+async def _upscale_tiled_stage(
+    img: Image.Image,
+    stage_target_size: int,
+    upscale_fn,
+    tile_size: int,
+    pad: int,
+    delay_between_tiles: float,
+) -> Image.Image:
+    """Upscale one stage by tiling the current image, then stitching it."""
+    src_w, src_h = img.size
+    src_longest = max(src_w, src_h)
+    stage_ratio = stage_target_size / src_longest
+    canvas_w = max(1, round(src_w * stage_ratio))
+    canvas_h = max(1, round(src_h * stage_ratio))
+    canvas = Image.new("RGB", (canvas_w, canvas_h))
+
+    effective_tile_size = min(tile_size, max(1, MAX_TILE_MODEL_INPUT_SIZE - (pad * 2)))
+    tiles = _grid_tiles(src_w, src_h, effective_tile_size, pad)
+    logger.info(
+        f"Tile stage: {src_w}x{src_h} -> {canvas_w}x{canvas_h} "
+        f"({len(tiles)} tiles, core={effective_tile_size}px)"
+    )
+
+    for idx, t in enumerate(tiles):
+        crop_left = t.x - t.pad_left
+        crop_top = t.y - t.pad_top
+        crop_right = t.x + t.w + t.pad_right
+        crop_bottom = t.y + t.h + t.pad_bottom
+        tile_img = img.crop((crop_left, crop_top, crop_right, crop_bottom))
+
+        tile_stage_target = max(1, round(max(tile_img.width, tile_img.height) * stage_ratio))
+        model_tile_img, tile_target = _prepare_model_input(tile_img, tile_stage_target)
+
+        if idx % 10 == 0 or idx == len(tiles) - 1:
+            logger.info(
+                f"Tile {idx + 1}/{len(tiles)} [{t.y // effective_tile_size},{t.x // effective_tile_size}] "
+                f"{tile_img.width}x{tile_img.height} -> "
+                f"{model_tile_img.width}x{model_tile_img.height} -> {tile_target}px"
+            )
+
+        upscaled_bytes = await _upscale_with_retry(
+            upscale_fn,
+            _image_to_png(model_tile_img),
+            tile_target,
+            idx,
+            len(tiles),
+            delay_between_tiles,
+        )
+        upscaled_tile = Image.open(io.BytesIO(upscaled_bytes)).convert("RGB")
+
+        actual_ratio_w = upscaled_tile.width / tile_img.width
+        actual_ratio_h = upscaled_tile.height / tile_img.height
+        inner_left = int(t.pad_left * actual_ratio_w)
+        inner_top = int(t.pad_top * actual_ratio_h)
+        inner_right = min(int(inner_left + t.w * actual_ratio_w), upscaled_tile.width)
+        inner_bottom = min(int(inner_top + t.h * actual_ratio_h), upscaled_tile.height)
+        inner = upscaled_tile.crop((inner_left, inner_top, inner_right, inner_bottom))
+
+        paste_x = round(t.x * stage_ratio)
+        paste_y = round(t.y * stage_ratio)
+        target_w = max(1, round((t.x + t.w) * stage_ratio) - paste_x)
+        target_h = max(1, round((t.y + t.h) * stage_ratio) - paste_y)
+        inner = inner.resize((target_w, target_h), Image.Resampling.BICUBIC)
+        canvas.paste(inner, (paste_x, paste_y))
+
+        if idx < len(tiles) - 1:
+            await asyncio.sleep(delay_between_tiles)
+
+    return canvas
+
+
+async def _upscale_stage(
+    img: Image.Image,
+    stage_target_size: int,
+    upscale_fn,
+    tile_size: int,
+    pad: int,
+    delay_between_tiles: float,
+) -> Image.Image:
+    """Run one <=2x stage, deciding whether this stage needs tiling."""
+    if max(img.width, img.height) <= MAX_TILE_MODEL_INPUT_SIZE:
+        logger.info(
+            f"Direct stage: {img.width}x{img.height} -> longest {stage_target_size}px"
+        )
+        return await _upscale_direct_stage(
+            img,
+            stage_target_size,
+            upscale_fn,
+            delay_between_tiles,
+        )
+
+    return await _upscale_tiled_stage(
+        img,
+        stage_target_size,
+        upscale_fn,
+        tile_size,
+        pad,
+        delay_between_tiles,
+    )
+
+
 async def tile_upscale(
     img_bytes: bytes,
     target_size: int,
@@ -133,128 +290,41 @@ async def tile_upscale(
     img = Image.open(io.BytesIO(img_bytes)).convert("RGB")
     src_w, src_h = img.size
 
-    # Calculate required scale to reach target
     src_longest = max(src_w, src_h)
-    scale = max(2, round(target_size / src_longest / 2) * 2)  # round to nearest even
-    scale = min(scale, 8)  # max ESRGAN scale is 8x
 
-    # Pre-allocate canvas for stitched result
-    canvas_w = src_w * scale
-    canvas_h = src_h * scale
-    canvas = Image.new("RGB", (canvas_w, canvas_h))
+    current = img
+    current_longest = src_longest
+    stage = 0
+    logger.info(f"Progressive tile upscale: {src_w}x{src_h} -> longest {target_size}px")
 
-    # Build tile grid
-    tiles = _grid_tiles(src_w, src_h, tile_size, pad)
-    # Request only a single model pass per tile. The final canvas still reaches
-    # the requested resolution through deterministic stitching + resize below.
-    tile_target_ratio = MAX_TILE_TARGET_RATIO
-
-    logger.info(
-        f"Tile upscale: {src_w}x{src_h} -> {canvas_w}x{canvas_h} "
-        f"({len(tiles)} tiles, {scale}x)"
-    )
-
-    for idx, t in enumerate(tiles):
-        t.scale = scale
-
-        # Crop tile region with padding
-        crop_left = t.x - t.pad_left
-        crop_top = t.y - t.pad_top
-        crop_right = t.x + t.w + t.pad_right
-        crop_bottom = t.y + t.h + t.pad_bottom
-        tile_img = img.crop((crop_left, crop_top, crop_right, crop_bottom))
-
-        # Determine model input and target for this tile. Replicate rejects
-        # target_size below 1024, while targets above 2.5x input trigger provider
-        # multi-pass. The Real-ESRGAN Cog image can also fail while uploading
-        # oversized 2x outputs, so large padded tiles are downscaled locally
-        # before the model call; final canvas quality is restored by stitching
-        # and deterministic resize below.
-        tile_longest = max(tile_img.width, tile_img.height)
-        model_tile_img = tile_img
-        if tile_longest > MAX_TILE_MODEL_INPUT_SIZE:
-            input_ratio = MAX_TILE_MODEL_INPUT_SIZE / tile_longest
-            model_tile_img = tile_img.resize(
-                (
-                    max(1, math.ceil(tile_img.width * input_ratio)),
-                    max(1, math.ceil(tile_img.height * input_ratio)),
-                ),
-                Image.Resampling.BICUBIC,
-            )
-        elif tile_longest < MIN_TILE_INPUT_FOR_SINGLE_PASS:
-            input_ratio = MIN_TILE_INPUT_FOR_SINGLE_PASS / tile_longest
-            model_tile_img = tile_img.resize(
-                (
-                    max(1, math.ceil(tile_img.width * input_ratio)),
-                    max(1, math.ceil(tile_img.height * input_ratio)),
-                ),
-                Image.Resampling.BICUBIC,
-            )
-        model_tile_longest = max(model_tile_img.width, model_tile_img.height)
-        tile_target = max(
-            MIN_TILE_TARGET_SIZE,
-            int(model_tile_longest * tile_target_ratio),
+    while current_longest < target_size:
+        stage += 1
+        stage_target_size = min(target_size, current_longest * STAGE_UPSCALE_FACTOR)
+        logger.info(
+            f"Upscale stage {stage}: {current.width}x{current.height} "
+            f"-> longest {stage_target_size}px"
         )
-
-        # Convert to bytes and upscale
-        buf = io.BytesIO()
-        model_tile_img.save(buf, format="PNG")
-        tile_bytes = buf.getvalue()
-
-        if idx % 10 == 0 or idx == len(tiles) - 1:
-            logger.info(
-                f"Tile {idx + 1}/{len(tiles)} [{t.y // tile_size},{t.x // tile_size}] "
-                f"{tile_img.width}x{tile_img.height} -> "
-                f"{model_tile_img.width}x{model_tile_img.height} -> {tile_target}px"
-            )
-
-        upscaled_bytes = await _upscale_with_retry(
-            upscale_fn, tile_bytes, tile_target,
-            idx, len(tiles), delay_between_tiles,
+        current = await _upscale_stage(
+            current,
+            stage_target_size,
+            upscale_fn,
+            tile_size,
+            pad,
+            delay_between_tiles,
         )
-        upscaled_tile = Image.open(io.BytesIO(upscaled_bytes))
+        current_longest = max(current.width, current.height)
 
-        # Compute actual scale ratio (ESRGAN may not match our planned scale)
-        actual_ratio_w = upscaled_tile.width / tile_img.width
-        actual_ratio_h = upscaled_tile.height / tile_img.height
-
-        # Crop out padding using the actual upscale ratio
-        inner_left = int(t.pad_left * actual_ratio_w)
-        inner_top = int(t.pad_top * actual_ratio_h)
-        inner_right = int(inner_left + t.w * actual_ratio_w)
-        inner_bottom = int(inner_top + t.h * actual_ratio_h)
-        inner_right = min(inner_right, upscaled_tile.width)
-        inner_bottom = min(inner_bottom, upscaled_tile.height)
-        inner = upscaled_tile.crop((inner_left, inner_top, inner_right, inner_bottom))
-
-        # Resize inner region to target dimensions for consistent stitching
-        target_w = t.w * scale
-        target_h = t.h * scale
-        inner = inner.resize((target_w, target_h), Image.Resampling.BICUBIC)
-
-        paste_x = t.x * scale
-        paste_y = t.y * scale
-        canvas.paste(inner, (paste_x, paste_y))
-
-        # Rate-limit delay between tiles
-        if idx < len(tiles) - 1:
-            await asyncio.sleep(delay_between_tiles)
-
-    # Final resize if canvas doesn't match target exactly
-    canvas_longest = max(canvas_w, canvas_h)
-    if canvas_longest != target_size:
-        ratio = target_size / canvas_longest
-        final_w = int(canvas_w * ratio)
-        final_h = int(canvas_h * ratio)
-        canvas = canvas.resize((final_w, final_h), Image.Resampling.BICUBIC)
-        logger.info(f"Final resize: {canvas_w}x{canvas_h} -> {final_w}x{final_h}")
+    if current_longest != target_size:
+        before = current.size
+        current = _resize_longest(current, target_size)
+        logger.info(f"Final resize: {before[0]}x{before[1]} -> {current.width}x{current.height}")
 
     # Apply post-upscale sharpen if requested
     if sharpen:
-        canvas = canvas.filter(ImageFilter.SHARPEN)
+        current = current.filter(ImageFilter.SHARPEN)
 
     output = io.BytesIO()
-    canvas.save(output, format="PNG")
+    current.save(output, format="PNG")
     result = output.getvalue()
     logger.info(f"Tile upscale complete: {len(img_bytes)} -> {len(result)} bytes")
     return result
@@ -265,6 +335,7 @@ __all__ = [
     "MAX_TILE_TARGET_RATIO",
     "MIN_TILE_INPUT_FOR_SINGLE_PASS",
     "MIN_TILE_TARGET_SIZE",
+    "STAGE_UPSCALE_FACTOR",
     "TILE_SIZE",
     "tile_upscale",
 ]
