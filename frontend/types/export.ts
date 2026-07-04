@@ -9,6 +9,8 @@ export interface ExportResponse {
   status: 'pending' | 'exported';
   download_url: string | null;
   upscaled_url: string | null;
+  content_type: ExportContentType;
+  sharpen: boolean;
 }
 
 export interface ExportStatusResponse {
@@ -20,5 +22,7 @@ export interface ExportStatusResponse {
   current_step: string | null;
   download_url: string | null;
   upscaled_url: string | null;
+  content_type: ExportContentType | null;
+  sharpen: boolean | null;
   error: string | null;
 }

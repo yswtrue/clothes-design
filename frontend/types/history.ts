@@ -1,3 +1,15 @@
+import type { ExportContentType, ExportFormat } from './export';
+
+export interface GeneratedExportSettings {
+  format: ExportFormat;
+  target_resolution: number | null;
+  color_space: string | null;
+  content_type: ExportContentType | null;
+  sharpen: boolean | null;
+  upscaled_filename: string | null;
+  output_filename: string | null;
+}
+
 export interface GeneratedDesign {
   id: number;
   material_id: number;
@@ -12,6 +24,7 @@ export interface GeneratedDesign {
   is_selected: boolean;
   created_at: string | null;
   exported_at: string | null;
+  export_settings: Partial<Record<ExportFormat, GeneratedExportSettings>> | null;
 }
 
 export interface MaterialWithDesigns {

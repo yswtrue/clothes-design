@@ -60,6 +60,8 @@ export default function PatternResult({
           current_step: 'complete',
           download_url: response.download_url,
           upscaled_url: response.upscaled_url,
+          content_type: response.content_type,
+          sharpen: response.sharpen,
           error: null,
         });
         setTifExportState('complete');

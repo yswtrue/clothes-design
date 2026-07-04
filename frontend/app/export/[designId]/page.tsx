@@ -37,6 +37,13 @@ export default function ExportPage({ params }: PageProps) {
     try {
       const design = await fetchGeneratedDesign(designIdNum);
       setPreviewUrl(design.thumbnail_url || design.image_url || null);
+      const historicalSettings = design.export_settings?.tif ?? design.export_settings?.svg;
+      if (historicalSettings?.content_type) {
+        setContentType(historicalSettings.content_type);
+      }
+      if (historicalSettings?.sharpen !== null && historicalSettings?.sharpen !== undefined) {
+        setSharpen(historicalSettings.sharpen);
+      }
       setState('idle');
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load design');
@@ -63,6 +70,8 @@ export default function ExportPage({ params }: PageProps) {
           current_step: 'complete',
           download_url: response.download_url,
           upscaled_url: response.upscaled_url,
+          content_type: response.content_type,
+          sharpen: response.sharpen,
           error: null,
         });
         setState('complete');
