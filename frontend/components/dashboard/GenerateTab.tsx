@@ -12,7 +12,13 @@ import { GenerateRequest, TaskStatusResponse } from '@/types/generate';
 import MaterialSelector from '@/components/generate/MaterialSelector';
 import { LazyGenerationProgress, LazyPatternResult } from '@/components/LazyComponents';
 import { apiRequest } from '@/lib/api';
-import { triggerMaterialExport, pollExportStatus } from '@/lib/export';
+import {
+  EXPORT_TARGET_MULTIPLIERS,
+  getExportTargetResolution,
+  pollExportStatus,
+  triggerMaterialExport,
+  type ExportTargetMultiplier,
+} from '@/lib/export';
 import type { ExportContentType } from '@/types/export';
 
 type GenerateState = 'idle' | 'loading_materials' | 'ready' | 'generating' | 'complete' | 'error' | 'pending_background';
@@ -52,6 +58,9 @@ export default function GenerateTab() {
   const [materialTifError, setMaterialTifError] = useState<string | null>(null);
   const [materialTifContentType, setMaterialTifContentType] = useState<ExportContentType>('pattern');
   const [materialTifSharpen, setMaterialTifSharpen] = useState(false);
+  const [materialTifTargetMultiplier, setMaterialTifTargetMultiplier] = useState<ExportTargetMultiplier>(8);
+
+  const materialTifTargetResolution = getExportTargetResolution(materialTifTargetMultiplier);
 
   useEffect(() => {
     let isMounted = true;
@@ -177,14 +186,14 @@ export default function GenerateTab() {
         'tif',
         materialTifContentType,
         materialTifSharpen,
-        12000
+        materialTifTargetResolution
       );
 
       // Already exported (cached) — direct download
       if (!response.task_id && response.status === 'exported' && response.download_url) {
         const link = document.createElement('a');
         link.href = response.download_url;
-        link.download = `material-${selectedMaterial.id}-12K-CMYK.tif`;
+        link.download = `material-${selectedMaterial.id}-${materialTifTargetMultiplier}x-CMYK.tif`;
         document.body.appendChild(link);
         link.click();
         document.body.removeChild(link);
@@ -201,7 +210,7 @@ export default function GenerateTab() {
       if (completedStatus.status === 'exported' && completedStatus.download_url) {
         const link = document.createElement('a');
         link.href = completedStatus.download_url;
-        link.download = `material-${selectedMaterial.id}-12K-CMYK.tif`;
+        link.download = `material-${selectedMaterial.id}-${materialTifTargetMultiplier}x-CMYK.tif`;
         document.body.appendChild(link);
         link.click();
         document.body.removeChild(link);
@@ -378,8 +387,40 @@ export default function GenerateTab() {
                       原图 TIF 导出选项
                     </h3>
                     <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
-                      控制素材原图放大到 12K CMYK 前的图案处理方式。
+                      控制素材原图放大倍数、CMYK 转换前的图案处理方式。
                     </p>
+                  </div>
+
+                  <div className="flex justify-between items-center py-2 border-t border-zinc-200 dark:border-zinc-800">
+                    <span className="text-sm font-medium text-zinc-700 dark:text-zinc-300">
+                      目标倍数
+                    </span>
+                    <div className="flex rounded-md border border-zinc-200 dark:border-zinc-800 overflow-hidden">
+                      {EXPORT_TARGET_MULTIPLIERS.map((multiplier) => (
+                        <button
+                          key={multiplier}
+                          type="button"
+                          onClick={() => setMaterialTifTargetMultiplier(multiplier)}
+                          disabled={materialTifExporting || state === 'generating'}
+                          className={`px-3 py-1.5 text-xs font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${
+                            materialTifTargetMultiplier === multiplier
+                              ? 'bg-zinc-950 dark:bg-zinc-50 text-white dark:text-zinc-950'
+                              : 'bg-white dark:bg-zinc-900 text-zinc-600 dark:text-zinc-400 hover:bg-zinc-50 dark:hover:bg-zinc-800'
+                          }`}
+                        >
+                          {multiplier}x
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="flex justify-between items-center py-2 border-t border-zinc-200 dark:border-zinc-800">
+                    <span className="text-sm font-medium text-zinc-700 dark:text-zinc-300">
+                      输出最长边
+                    </span>
+                    <span className="text-sm text-zinc-600 dark:text-zinc-400">
+                      {materialTifTargetResolution.toLocaleString()}px
+                    </span>
                   </div>
 
                   <div className="flex justify-between items-center py-2 border-t border-zinc-200 dark:border-zinc-800">
@@ -445,7 +486,7 @@ export default function GenerateTab() {
                   disabled={materialTifExporting || state === 'generating'}
                   className="w-full rounded-md border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 px-4 py-3 text-sm font-medium text-zinc-950 dark:text-zinc-50 hover:bg-zinc-50 dark:hover:bg-zinc-800 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                 >
-                  {materialTifExporting ? '导出中...' : '导出原图TIF (CMYK · 300DPI)'}
+                  {materialTifExporting ? '导出中...' : `导出原图TIF (${materialTifTargetMultiplier}x · CMYK · 300DPI)`}
                 </button>
 
                 {materialTifError && (
