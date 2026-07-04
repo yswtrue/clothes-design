@@ -2,7 +2,7 @@ import io
 import logging
 import uuid
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any, Literal
 
 from PIL import Image
@@ -22,6 +22,13 @@ from config import get_settings
 from shared.ai.base import AIProvider
 from shared.ai.exceptions import AIProviderError
 from shared.ai.factory import Capability, get_provider_by_capability
+from shared.export_settings import (
+    export_settings_match,
+    get_export_settings,
+    merge_export_settings,
+    normalize_content_type,
+    normalize_export_settings,
+)
 from shared.task_queue import release_export_slot
 
 from .base import TaskHandler, WorkerError
@@ -37,6 +44,7 @@ class ExportContext:
     existing_vector_path: str | None
     existing_tif_path: str | None
     existing_upscaled_path: str | None
+    generation_params: dict[str, Any] | None
 
 
 @dataclass(frozen=True)
@@ -135,6 +143,14 @@ class ExportPatternHandler(TaskHandler):
         if export_format not in ("svg", "tif"):
             raise WorkerError(f"Invalid format: {export_format}")
 
+        content_type = task_data.get("content_type", "pattern")
+        if content_type not in ("line-art", "pattern"):
+            raise WorkerError(f"Invalid content_type: {content_type}")
+
+        sharpen = task_data.get("sharpen", False)
+        if not isinstance(sharpen, bool):
+            raise WorkerError(f"Invalid sharpen: {sharpen}")
+
     async def _load_export_context(self, generated_design_id: int) -> ExportContext:
         from api.db.models import GeneratedDesign
 
@@ -158,34 +174,53 @@ class ExportPatternHandler(TaskHandler):
                 existing_vector_path=_get_file_path(record.vector_svg),
                 existing_tif_path=_get_file_path(record.export_tif),
                 existing_upscaled_path=_get_file_path(record.upscaled_image),
+                generation_params=record.generation_params,
             )
 
     def _existing_export_response(
         self,
         generated_design_id: int,
         target_resolution: int,
+        color_space: str,
         export_format: ExportFormat,
         context: ExportContext,
+        content_type: str,
+        sharpen: bool,
     ) -> dict[str, Any] | None:
-        if export_format == "svg" and context.existing_vector_path and context.existing_upscaled_path:
+        export_settings = get_export_settings(context.generation_params, export_format)
+        settings_match = export_settings_match(
+            export_settings,
+            export_format=export_format,
+            target_resolution=target_resolution,
+            color_space=color_space,
+            content_type=content_type,
+            sharpen=sharpen,
+        )
+        upscaled_filename = export_settings.get("upscaled_filename") if export_settings else None
+
+        if export_format == "svg" and context.existing_vector_path and settings_match and upscaled_filename:
             self.logger.info(f"Reusing existing SVG export: {context.existing_vector_path}")
             return {
                 "download_url": vector_storage.get_url(context.existing_vector_path),
                 "generated_design_id": generated_design_id,
                 "resolution": target_resolution,
                 "format": "svg",
-                "upscaled_url": upscaled_storage.get_url(context.existing_upscaled_path),
+                "upscaled_url": upscaled_storage.get_url(upscaled_filename),
+                "content_type": normalize_content_type(content_type),
+                "sharpen": sharpen,
                 "reused": True,
             }
 
-        if export_format == "tif" and context.existing_tif_path and context.existing_upscaled_path:
+        if export_format == "tif" and context.existing_tif_path and settings_match and upscaled_filename:
             self.logger.info(f"Reusing existing TIF export: {context.existing_tif_path}")
             return {
                 "download_url": output_tif_storage.get_url(context.existing_tif_path),
                 "generated_design_id": generated_design_id,
                 "resolution": target_resolution,
                 "format": "tif",
-                "upscaled_url": upscaled_storage.get_url(context.existing_upscaled_path),
+                "upscaled_url": upscaled_storage.get_url(upscaled_filename),
+                "content_type": normalize_content_type(content_type),
+                "sharpen": sharpen,
                 "reused": True,
             }
 
@@ -198,16 +233,17 @@ class ExportPatternHandler(TaskHandler):
         context: ExportContext,
         content_type: str = "pattern",
         sharpen: bool = False,
+        reusable_upscaled_path: str | None = None,
     ) -> UpscaledImage:
         pattern_bytes = await generated_image_storage.download(context.image_filename)
         original_size = Image.open(io.BytesIO(pattern_bytes)).size[0]
 
-        if context.existing_upscaled_path:
-            self.logger.info(f"Reusing existing upscaled image: {context.existing_upscaled_path}")
-            upscaled_bytes = await upscaled_storage.download(context.existing_upscaled_path)
+        if reusable_upscaled_path:
+            self.logger.info(f"Reusing matching upscaled image: {reusable_upscaled_path}")
+            upscaled_bytes = await upscaled_storage.download(reusable_upscaled_path)
             return UpscaledImage(
                 data=upscaled_bytes,
-                filename=context.existing_upscaled_path,
+                filename=reusable_upscaled_path,
                 original_size=original_size,
             )
 
@@ -223,13 +259,13 @@ class ExportPatternHandler(TaskHandler):
             ratio = (GPU_SAFE_PIXELS / (w * h)) ** 0.5
             new_w = int(w * ratio)
             new_h = int(h * ratio)
-            img = img.resize((new_w, new_h), Image.LANCZOS)
+            img = img.resize((new_w, new_h), Image.Resampling.LANCZOS)
             buf = io.BytesIO()
             img.save(buf, format="PNG")
             pattern_bytes = buf.getvalue()
             original_size = max(new_w, new_h)
             self.logger.info(
-                f"Pre-resized for GPU: {w}×{h} → {new_w}×{new_h} "
+                f"Pre-resized for GPU: {w}x{h} → {new_w}x{new_h} "
                 f"({w * h:,} → {new_w * new_h:,} pixels)"
             )
 
@@ -268,11 +304,23 @@ class ExportPatternHandler(TaskHandler):
             existing_export = self._existing_export_response(
                 generated_design_id,
                 target_resolution,
+                color_space,
                 export_format,
                 context,
+                content_type,
+                sharpen,
             )
             if existing_export:
                 return existing_export
+
+            reusable_upscaled_path = self._matching_upscaled_path(
+                context,
+                export_format,
+                target_resolution,
+                color_space,
+                content_type,
+                sharpen,
+            )
 
             await self._update_status(generated_design_id, "exporting")
             upscaled = await self._prepare_upscaled_image(
@@ -281,6 +329,7 @@ class ExportPatternHandler(TaskHandler):
                 context,
                 content_type=content_type,
                 sharpen=sharpen,
+                reusable_upscaled_path=reusable_upscaled_path,
             )
 
             upscaled_size = Image.open(io.BytesIO(upscaled.data)).size[0]
@@ -296,6 +345,8 @@ class ExportPatternHandler(TaskHandler):
                     upscaled.filename,
                     target_resolution,
                     color_space,
+                    content_type,
+                    sharpen,
                 )
 
             return await self._export_tif(
@@ -305,6 +356,8 @@ class ExportPatternHandler(TaskHandler):
                 target_resolution,
                 color_space,
                 export_dpi,
+                content_type,
+                sharpen,
             )
 
         except WorkerError:
@@ -316,6 +369,27 @@ class ExportPatternHandler(TaskHandler):
         finally:
             await release_export_slot()
 
+    def _matching_upscaled_path(
+        self,
+        context: ExportContext,
+        export_format: ExportFormat,
+        target_resolution: int,
+        color_space: str,
+        content_type: str,
+        sharpen: bool,
+    ) -> str | None:
+        export_settings = get_export_settings(context.generation_params, export_format)
+        if not export_settings_match(
+            export_settings,
+            export_format=export_format,
+            target_resolution=target_resolution,
+            color_space=color_space,
+            content_type=content_type,
+            sharpen=sharpen,
+        ):
+            return None
+        return export_settings.get("upscaled_filename") if export_settings else None
+
     async def _export_svg(
         self,
         generated_design_id: int,
@@ -323,6 +397,8 @@ class ExportPatternHandler(TaskHandler):
         upscaled_filename: str,
         target_resolution: int,
         color_space: str,
+        content_type: str,
+        sharpen: bool,
     ) -> dict[str, Any]:
         from api.db.models import GeneratedDesign
 
@@ -343,7 +419,19 @@ class ExportPatternHandler(TaskHandler):
             if record:
                 record.status = "exported"
                 record.vector_svg = make_upload_file(svg_bytes, svg_filename)
-                record.exported_at = datetime.utcnow()
+                record.exported_at = datetime.now(UTC).replace(tzinfo=None)
+                record.generation_params = merge_export_settings(
+                    record.generation_params,
+                    normalize_export_settings(
+                        export_format="svg",
+                        target_resolution=target_resolution,
+                        color_space=color_space,
+                        content_type=content_type,
+                        sharpen=sharpen,
+                        upscaled_filename=upscaled_filename,
+                        output_filename=svg_filename,
+                    ),
+                )
                 await session.commit()
 
         upscaled_url = upscaled_storage.get_url(upscaled_filename)
@@ -358,6 +446,8 @@ class ExportPatternHandler(TaskHandler):
             "format": "svg",
             "file_size": len(svg_bytes),
             "upscaled_url": upscaled_url,
+            "content_type": normalize_content_type(content_type),
+            "sharpen": sharpen,
         }
 
     async def _export_tif(
@@ -368,6 +458,8 @@ class ExportPatternHandler(TaskHandler):
         target_resolution: int,
         color_space: ColorSpace,
         dpi: int = 300,
+        content_type: str = "pattern",
+        sharpen: bool = False,
     ) -> dict[str, Any]:
         from api.db.models import GeneratedDesign
 
@@ -387,7 +479,19 @@ class ExportPatternHandler(TaskHandler):
             if record:
                 record.status = "exported"
                 record.export_tif = make_upload_file(tif_bytes, tif_filename)
-                record.exported_at = datetime.utcnow()
+                record.exported_at = datetime.now(UTC).replace(tzinfo=None)
+                record.generation_params = merge_export_settings(
+                    record.generation_params,
+                    normalize_export_settings(
+                        export_format="tif",
+                        target_resolution=target_resolution,
+                        color_space=color_space,
+                        content_type=content_type,
+                        sharpen=sharpen,
+                        upscaled_filename=upscaled_filename,
+                        output_filename=tif_filename,
+                    ),
+                )
                 await session.commit()
 
         upscaled_url = upscaled_storage.get_url(upscaled_filename)
@@ -402,6 +506,8 @@ class ExportPatternHandler(TaskHandler):
             "format": "tif",
             "file_size": len(tif_bytes),
             "upscaled_url": upscaled_url,
+            "content_type": normalize_content_type(content_type),
+            "sharpen": sharpen,
         }
 
 
