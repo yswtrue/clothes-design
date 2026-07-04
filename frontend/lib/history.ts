@@ -27,6 +27,7 @@ export interface ExportResponse {
   status: string;
   download_url?: string | null;
   upscaled_url?: string | null;
+  target_resolution?: number | null;
 }
 
 export interface ExportStatusResponse {
@@ -37,6 +38,7 @@ export interface ExportStatusResponse {
   current_step: string | null;
   download_url: string | null;
   upscaled_url: string | null;
+  target_resolution: number | null;
   error: string | null;
 }
 

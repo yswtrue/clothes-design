@@ -81,6 +81,7 @@ class ExportResponse(BaseModel):
     upscaled_url: str | None = None
     content_type: str = "pattern"
     sharpen: bool = False
+    target_resolution: int = 12000
 
 
 class ExportStatusResponse(BaseModel):
@@ -94,6 +95,7 @@ class ExportStatusResponse(BaseModel):
     upscaled_url: str | None = None
     content_type: str | None = None
     sharpen: bool | None = None
+    target_resolution: int | None = None
     error: str | None = None
 
 
@@ -107,6 +109,7 @@ async def trigger_export(
     session: _session_dep,
     current_user: _user_dep,
     export_format: ExportFormat = Query(default="svg", alias="format", description="Export format: svg or tif"),
+    target_resolution: int = Query(default=12000, ge=1024, le=16384, description="Target resolution in pixels"),
     content_type: str = Query(default="pattern", pattern="^(line-art|pattern)$", description="Content type: line-art for sharp-edged designs, pattern for textured/photographic"),
     sharpen: bool = Query(default=False, description="Apply post-upscale sharpening"),
 ):
@@ -155,7 +158,7 @@ async def trigger_export(
     settings_match = export_settings_match(
         export_settings,
         export_format=export_format,
-        target_resolution=12000,
+        target_resolution=target_resolution,
         color_space="CMYK",
         content_type=content_type,
         sharpen=sharpen,
@@ -172,6 +175,7 @@ async def trigger_export(
             upscaled_url=upscaled_storage.get_url(settings_upscaled),
             content_type=normalize_content_type(content_type),
             sharpen=sharpen,
+            target_resolution=target_resolution,
         )
 
     if export_format == "tif" and existing_tif and settings_match and settings_upscaled:
@@ -184,6 +188,7 @@ async def trigger_export(
             upscaled_url=upscaled_storage.get_url(settings_upscaled),
             content_type=normalize_content_type(content_type),
             sharpen=sharpen,
+            target_resolution=target_resolution,
         )
 
     acquired = await acquire_export_slot()
@@ -196,7 +201,7 @@ async def trigger_export(
 
     task_data = {
         "generated_design_id": generated_design_id,
-        "target_resolution": 12000,
+        "target_resolution": target_resolution,
         "color_space": "CMYK",
         "format": export_format,
         "content_type": content_type,
@@ -216,6 +221,7 @@ async def trigger_export(
         status="pending",
         content_type=normalize_content_type(content_type),
         sharpen=sharpen,
+        target_resolution=target_resolution,
     )
 
 
@@ -227,6 +233,7 @@ class MaterialExportResponse(BaseModel):
     download_url: str | None = None
     content_type: str = "pattern"
     sharpen: bool = False
+    target_resolution: int = 12000
 
 
 @router.post(
@@ -292,6 +299,7 @@ async def export_material(
             download_url=output_tif_storage.get_url(existing_tif),
             content_type=normalize_content_type(content_type),
             sharpen=sharpen,
+            target_resolution=target_resolution,
         )
 
     # Check for already-running export task (dedup)
@@ -316,6 +324,7 @@ async def export_material(
                     status="pending",
                     content_type=normalize_content_type(content_type),
                     sharpen=sharpen,
+                    target_resolution=target_resolution,
                 )
 
     acquired = await acquire_export_slot()
@@ -353,6 +362,7 @@ async def export_material(
         status="pending",
         content_type=normalize_content_type(content_type),
         sharpen=sharpen,
+        target_resolution=target_resolution,
     )
 
 
@@ -381,6 +391,7 @@ async def get_export_status(
     export_format = task_status.data.get("format", "tif") if task_status.data else "tif"
     content_type = task_status.data.get("content_type") if task_status.data else None
     sharpen = task_status.data.get("sharpen") if task_status.data else None
+    target_resolution = task_status.data.get("target_resolution") if task_status.data else None
     current_step = None
     progress = 0
     download_url = None
@@ -424,5 +435,6 @@ async def get_export_status(
         upscaled_url=upscaled_url,
         content_type=normalize_content_type(content_type),
         sharpen=bool(sharpen),
+        target_resolution=target_resolution if isinstance(target_resolution, int) else None,
         error=task_status.error,
     )

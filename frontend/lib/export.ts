@@ -1,14 +1,44 @@
 import type { ExportContentType, ExportFormat, ExportResponse, ExportStatusResponse } from '@/types/export';
 import { apiRequest } from './api';
 
+export type ExportTargetMultiplier = 2 | 4 | 8;
+
+export const EXPORT_TARGET_RESOLUTION_BY_MULTIPLIER: Record<ExportTargetMultiplier, number> = {
+  2: 3000,
+  4: 6000,
+  8: 12000,
+};
+
+export const EXPORT_TARGET_MULTIPLIERS: ExportTargetMultiplier[] = [2, 4, 8];
+
+export function getExportTargetResolution(multiplier: ExportTargetMultiplier): number {
+  return EXPORT_TARGET_RESOLUTION_BY_MULTIPLIER[multiplier];
+}
+
+export function getExportMultiplierForResolution(targetResolution: number | null | undefined): ExportTargetMultiplier {
+  if (!targetResolution) return 8;
+
+  const entries = EXPORT_TARGET_MULTIPLIERS.map((multiplier) => ({
+    multiplier,
+    resolution: getExportTargetResolution(multiplier),
+  }));
+
+  return entries.reduce((closest, current) => (
+    Math.abs(current.resolution - targetResolution) < Math.abs(closest.resolution - targetResolution)
+      ? current
+      : closest
+  )).multiplier;
+}
+
 export async function triggerExport(
   designId: number,
   format: ExportFormat = 'svg',
   contentType: ExportContentType = 'pattern',
   sharpen: boolean = false,
+  targetResolution: number = 12000,
 ): Promise<ExportResponse> {
   return apiRequest<ExportResponse>(
-    `/api/export/generated-designs/${designId}?format=${format}&content_type=${contentType}&sharpen=${sharpen}`,
+    `/api/export/generated-designs/${designId}?format=${format}&content_type=${contentType}&sharpen=${sharpen}&target_resolution=${targetResolution}`,
     {
       method: 'POST',
     }
@@ -21,6 +51,9 @@ export interface MaterialExportResponse {
   format: ExportFormat;
   status: string;
   download_url: string | null;
+  content_type: ExportContentType;
+  sharpen: boolean;
+  target_resolution: number;
 }
 
 export async function triggerMaterialExport(

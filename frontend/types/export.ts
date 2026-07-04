@@ -11,6 +11,7 @@ export interface ExportResponse {
   upscaled_url: string | null;
   content_type: ExportContentType;
   sharpen: boolean;
+  target_resolution: number;
 }
 
 export interface ExportStatusResponse {
@@ -24,5 +25,6 @@ export interface ExportStatusResponse {
   upscaled_url: string | null;
   content_type: ExportContentType | null;
   sharpen: boolean | null;
+  target_resolution: number | null;
   error: string | null;
 }
