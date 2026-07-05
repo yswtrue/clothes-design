@@ -1,5 +1,6 @@
 import io
 import logging
+import time
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -22,12 +23,14 @@ from shared.ai.base import AIProvider
 from shared.ai.exceptions import AIProviderError
 from shared.ai.factory import Capability, get_provider_by_capability
 from shared.export_settings import (
+    DEFAULT_UPSCALE_MODE,
     ExportFormat,
     export_settings_match,
     get_export_settings,
     merge_export_settings,
     normalize_content_type,
     normalize_export_settings,
+    normalize_upscale_mode,
 )
 from shared.task_queue import release_export_slot
 
@@ -89,6 +92,10 @@ class ExportPatternHandler(TaskHandler):
             self.upscaler, _ = result
         return self.upscaler
 
+    async def _get_upscale_model_name(self) -> str:
+        upscaler = await self._get_upscaler()
+        return upscaler.__class__.__name__
+
     async def _update_status(self, generated_design_id: int, status: str) -> None:
         from api.db.models import GeneratedDesign
 
@@ -140,6 +147,10 @@ class ExportPatternHandler(TaskHandler):
         if not isinstance(sharpen, bool):
             raise WorkerError(f"Invalid sharpen: {sharpen}")
 
+        upscale_mode = task_data.get("upscale_mode", DEFAULT_UPSCALE_MODE)
+        if upscale_mode not in ("progressive", "oneshot"):
+            raise WorkerError(f"Invalid upscale_mode: {upscale_mode}")
+
     async def _load_export_context(self, generated_design_id: int) -> ExportContext:
         from api.db.models import GeneratedDesign
 
@@ -174,6 +185,8 @@ class ExportPatternHandler(TaskHandler):
         context: ExportContext,
         content_type: str,
         sharpen: bool,
+        upscale_model: str,
+        upscale_mode: str,
     ) -> dict[str, Any] | None:
         export_settings = get_export_settings(context.generation_params, export_format)
         settings_match = export_settings_match(
@@ -183,6 +196,8 @@ class ExportPatternHandler(TaskHandler):
             color_space=color_space,
             content_type=content_type,
             sharpen=sharpen,
+            upscale_model=upscale_model,
+            upscale_mode=upscale_mode,
         )
         upscaled_filename = export_settings.get("upscaled_filename") if export_settings else None
 
@@ -196,6 +211,8 @@ class ExportPatternHandler(TaskHandler):
                 "upscaled_url": upscaled_storage.get_url(upscaled_filename),
                 "content_type": normalize_content_type(content_type),
                 "sharpen": sharpen,
+                "upscale_model": upscale_model,
+                "upscale_mode": normalize_upscale_mode(upscale_mode),
                 "reused": True,
             }
 
@@ -208,6 +225,7 @@ class ExportPatternHandler(TaskHandler):
         context: ExportContext,
         content_type: str = "pattern",
         sharpen: bool = False,
+        upscale_mode: str = "progressive",
         reusable_upscaled_path: str | None = None,
     ) -> UpscaledImage:
         pattern_bytes = await generated_image_storage.download(context.image_filename)
@@ -224,15 +242,21 @@ class ExportPatternHandler(TaskHandler):
 
         self.logger.info(f"Downloading pattern: {context.image_filename}")
         upscaler = await self._get_upscaler()
-        self.logger.info(f"Upscaling pattern to {target_resolution}px")
+        self.logger.info(f"Upscaling pattern to {target_resolution}px (mode={upscale_mode})")
 
         try:
             if "topaz" in upscaler.__class__.__name__.lower():
+                start = time.monotonic()
                 upscaled_bytes = await upscaler.upscale_image(
                     pattern_bytes,
                     target_resolution,
                     content_type=content_type,
                     sharpen=sharpen,
+                )
+                elapsed = time.monotonic() - start
+                self.logger.info(
+                    f"Upscale summary: 1 image, 1 API call, 0 local resizes, "
+                    f"elapsed {elapsed:.1f}s"
                 )
             else:
                 upscaled_bytes = await tile_upscale(
@@ -244,6 +268,7 @@ class ExportPatternHandler(TaskHandler):
                         content_type=content_type,
                         sharpen=sharpen,
                     ),
+                    mode=upscale_mode,
                 )
         except AIProviderError as e:
             self.logger.error(
@@ -272,8 +297,10 @@ class ExportPatternHandler(TaskHandler):
         export_format: ExportFormat = task_data.get("format", "tif")
         content_type = task_data.get("content_type", "pattern")
         sharpen = task_data.get("sharpen", False)
+        upscale_mode = normalize_upscale_mode(task_data.get("upscale_mode", DEFAULT_UPSCALE_MODE))
 
         try:
+            upscale_model = await self._get_upscale_model_name()
             context = await self._load_export_context(generated_design_id)
             existing_export = self._existing_export_response(
                 generated_design_id,
@@ -283,6 +310,8 @@ class ExportPatternHandler(TaskHandler):
                 context,
                 content_type,
                 sharpen,
+                upscale_model,
+                upscale_mode,
             )
             if existing_export:
                 return existing_export
@@ -294,6 +323,8 @@ class ExportPatternHandler(TaskHandler):
                 color_space,
                 content_type,
                 sharpen,
+                upscale_model,
+                upscale_mode,
             )
 
             await self._update_status(generated_design_id, "exporting")
@@ -303,6 +334,7 @@ class ExportPatternHandler(TaskHandler):
                 context,
                 content_type=content_type,
                 sharpen=sharpen,
+                upscale_mode=upscale_mode,
                 reusable_upscaled_path=reusable_upscaled_path,
             )
 
@@ -321,6 +353,8 @@ class ExportPatternHandler(TaskHandler):
                 export_dpi,
                 content_type,
                 sharpen,
+                upscale_model,
+                upscale_mode,
             )
 
         except WorkerError:
@@ -340,6 +374,8 @@ class ExportPatternHandler(TaskHandler):
         color_space: str,
         content_type: str,
         sharpen: bool,
+        upscale_model: str,
+        upscale_mode: str,
     ) -> str | None:
         export_settings = get_export_settings(context.generation_params, export_format)
         if not export_settings_match(
@@ -349,6 +385,8 @@ class ExportPatternHandler(TaskHandler):
             color_space=color_space,
             content_type=content_type,
             sharpen=sharpen,
+            upscale_model=upscale_model,
+            upscale_mode=upscale_mode,
         ):
             return None
         return export_settings.get("upscaled_filename") if export_settings else None
@@ -363,6 +401,8 @@ class ExportPatternHandler(TaskHandler):
         dpi: int = 300,
         content_type: str = "pattern",
         sharpen: bool = False,
+        upscale_model: str = "",
+        upscale_mode: str = "progressive",
     ) -> dict[str, Any]:
         from api.db.models import GeneratedDesign
 
@@ -391,6 +431,8 @@ class ExportPatternHandler(TaskHandler):
                         color_space=color_space,
                         content_type=content_type,
                         sharpen=sharpen,
+                        upscale_model=upscale_model,
+                        upscale_mode=upscale_mode,
                         upscaled_filename=upscaled_filename,
                         output_filename=tif_filename,
                     ),
@@ -411,6 +453,8 @@ class ExportPatternHandler(TaskHandler):
             "upscaled_url": upscaled_url,
             "content_type": normalize_content_type(content_type),
             "sharpen": sharpen,
+            "upscale_model": upscale_model,
+            "upscale_mode": normalize_upscale_mode(upscale_mode),
         }
 
 

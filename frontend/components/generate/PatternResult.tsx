@@ -2,13 +2,15 @@
 
 import { useState } from 'react';
 import {
+  DEFAULT_UPSCALE_MODE,
   EXPORT_TARGET_MULTIPLIERS,
+  EXPORT_UPSCALE_MODES,
   getExportTargetResolution,
   pollExportStatus,
   triggerExport,
   type ExportTargetMultiplier,
 } from '@/lib/export';
-import type { ExportContentType, ExportStatusResponse } from '@/types/export';
+import type { ExportContentType, ExportStatusResponse, ExportUpscaleMode } from '@/types/export';
 import ExportProgress from '@/components/export/ExportProgress';
 import DownloadButton from '@/components/export/DownloadButton';
 
@@ -46,6 +48,7 @@ export default function PatternResult({
   const [contentType, setContentType] = useState<ExportContentType>('pattern');
   const [sharpen, setSharpen] = useState(false);
   const [targetMultiplier, setTargetMultiplier] = useState<ExportTargetMultiplier>(8);
+  const [upscaleMode, setUpscaleMode] = useState<ExportUpscaleMode>(DEFAULT_UPSCALE_MODE);
 
   const targetResolution = getExportTargetResolution(targetMultiplier);
 
@@ -56,7 +59,7 @@ export default function PatternResult({
     setTifDownloadUrl(null);
 
     try {
-      const response = await triggerExport(designId, 'tif', contentType, sharpen, targetResolution);
+      const response = await triggerExport(designId, 'tif', contentType, sharpen, targetResolution, upscaleMode);
 
       if (!response.task_id && response.status === 'exported' && response.download_url) {
         setTifDownloadUrl(response.download_url);
@@ -226,6 +229,33 @@ export default function PatternResult({
                 }`}
               />
             </button>
+          </div>
+
+          <div className="flex justify-between items-center py-2 border-b border-zinc-200 dark:border-zinc-800">
+            <div>
+              <span className="text-sm font-medium text-zinc-700 dark:text-zinc-300">
+                超分模式
+              </span>
+              <p className="text-xs text-zinc-500 dark:text-zinc-500 mt-0.5">
+                分步=2x渐进放大（稳）；一步=单次直达目标倍数（快）
+              </p>
+            </div>
+            <div className="flex rounded-md border border-zinc-200 dark:border-zinc-800 overflow-hidden">
+              {EXPORT_UPSCALE_MODES.map((mode) => (
+                <button
+                  key={mode}
+                  type="button"
+                  onClick={() => setUpscaleMode(mode)}
+                  className={`px-3 py-1.5 text-xs font-medium transition-colors ${
+                    upscaleMode === mode
+                      ? 'bg-zinc-950 dark:bg-zinc-50 text-white dark:text-zinc-950'
+                      : 'bg-white dark:bg-zinc-900 text-zinc-600 dark:text-zinc-400 hover:bg-zinc-50 dark:hover:bg-zinc-800'
+                  }`}
+                >
+                  {mode === 'progressive' ? '分步' : '一步'}
+                </button>
+              ))}
+            </div>
           </div>
         </div>
       </div>

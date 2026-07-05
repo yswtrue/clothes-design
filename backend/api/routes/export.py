@@ -15,11 +15,14 @@ from api.storage.storages import (
     output_tif_storage,
     upscaled_storage,
 )
+from shared.ai.factory import Capability, get_provider_by_capability
 from shared.export_settings import (
+    DEFAULT_UPSCALE_MODE,
     ExportFormat,
     export_settings_match,
     get_export_settings,
     normalize_content_type,
+    normalize_upscale_mode,
 )
 from shared.task_queue import (
     EXPORT_MAX_CONCURRENT,
@@ -63,11 +66,21 @@ def _material_export_dedup_key(
     color_space: str,
     content_type: str,
     sharpen: bool,
+    upscale_mode: str,
 ) -> str:
     return (
         f"mat_export:{material_id}:tif:{target_resolution}:"
-        f"{color_space}:{normalize_content_type(content_type)}:{int(bool(sharpen))}"
+        f"{color_space}:{normalize_content_type(content_type)}:{int(bool(sharpen))}:"
+        f"{normalize_upscale_mode(upscale_mode)}"
     )
+
+
+async def _current_upscale_model_name() -> str | None:
+    result = await get_provider_by_capability(Capability.UPSCALE)
+    if result is None:
+        return None
+    provider, _ = result
+    return provider.__class__.__name__
 
 
 class ExportResponse(BaseModel):
@@ -110,6 +123,7 @@ async def trigger_export(
     target_resolution: int = Query(default=12000, ge=1024, le=16384, description="Target resolution in pixels"),
     content_type: str = Query(default="pattern", pattern="^(line-art|pattern)$", description="Content type: line-art for sharp-edged designs, pattern for textured/photographic"),
     sharpen: bool = Query(default=False, description="Apply post-upscale sharpening"),
+    upscale_mode: str = Query(default=DEFAULT_UPSCALE_MODE, pattern="^(progressive|oneshot)$", description="Upscale mode: progressive splits into 2x stages, oneshot runs a single stage to target"),
 ):
     user_id = _require_user_id(current_user)
 
@@ -150,6 +164,7 @@ async def trigger_export(
             detail=f"Cannot export design with status: {generated_design.status}",
         )
 
+    upscale_model = await _current_upscale_model_name()
     existing_tif = _get_file_path(generated_design.export_tif)
     export_settings = get_export_settings(generated_design.generation_params, export_format)
     settings_match = export_settings_match(
@@ -159,6 +174,8 @@ async def trigger_export(
         color_space="CMYK",
         content_type=content_type,
         sharpen=sharpen,
+        upscale_model=upscale_model,
+        upscale_mode=upscale_mode,
     )
     settings_upscaled = export_settings.get("upscaled_filename") if export_settings else None
 
@@ -190,6 +207,7 @@ async def trigger_export(
         "format": export_format,
         "content_type": content_type,
         "sharpen": sharpen,
+        "upscale_mode": normalize_upscale_mode(upscale_mode),
     }
 
     task_id = await enqueue_task(
@@ -233,6 +251,7 @@ async def export_material(
     target_resolution: int = Query(default=12000, ge=1024, le=16384, description="Target resolution in pixels"),
     content_type: str = Query(default="pattern", pattern="^(line-art|pattern)$", description="Content type: line-art for sharp-edged designs, pattern for textured/photographic"),
     sharpen: bool = Query(default=False, description="Apply post-upscale sharpening"),
+    upscale_mode: str = Query(default=DEFAULT_UPSCALE_MODE, pattern="^(progressive|oneshot)$", description="Upscale mode: progressive splits into 2x stages, oneshot runs a single stage to target"),
 ):
     user_id = _require_user_id(current_user)
 
@@ -262,6 +281,7 @@ async def export_material(
             detail="Material has no file to export",
         )
 
+    upscale_model = await _current_upscale_model_name()
     material_export_settings = get_export_settings(material.meta, "tif")
     material_settings_match = export_settings_match(
         material_export_settings,
@@ -270,6 +290,8 @@ async def export_material(
         color_space="CMYK",
         content_type=content_type,
         sharpen=sharpen,
+        upscale_model=upscale_model,
+        upscale_mode=upscale_mode,
     )
 
     # Check for cached export only when options match the stored export metadata.
@@ -293,6 +315,7 @@ async def export_material(
         color_space="CMYK",
         content_type=content_type,
         sharpen=sharpen,
+        upscale_mode=upscale_mode,
     )
     redis_client = await get_redis_client()
     if redis_client:
@@ -327,6 +350,7 @@ async def export_material(
         "dpi": 300,
         "content_type": content_type,
         "sharpen": sharpen,
+        "upscale_mode": normalize_upscale_mode(upscale_mode),
     }
 
     task_id = await enqueue_task(

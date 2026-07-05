@@ -2,8 +2,15 @@ from typing import Any, Literal, TypedDict
 
 ExportContentType = Literal["line-art", "pattern"]
 ExportFormat = Literal["tif"]
+ExportUpscaleMode = Literal["progressive", "oneshot"]
 
 EXPORT_SETTINGS_KEY = "export_settings"
+
+DEFAULT_UPSCALE_MODE: ExportUpscaleMode = "progressive"
+
+
+def normalize_upscale_mode(value: object) -> ExportUpscaleMode:
+    return "oneshot" if value == "oneshot" else "progressive"
 
 
 class ExportSettings(TypedDict, total=False):
@@ -12,6 +19,8 @@ class ExportSettings(TypedDict, total=False):
     color_space: str
     content_type: ExportContentType
     sharpen: bool
+    upscale_model: str
+    upscale_mode: ExportUpscaleMode
     upscaled_filename: str
     output_filename: str
 
@@ -27,6 +36,8 @@ def normalize_export_settings(
     color_space: str,
     content_type: str,
     sharpen: bool,
+    upscale_model: str | None = None,
+    upscale_mode: ExportUpscaleMode | str | None = None,
     upscaled_filename: str | None = None,
     output_filename: str | None = None,
 ) -> ExportSettings:
@@ -36,7 +47,10 @@ def normalize_export_settings(
         "color_space": color_space,
         "content_type": normalize_content_type(content_type),
         "sharpen": bool(sharpen),
+        "upscale_mode": normalize_upscale_mode(upscale_mode),
     }
+    if upscale_model:
+        settings["upscale_model"] = upscale_model
     if upscaled_filename:
         settings["upscaled_filename"] = upscaled_filename
     if output_filename:
@@ -67,15 +81,24 @@ def export_settings_match(
     color_space: str,
     content_type: str,
     sharpen: bool,
+    upscale_model: str | None = None,
+    upscale_mode: ExportUpscaleMode | str | None = None,
 ) -> bool:
     if settings is None:
         return False
+    mode_match = settings.get("upscale_mode", "progressive") == normalize_upscale_mode(upscale_mode)
+    stored_model = settings.get("upscale_model")
+    model_match = True
+    if stored_model is not None and upscale_model is not None:
+        model_match = stored_model == upscale_model
     return (
         settings.get("format") == export_format
         and settings.get("target_resolution") == target_resolution
         and settings.get("color_space") == color_space
         and settings.get("content_type") == normalize_content_type(content_type)
         and settings.get("sharpen") == bool(sharpen)
+        and mode_match
+        and model_match
     )
 
 

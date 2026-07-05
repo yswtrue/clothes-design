@@ -1,4 +1,4 @@
-import type { ExportContentType, ExportFormat, ExportResponse, ExportStatusResponse } from '@/types/export';
+import type { ExportContentType, ExportFormat, ExportResponse, ExportStatusResponse, ExportUpscaleMode } from '@/types/export';
 import { apiRequest } from './api';
 
 export type ExportTargetMultiplier = 2 | 4 | 8;
@@ -10,6 +10,10 @@ export const EXPORT_TARGET_RESOLUTION_BY_MULTIPLIER: Record<ExportTargetMultipli
 };
 
 export const EXPORT_TARGET_MULTIPLIERS: ExportTargetMultiplier[] = [2, 4, 8];
+
+export const DEFAULT_UPSCALE_MODE: ExportUpscaleMode = 'progressive';
+
+export const EXPORT_UPSCALE_MODES: ExportUpscaleMode[] = ['progressive', 'oneshot'];
 
 export function getExportTargetResolution(multiplier: ExportTargetMultiplier): number {
   return EXPORT_TARGET_RESOLUTION_BY_MULTIPLIER[multiplier];
@@ -36,9 +40,10 @@ export async function triggerExport(
   contentType: ExportContentType = 'pattern',
   sharpen: boolean = false,
   targetResolution: number = 12000,
+  upscaleMode: ExportUpscaleMode = DEFAULT_UPSCALE_MODE,
 ): Promise<ExportResponse> {
   return apiRequest<ExportResponse>(
-    `/api/export/generated-designs/${designId}?format=${format}&content_type=${contentType}&sharpen=${sharpen}&target_resolution=${targetResolution}`,
+    `/api/export/generated-designs/${designId}?format=${format}&content_type=${contentType}&sharpen=${sharpen}&target_resolution=${targetResolution}&upscale_mode=${upscaleMode}`,
     {
       method: 'POST',
     }
@@ -54,6 +59,7 @@ export interface MaterialExportResponse {
   content_type: ExportContentType;
   sharpen: boolean;
   target_resolution: number;
+  upscale_mode?: ExportUpscaleMode;
 }
 
 export async function triggerMaterialExport(
@@ -62,9 +68,10 @@ export async function triggerMaterialExport(
   contentType: ExportContentType = 'pattern',
   sharpen: boolean = false,
   targetResolution: number = 12000,
+  upscaleMode: ExportUpscaleMode = DEFAULT_UPSCALE_MODE,
 ): Promise<MaterialExportResponse> {
   return apiRequest<MaterialExportResponse>(
-    `/api/export/materials/${materialId}?format=${format}&content_type=${contentType}&sharpen=${sharpen}&target_resolution=${targetResolution}`,
+    `/api/export/materials/${materialId}?format=${format}&content_type=${contentType}&sharpen=${sharpen}&target_resolution=${targetResolution}&upscale_mode=${upscaleMode}`,
     {
       method: 'POST',
     }

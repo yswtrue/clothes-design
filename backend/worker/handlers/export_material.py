@@ -1,5 +1,6 @@
 import io
 import logging
+import time
 import uuid
 from datetime import UTC, datetime
 from typing import Any
@@ -20,7 +21,12 @@ from config import get_settings
 from shared.ai.base import AIProvider
 from shared.ai.exceptions import AIProviderError
 from shared.ai.factory import Capability, get_provider_by_capability
-from shared.export_settings import merge_export_settings, normalize_export_settings
+from shared.export_settings import (
+    DEFAULT_UPSCALE_MODE,
+    merge_export_settings,
+    normalize_export_settings,
+    normalize_upscale_mode,
+)
 
 from .base import TaskHandler, WorkerError
 from .tile_upscale import tile_upscale
@@ -55,6 +61,10 @@ class ExportMaterialHandler(TaskHandler):
             self.upscaler, _ = result
         return self.upscaler
 
+    async def _get_upscale_model_name(self) -> str:
+        upscaler = await self._get_upscaler()
+        return upscaler.__class__.__name__
+
     async def validate_input(self, task_data: dict[str, Any]) -> None:
         if "material_id" not in task_data:
             raise WorkerError("Missing required field: material_id")
@@ -78,6 +88,10 @@ class ExportMaterialHandler(TaskHandler):
         if not isinstance(sharpen, bool):
             raise WorkerError(f"Invalid sharpen: {sharpen}")
 
+        upscale_mode = task_data.get("upscale_mode", DEFAULT_UPSCALE_MODE)
+        if upscale_mode not in ("progressive", "oneshot"):
+            raise WorkerError(f"Invalid upscale_mode: {upscale_mode}")
+
     async def _save_material_export(
         self,
         material_id: int,
@@ -87,6 +101,8 @@ class ExportMaterialHandler(TaskHandler):
         color_space: ColorSpace,
         content_type: str,
         sharpen: bool,
+        upscale_model: str,
+        upscale_mode: str,
     ) -> None:
         from api.db.models import Material
 
@@ -113,6 +129,8 @@ class ExportMaterialHandler(TaskHandler):
                         color_space=color_space,
                         content_type=content_type,
                         sharpen=sharpen,
+                        upscale_model=upscale_model,
+                        upscale_mode=upscale_mode,
                         upscaled_filename=upscaled_filename,
                         output_filename=tif_filename,
                     ),
@@ -134,11 +152,14 @@ class ExportMaterialHandler(TaskHandler):
         dpi: int = task_data.get("dpi", 300)
         content_type = task_data.get("content_type", "pattern")
         sharpen = task_data.get("sharpen", False)
+        upscale_mode = normalize_upscale_mode(task_data.get("upscale_mode", DEFAULT_UPSCALE_MODE))
 
         try:
+            upscale_model = await self._get_upscale_model_name()
             self.logger.info(
                 f"Exporting material {material_id}: {stored_filename} "
-                f"(target: {target_resolution}px, {color_space}, {dpi} DPI)"
+                f"(target: {target_resolution}px, {color_space}, {dpi} DPI, "
+                f"model={upscale_model}, mode={upscale_mode})"
             )
 
             # Allow large images (Topaz output can exceed PIL default limit)
@@ -160,7 +181,8 @@ class ExportMaterialHandler(TaskHandler):
 
             if use_progressive_tiles:
                 self.logger.info(
-                    f"Upscaling {w}x{h} to {target_resolution}px via progressive tiles"
+                    f"Upscaling {w}x{h} to {target_resolution}px via progressive tiles "
+                    f"(mode={upscale_mode})"
                 )
                 upscaled_bytes = await tile_upscale(
                     original_bytes,
@@ -171,11 +193,18 @@ class ExportMaterialHandler(TaskHandler):
                         content_type=content_type,
                         sharpen=sharpen,
                     ),
+                    mode=upscale_mode,
                 )
             else:
                 self.logger.info(f"Upscaling to {target_resolution}px via {upscaler.__class__.__name__}")
                 try:
+                    start = time.monotonic()
                     upscaled_bytes = await upscaler.upscale_image(original_bytes, target_resolution, content_type=content_type, sharpen=sharpen)
+                    elapsed = time.monotonic() - start
+                    self.logger.info(
+                        f"Upscale summary: 1 image, 1 API call, 0 local resizes, "
+                        f"elapsed {elapsed:.1f}s"
+                    )
                 except AIProviderError as e:
                     self.logger.error(f"Upscale failed: {e}", exc_info=True)
                     raise WorkerError(f"Upscale failed: {e}") from e
@@ -210,6 +239,8 @@ class ExportMaterialHandler(TaskHandler):
                 color_space,
                 content_type,
                 sharpen,
+                upscale_model,
+                upscale_mode,
             )
 
             tif_url = output_tif_storage.get_url(tif_filename)
@@ -226,6 +257,8 @@ class ExportMaterialHandler(TaskHandler):
                 "upscaled_url": upscaled_url,
                 "content_type": content_type,
                 "sharpen": sharpen,
+                "upscale_model": upscale_model,
+                "upscale_mode": upscale_mode,
                 "original_size": original_size,
                 "upscaled_size": upscaled_size,
             }

@@ -2,6 +2,8 @@ export type ExportContentType = 'line-art' | 'pattern';
 
 export type ExportFormat = 'tif';
 
+export type ExportUpscaleMode = 'progressive' | 'oneshot';
+
 export interface ExportResponse {
   task_id: string | null;
   generated_design_id: number;
@@ -12,6 +14,7 @@ export interface ExportResponse {
   content_type: ExportContentType;
   sharpen: boolean;
   target_resolution: number;
+  upscale_mode?: ExportUpscaleMode;
 }
 
 export interface ExportStatusResponse {
@@ -26,5 +29,6 @@ export interface ExportStatusResponse {
   content_type: ExportContentType | null;
   sharpen: boolean | null;
   target_resolution: number | null;
+  upscale_mode?: ExportUpscaleMode | null;
   error: string | null;
 }

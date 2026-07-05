@@ -13,13 +13,15 @@ import MaterialSelector from '@/components/generate/MaterialSelector';
 import { LazyGenerationProgress, LazyPatternResult } from '@/components/LazyComponents';
 import { apiRequest } from '@/lib/api';
 import {
+  DEFAULT_UPSCALE_MODE,
   EXPORT_TARGET_MULTIPLIERS,
+  EXPORT_UPSCALE_MODES,
   getExportTargetResolution,
   pollExportStatus,
   triggerMaterialExport,
   type ExportTargetMultiplier,
 } from '@/lib/export';
-import type { ExportContentType } from '@/types/export';
+import type { ExportContentType, ExportUpscaleMode } from '@/types/export';
 
 type GenerateState = 'idle' | 'loading_materials' | 'ready' | 'generating' | 'complete' | 'error' | 'pending_background';
 
@@ -59,6 +61,7 @@ export default function GenerateTab() {
   const [materialTifContentType, setMaterialTifContentType] = useState<ExportContentType>('pattern');
   const [materialTifSharpen, setMaterialTifSharpen] = useState(false);
   const [materialTifTargetMultiplier, setMaterialTifTargetMultiplier] = useState<ExportTargetMultiplier>(8);
+  const [materialTifUpscaleMode, setMaterialTifUpscaleMode] = useState<ExportUpscaleMode>(DEFAULT_UPSCALE_MODE);
 
   const materialTifTargetResolution = getExportTargetResolution(materialTifTargetMultiplier);
 
@@ -186,7 +189,8 @@ export default function GenerateTab() {
         'tif',
         materialTifContentType,
         materialTifSharpen,
-        materialTifTargetResolution
+        materialTifTargetResolution,
+        materialTifUpscaleMode
       );
 
       // Already exported (cached) — direct download
@@ -478,6 +482,34 @@ export default function GenerateTab() {
                         }`}
                       />
                     </button>
+                  </div>
+
+                  <div className="flex justify-between items-center py-2 border-b border-zinc-200 dark:border-zinc-800">
+                    <div>
+                      <span className="text-sm font-medium text-zinc-700 dark:text-zinc-300">
+                        超分模式
+                      </span>
+                      <p className="text-xs text-zinc-500 dark:text-zinc-500 mt-0.5">
+                        分步=2x渐进放大（稳）；一步=单次直达目标倍数（快）
+                      </p>
+                    </div>
+                    <div className="flex rounded-md border border-zinc-200 dark:border-zinc-800 overflow-hidden">
+                      {EXPORT_UPSCALE_MODES.map((mode) => (
+                        <button
+                          key={mode}
+                          type="button"
+                          onClick={() => setMaterialTifUpscaleMode(mode)}
+                          disabled={materialTifExporting || state === 'generating'}
+                          className={`px-3 py-1.5 text-xs font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${
+                            materialTifUpscaleMode === mode
+                              ? 'bg-zinc-950 dark:bg-zinc-50 text-white dark:text-zinc-950'
+                              : 'bg-white dark:bg-zinc-900 text-zinc-600 dark:text-zinc-400 hover:bg-zinc-50 dark:hover:bg-zinc-800'
+                          }`}
+                        >
+                          {mode === 'progressive' ? '分步' : '一步'}
+                        </button>
+                      ))}
+                    </div>
                   </div>
                 </div>
 

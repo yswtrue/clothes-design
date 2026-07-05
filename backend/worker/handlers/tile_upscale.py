@@ -8,7 +8,8 @@ import asyncio
 import io
 import logging
 import math
-from dataclasses import dataclass
+import time
+from dataclasses import dataclass, field
 
 from PIL import Image, ImageFilter, ImageStat
 
@@ -38,6 +39,28 @@ BLANK_TILE_BLACK_MAX = 10
 BLANK_TILE_WHITE_CONTENT_MAX = 248
 BLANK_TILE_BLACK_CONTENT_MIN = 7
 BLANK_TILE_NOISE_MAX_RATIO = 0.20
+
+UPSCALE_MODE_PROGRESSIVE = "progressive"
+UPSCALE_MODE_ONESHOT = "oneshot"
+
+
+@dataclass
+class UpscaleStats:
+    """Accumulated statistics for a single tile_upscale run."""
+
+    total_tiles: int = 0
+    api_calls: int = 0
+    local_calls: int = 0
+    start_time: float = field(default_factory=time.monotonic)
+
+    def log_summary(self, logger_obj: logging.Logger, prefix: str = "") -> None:
+        elapsed = time.monotonic() - self.start_time
+        label = f"{prefix} " if prefix else ""
+        logger_obj.info(
+            f"{label}Upscale summary: {self.total_tiles} tiles total, "
+            f"{self.api_calls} API calls, {self.local_calls} local resizes, "
+            f"elapsed {elapsed:.1f}s"
+        )
 
 
 @dataclass
@@ -200,15 +223,19 @@ async def _upscale_direct_stage(
     total_stages: int,
     upscale_fn,
     delay_between_tiles: float,
+    stats: UpscaleStats,
 ) -> Image.Image:
     """Upscale a stage with one model call when the image is already model-safe."""
+    stats.total_tiles += 1
     if _is_uniform_image(img):
+        stats.local_calls += 1
         logger.info(
             f"Stage {stage_index}/{total_stages} image 1/1 uniform direct: "
             f"{img.width}x{img.height} -> longest {stage_target_size}px locally"
         )
         return _resize_longest(img, stage_target_size)
 
+    stats.api_calls += 1
     model_img, model_target = _prepare_model_input(img, stage_target_size)
     logger.info(
         f"Stage {stage_index}/{total_stages} image 1/1 direct model: "
@@ -237,6 +264,7 @@ async def _upscale_tiled_stage(
     tile_size: int,
     pad: int,
     delay_between_tiles: float,
+    stats: UpscaleStats,
 ) -> Image.Image:
     """Upscale one stage by tiling the current image, then stitching it."""
     src_w, src_h = img.size
@@ -248,6 +276,7 @@ async def _upscale_tiled_stage(
 
     effective_tile_size = min(tile_size, max(1, MAX_TILE_MODEL_INPUT_SIZE - (pad * 2)))
     tiles = _grid_tiles(src_w, src_h, effective_tile_size, pad)
+    stats.total_tiles += len(tiles)
     logger.info(
         f"Stage {stage_index}/{total_stages} tiled: "
         f"{src_w}x{src_h} -> {canvas_w}x{canvas_h} "
@@ -265,6 +294,7 @@ async def _upscale_tiled_stage(
         tile_stage_target = max(1, round(max(tile_img.width, tile_img.height) * stage_ratio))
         used_model = False
         if _is_uniform_image(tile_core) or _is_uniform_image(tile_img):
+            stats.local_calls += 1
             if idx % 10 == 0 or idx == len(tiles) - 1:
                 logger.info(
                     f"Stage {stage_index}/{total_stages} image {idx + 1}/{len(tiles)} uniform tile "
@@ -273,6 +303,7 @@ async def _upscale_tiled_stage(
                 )
             upscaled_tile = _resize_longest(tile_img, tile_stage_target)
         else:
+            stats.api_calls += 1
             model_tile_img, tile_target = _prepare_model_input(tile_img, tile_stage_target)
             tile_label = (
                 f"Stage {stage_index}/{total_stages} image {idx + 1}/{len(tiles)} "
@@ -328,6 +359,7 @@ async def _upscale_stage(
     tile_size: int,
     pad: int,
     delay_between_tiles: float,
+    stats: UpscaleStats,
 ) -> Image.Image:
     """Run one <=2x stage, deciding whether this stage needs tiling."""
     if max(img.width, img.height) <= MAX_TILE_MODEL_INPUT_SIZE:
@@ -342,6 +374,7 @@ async def _upscale_stage(
             total_stages,
             upscale_fn,
             delay_between_tiles,
+            stats,
         )
 
     return await _upscale_tiled_stage(
@@ -353,6 +386,7 @@ async def _upscale_stage(
         tile_size,
         pad,
         delay_between_tiles,
+        stats,
     )
 
 
@@ -364,6 +398,7 @@ async def tile_upscale(
     pad: int = TILE_PAD,
     delay_between_tiles: float = TILE_DELAY_SECONDS,
     sharpen: bool = False,
+    mode: str = UPSCALE_MODE_PROGRESSIVE,
 ) -> bytes:
     """Upscale an image via tiled processing.
 
@@ -379,6 +414,8 @@ async def tile_upscale(
         pad: Overlap padding around each tile to avoid seams
         delay_between_tiles: Seconds to wait between tiles (for rate limiting)
         sharpen: Apply post-upscale sharpening to the final stitched canvas
+        mode: "progressive" splits into 2x stages (2x -> 4x -> 8x ...);
+            "oneshot" runs a single stage directly to the target size.
 
     Returns:
         Upscaled stitched image as PNG bytes
@@ -390,18 +427,22 @@ async def tile_upscale(
 
     current = img
     current_longest = src_longest
-    stage_targets: list[int] = []
-    planned_longest = src_longest
-    while planned_longest < target_size:
-        planned_longest = min(target_size, planned_longest * STAGE_UPSCALE_FACTOR)
-        stage_targets.append(planned_longest)
+    if mode == UPSCALE_MODE_ONESHOT:
+        stage_targets: list[int] = [target_size] if target_size > src_longest else []
+    else:
+        stage_targets = []
+        planned_longest = src_longest
+        while planned_longest < target_size:
+            planned_longest = min(target_size, planned_longest * STAGE_UPSCALE_FACTOR)
+            stage_targets.append(planned_longest)
 
     total_stages = len(stage_targets)
     logger.info(
-        f"Progressive tile upscale: {src_w}x{src_h} -> longest {target_size}px "
+        f"Tile upscale ({mode}): {src_w}x{src_h} -> longest {target_size}px "
         f"in {total_stages} stage(s)"
     )
 
+    stats = UpscaleStats()
     for stage_index, stage_target_size in enumerate(stage_targets, start=1):
         logger.info(
             f"Upscale stage {stage_index}/{total_stages}: {current.width}x{current.height} "
@@ -416,6 +457,7 @@ async def tile_upscale(
             tile_size,
             pad,
             delay_between_tiles,
+            stats,
         )
         current_longest = max(current.width, current.height)
 
@@ -432,6 +474,7 @@ async def tile_upscale(
     current.save(output, format="PNG")
     result = output.getvalue()
     logger.info(f"Tile upscale complete: {len(img_bytes)} -> {len(result)} bytes")
+    stats.log_summary(logger)
     return result
 
 
@@ -448,5 +491,8 @@ __all__ = [
     "STAGE_UPSCALE_FACTOR",
     "TILE_SIZE",
     "UNIFORM_TILE_CHANNEL_DELTA",
+    "UPSCALE_MODE_ONESHOT",
+    "UPSCALE_MODE_PROGRESSIVE",
+    "UpscaleStats",
     "tile_upscale",
 ]
