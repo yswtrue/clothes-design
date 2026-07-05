@@ -58,19 +58,6 @@ class AIProvider(ABC):
         pass
 
     @abstractmethod
-    async def vectorize(self, image: bytes, color_space: str = "rgb") -> bytes:
-        """Convert raster image to vector format.
-
-        Args:
-            image: Raster image bytes
-            color_space: Color space for vectorization (rgb|cmyk|lab)
-
-        Returns:
-            Vectorized image as bytes (SVG format)
-        """
-        pass
-
-    @abstractmethod
     async def composite_mockup(self, pattern: bytes, template: bytes, position: Position) -> bytes:
         """Composite pattern onto template mockup.
 

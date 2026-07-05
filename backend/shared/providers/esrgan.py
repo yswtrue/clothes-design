@@ -194,10 +194,6 @@ class ESRGANProvider(AIProvider):
         """Not implemented by ESRGAN provider."""
         raise NotImplementedError("Pattern generation not supported by ESRGAN provider")
 
-    async def vectorize(self, image: bytes, color_space: str = "rgb") -> bytes:
-        """Not implemented by ESRGAN provider."""
-        raise NotImplementedError("Vectorization not supported by ESRGAN provider")
-
     async def composite_mockup(self, pattern: bytes, template: bytes, position: Position) -> bytes:
         """Not implemented by ESRGAN provider."""
         raise NotImplementedError("Mockup compositing not supported by ESRGAN provider")

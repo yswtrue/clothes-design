@@ -24,7 +24,6 @@ from api.storage.storages import (
     generated_image_storage,  # AI-generated images
     thumbnail_storage,        # Thumbnails
     upscaled_storage,         # Upscaled images
-    vector_storage,           # Vector SVG files
     output_tif_storage,       # Exported TIF files
 )
 ```

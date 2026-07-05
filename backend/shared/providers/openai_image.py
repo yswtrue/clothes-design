@@ -625,9 +625,6 @@ class OpenAIImageProvider(AIProvider):
     async def upscale_image(self, image: bytes, target_size: int, *, content_type: str = "pattern", sharpen: bool = False) -> bytes:
         raise NotImplementedError("Use ReplicateProvider for upscaling")
 
-    async def vectorize(self, image: bytes, color_space: str = "rgb") -> bytes:
-        raise NotImplementedError("Use VectorizerProvider for vectorization")
-
     async def composite_mockup(self, pattern: bytes, template: bytes, position: Position) -> bytes:
         raise NotImplementedError("Use MockupsProvider for mockup compositing")
 

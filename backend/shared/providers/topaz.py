@@ -198,9 +198,6 @@ class TopazProvider(AIProvider):
     async def generate_pattern(self, style: StyleAnalysis, params: GenerationParams) -> bytes:
         raise NotImplementedError("Pattern generation not supported by Topaz provider")
 
-    async def vectorize(self, image: bytes, color_space: str = "rgb") -> bytes:
-        raise NotImplementedError("Vectorization not supported by Topaz provider")
-
     async def composite_mockup(self, pattern: bytes, template: bytes, position: Position) -> bytes:
         raise NotImplementedError("Mockup compositing not supported by Topaz provider")
 

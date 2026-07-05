@@ -42,7 +42,6 @@ class ProviderType(str, Enum):
     GPTPROTO = "gptproto"
     REPLICATE = "replicate"
     TOPAZ = "topaz"
-    VECTORIZER_AI = "vectorizer_ai"
 
 
 class TaskType(str, Enum):
@@ -57,7 +56,6 @@ DEFAULT_BASE_URLS = {
     "gptproto": "https://gptproto.com/api/v3",
     "replicate": "https://api.replicate.com/v1",
     "topaz": "https://api.topazlabs.com/image/v1",
-    "vectorizer_ai": "https://api.vectorizer.ai/api/v1",
 }
 
 

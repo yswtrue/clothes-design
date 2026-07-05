@@ -14,9 +14,8 @@ from api.storage.storages import (
     material_storage,
     thumbnail_storage,
     upscaled_storage,
-    vector_storage,
 )
-from shared.export_settings import ExportFormat, get_export_settings
+from shared.export_settings import get_export_settings
 
 router = APIRouter(prefix="/api/history", tags=["history"])
 
@@ -48,11 +47,9 @@ def _get_export_settings_response(
     generation_params: dict[str, Any] | None,
 ) -> dict[str, ExportSettingsResponse] | None:
     settings_by_format: dict[str, ExportSettingsResponse] = {}
-    export_formats: tuple[ExportFormat, ExportFormat] = ("svg", "tif")
-    for export_format in export_formats:
-        settings = get_export_settings(generation_params, export_format)
-        if settings:
-            settings_by_format[export_format] = ExportSettingsResponse(**settings)
+    settings = get_export_settings(generation_params, "tif")
+    if settings:
+        settings_by_format["tif"] = ExportSettingsResponse(**settings)
     return settings_by_format or None
 
 
@@ -63,7 +60,6 @@ class GeneratedDesignResponse(BaseModel):
     image_url: str | None = None
     thumbnail_url: str | None = None
     upscaled_url: str | None = None
-    vector_url: str | None = None
     variant_index: int
     prompt_used: str | None = None
     seed: int | None = None
@@ -138,7 +134,6 @@ async def get_history(
             image_path = _get_file_path(d.image)
             thumb_path = _get_file_path(d.thumbnail)
             upscaled_path = _get_file_path(d.upscaled_image)
-            vector_path = _get_file_path(d.vector_svg)
 
             design_id = d.id
             if design_id is None:
@@ -151,7 +146,6 @@ async def get_history(
                 image_url=generated_image_storage.get_url(image_path) if image_path else None,
                 thumbnail_url=thumbnail_storage.get_url(thumb_path) if thumb_path else None,
                 upscaled_url=upscaled_storage.get_url(upscaled_path) if upscaled_path else None,
-                vector_url=vector_storage.get_url(vector_path) if vector_path else None,
                 variant_index=d.variant_index,
                 prompt_used=d.prompt_used,
                 seed=d.seed,
@@ -224,7 +218,6 @@ async def get_generated_design(
     image_path = _get_file_path(design.image)
     thumb_path = _get_file_path(design.thumbnail)
     upscaled_path = _get_file_path(design.upscaled_image)
-    vector_path = _get_file_path(design.vector_svg)
 
     design_id = design.id
     if design_id is None:
@@ -240,7 +233,6 @@ async def get_generated_design(
         image_url=generated_image_storage.get_url(image_path) if image_path else None,
         thumbnail_url=thumbnail_storage.get_url(thumb_path) if thumb_path else None,
         upscaled_url=upscaled_storage.get_url(upscaled_path) if upscaled_path else None,
-        vector_url=vector_storage.get_url(vector_path) if vector_path else None,
         variant_index=design.variant_index,
         prompt_used=design.prompt_used,
         seed=design.seed,

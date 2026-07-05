@@ -3,7 +3,7 @@ import logging
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Any, Literal
+from typing import Any
 
 from PIL import Image
 from sqlalchemy import select
@@ -16,13 +16,13 @@ from api.storage.storages import (
     generated_image_storage,
     output_tif_storage,
     upscaled_storage,
-    vector_storage,
 )
 from config import get_settings
 from shared.ai.base import AIProvider
 from shared.ai.exceptions import AIProviderError
 from shared.ai.factory import Capability, get_provider_by_capability
 from shared.export_settings import (
+    ExportFormat,
     export_settings_match,
     get_export_settings,
     merge_export_settings,
@@ -36,13 +36,10 @@ from .tile_upscale import tile_upscale
 
 logger = logging.getLogger(__name__)
 
-ExportFormat = Literal["svg", "tif"]
-
 
 @dataclass(frozen=True)
 class ExportContext:
     image_filename: str
-    existing_vector_path: str | None
     existing_tif_path: str | None
     existing_upscaled_path: str | None
     generation_params: dict[str, Any] | None
@@ -75,7 +72,6 @@ class ExportPatternHandler(TaskHandler):
     def __init__(self) -> None:
         super().__init__()
         self.upscaler: AIProvider | None = None
-        self.vectorizer: AIProvider | None = None
         self._session_factory: async_sessionmaker | None = None
 
     async def _get_session_factory(self) -> async_sessionmaker:
@@ -92,14 +88,6 @@ class ExportPatternHandler(TaskHandler):
                 raise WorkerError("No active upscale provider configured")
             self.upscaler, _ = result
         return self.upscaler
-
-    async def _get_vectorizer(self) -> AIProvider:
-        if self.vectorizer is None:
-            result = await get_provider_by_capability(Capability.VECTORIZE)
-            if result is None:
-                raise WorkerError("No active vectorizer provider configured")
-            self.vectorizer, _ = result
-        return self.vectorizer
 
     async def _update_status(self, generated_design_id: int, status: str) -> None:
         from api.db.models import GeneratedDesign
@@ -140,8 +128,8 @@ class ExportPatternHandler(TaskHandler):
         if color_space not in ("CMYK", "RGB"):
             raise WorkerError(f"Invalid color_space: {color_space}")
 
-        export_format = task_data.get("format", "svg")
-        if export_format not in ("svg", "tif"):
+        export_format = task_data.get("format", "tif")
+        if export_format != "tif":
             raise WorkerError(f"Invalid format: {export_format}")
 
         content_type = task_data.get("content_type", "pattern")
@@ -172,7 +160,6 @@ class ExportPatternHandler(TaskHandler):
 
             return ExportContext(
                 image_filename=image_filename,
-                existing_vector_path=_get_file_path(record.vector_svg),
                 existing_tif_path=_get_file_path(record.export_tif),
                 existing_upscaled_path=_get_file_path(record.upscaled_image),
                 generation_params=record.generation_params,
@@ -198,19 +185,6 @@ class ExportPatternHandler(TaskHandler):
             sharpen=sharpen,
         )
         upscaled_filename = export_settings.get("upscaled_filename") if export_settings else None
-
-        if export_format == "svg" and context.existing_vector_path and settings_match and upscaled_filename:
-            self.logger.info(f"Reusing existing SVG export: {context.existing_vector_path}")
-            return {
-                "download_url": vector_storage.get_url(context.existing_vector_path),
-                "generated_design_id": generated_design_id,
-                "resolution": target_resolution,
-                "format": "svg",
-                "upscaled_url": upscaled_storage.get_url(upscaled_filename),
-                "content_type": normalize_content_type(content_type),
-                "sharpen": sharpen,
-                "reused": True,
-            }
 
         if export_format == "tif" and context.existing_tif_path and settings_match and upscaled_filename:
             self.logger.info(f"Reusing existing TIF export: {context.existing_tif_path}")
@@ -295,7 +269,7 @@ class ExportPatternHandler(TaskHandler):
         generated_design_id = task_data["generated_design_id"]
         target_resolution = task_data.get("target_resolution", 12000)
         color_space: ColorSpace = task_data.get("color_space", "CMYK")
-        export_format: ExportFormat = task_data.get("format", "svg")
+        export_format: ExportFormat = task_data.get("format", "tif")
         content_type = task_data.get("content_type", "pattern")
         sharpen = task_data.get("sharpen", False)
 
@@ -338,17 +312,6 @@ class ExportPatternHandler(TaskHandler):
                 f"Export: {upscaled.original_size}px -> {upscaled_size}px, DPI={export_dpi}"
             )
 
-            if export_format == "svg":
-                return await self._export_svg(
-                    generated_design_id,
-                    upscaled.data,
-                    upscaled.filename,
-                    target_resolution,
-                    color_space,
-                    content_type,
-                    sharpen,
-                )
-
             return await self._export_tif(
                 generated_design_id,
                 upscaled.data,
@@ -389,66 +352,6 @@ class ExportPatternHandler(TaskHandler):
         ):
             return None
         return export_settings.get("upscaled_filename") if export_settings else None
-
-    async def _export_svg(
-        self,
-        generated_design_id: int,
-        upscaled_bytes: bytes,
-        upscaled_filename: str,
-        target_resolution: int,
-        color_space: str,
-        content_type: str,
-        sharpen: bool,
-    ) -> dict[str, Any]:
-        from api.db.models import GeneratedDesign
-
-        self.logger.info("Vectorizing to SVG")
-        vectorizer = await self._get_vectorizer()
-        svg_bytes = await vectorizer.vectorize(upscaled_bytes, color_space)
-        self.logger.info(f"Vectorized: {len(svg_bytes)} bytes")
-
-        unique_id = uuid.uuid4().hex[:8]
-        svg_filename = f"gen_{generated_design_id}_{unique_id}.svg"
-
-        session_factory = await self._get_session_factory()
-        async with session_factory() as session:
-            result = await session.execute(
-                select(GeneratedDesign).where(col(GeneratedDesign.id) == generated_design_id)
-            )
-            record = result.scalar_one_or_none()
-            if record:
-                record.status = "exported"
-                record.vector_svg = make_upload_file(svg_bytes, svg_filename)
-                record.exported_at = datetime.now(UTC).replace(tzinfo=None)
-                record.generation_params = merge_export_settings(
-                    record.generation_params,
-                    normalize_export_settings(
-                        export_format="svg",
-                        target_resolution=target_resolution,
-                        color_space=color_space,
-                        content_type=content_type,
-                        sharpen=sharpen,
-                        upscaled_filename=upscaled_filename,
-                        output_filename=svg_filename,
-                    ),
-                )
-                await session.commit()
-
-        upscaled_url = upscaled_storage.get_url(upscaled_filename)
-        svg_url = vector_storage.get_url(svg_filename)
-
-        self.logger.info(f"SVG export complete: {svg_url}")
-
-        return {
-            "download_url": svg_url,
-            "generated_design_id": generated_design_id,
-            "resolution": target_resolution,
-            "format": "svg",
-            "file_size": len(svg_bytes),
-            "upscaled_url": upscaled_url,
-            "content_type": normalize_content_type(content_type),
-            "sharpen": sharpen,
-        }
 
     async def _export_tif(
         self,

@@ -1,16 +1,15 @@
 # Clothes Design Platform
 
-A high-performance clothes design platform featuring AI-powered design generation, vectorization, and mockup visualization.
+A high-performance clothes design platform featuring AI-powered design generation and mockup visualization.
 
 ## 🚀 Overview
 
-This platform enables designers to create, iterate, and visualize clothing designs through a seamless integration of multiple AI providers. From initial concept generation to final print-ready vector export, the system manages the entire workflow asynchronously.
+This platform enables designers to create, iterate, and visualize clothing designs through a seamless integration of multiple AI providers. From initial concept generation to final print-ready TIF export, the system manages the entire workflow asynchronously.
 
 ### Core Features
 
 - **AI-Powered Design**: Generate unique patterns and graphics using GPT-4V and Stability AI.
 - **Image Enhancement**: High-quality upscaling with Real-ESRGAN.
-- **Vectorization**: Precise tracing of designs via Vectorizer.ai for print-ready outputs.
 - **Mockup Visualization**: Realistic garment previews using Dynamic Mockups.
 - **Granular RBAC**: Permission-based access control for Admins, Designers, and Viewers.
 - **Asynchronous Workflow**: Redis-backed task queue for reliable long-running job processing.
@@ -23,7 +22,7 @@ This platform enables designers to create, iterate, and visualize clothing desig
 | **Frontend** | Next.js 16.2 (App Router), React 19, TypeScript, Tailwind v4 |
 | **Worker** | Python 3.13, Celery 5.3+, Redis |
 | **Dev Environment** | devenv (Nix), Bun 1.3.10, UV |
-| **AI Providers** | OpenAI, Stability AI, Vectorizer.ai, Dynamic Mockups, Replicate |
+| **AI Providers** | OpenAI, Stability AI, Dynamic Mockups, Replicate |
 
 ## 📦 Project Structure
 
@@ -79,9 +78,8 @@ python -m worker
 1. **Upload/Analyze**: User uploads a design or inspiration. AI analyzes the content.
 2. **Generate**: New design versions are generated based on prompts/inspiration.
 3. **Enhance**: Upscale low-res generations to high-quality images.
-4. **Vectorize**: Convert raster designs to SVG for professional printing.
-5. **Mockup**: Apply designs to garment templates for visual verification.
-6. **Export**: Export final design packages for production.
+4. **Mockup**: Apply designs to garment templates for visual verification.
+5. **Export**: Export final design packages (TIF CMYK) for production.
 
 ## 🐳 Docker Deployment
 

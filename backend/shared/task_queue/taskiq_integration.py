@@ -17,7 +17,6 @@ from worker.tasks import (
     mockup_task,
     model_preview_task,
     upscale_task,
-    vectorize_task,
 )
 
 from .redis_client import get_redis_client
@@ -39,7 +38,6 @@ TASK_MAP = {
     "mockup": mockup_task,
     "model_preview": model_preview_task,
     "upscale": upscale_task,
-    "vectorize": vectorize_task,
 }
 
 

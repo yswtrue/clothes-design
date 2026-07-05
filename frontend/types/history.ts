@@ -17,7 +17,6 @@ export interface GeneratedDesign {
   image_url: string | null;
   thumbnail_url: string | null;
   upscaled_url: string | null;
-  vector_url: string | null;
   variant_index: number;
   prompt_used: string | null;
   seed: number | null;

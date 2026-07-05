@@ -30,7 +30,6 @@ worker/
 │   ├── analyze.py    # AI design analysis
 │   ├── generate.py   # Stability AI / OpenAI generation
 │   ├── upscale.py    # Real-ESRGAN / AI upscaling
-│   ├── vectorize.py  # SVG tracing
 │   └── mockup.py     # Garment preview generation
 ├── celery_tasks.py   # Celery task wrappers
 └── main.py           # [DEPRECATED] Old worker entry point

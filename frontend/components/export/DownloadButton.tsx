@@ -10,11 +10,6 @@ interface DownloadButtonProps {
 }
 
 const formatLabels: Record<ExportFormat, { name: string; extension: string; description: string }> = {
-  svg: {
-    name: 'SVG',
-    extension: 'svg',
-    description: 'Vector format, infinitely scalable',
-  },
   tif: {
     name: 'TIF',
     extension: 'tif',

@@ -172,24 +172,6 @@ class StabilityProvider(AIProvider):
         """
         raise NotImplementedError("Upscaling will be implemented in Task 13")
 
-    async def vectorize(self, image: bytes, color_space: str = "rgb") -> bytes:
-        """Convert raster image to vector format.
-
-        Note: Stability AI doesn't provide vectorization.
-        This should use a specialized vectorization service.
-
-        Args:
-            image: Raster image bytes
-            color_space: Color space for vectorization
-
-        Returns:
-            Vectorized image as bytes (SVG format)
-
-        Raises:
-            NotImplementedError: This provider doesn't support vectorization
-        """
-        raise NotImplementedError("StabilityProvider does not support vectorization")
-
     async def composite_mockup(self, pattern: bytes, template: bytes, position: Position) -> bytes:
         """Composite pattern onto template mockup.
 

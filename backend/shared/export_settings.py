@@ -1,7 +1,7 @@
 from typing import Any, Literal, TypedDict
 
 ExportContentType = Literal["line-art", "pattern"]
-ExportFormat = Literal["svg", "tif"]
+ExportFormat = Literal["tif"]
 
 EXPORT_SETTINGS_KEY = "export_settings"
 

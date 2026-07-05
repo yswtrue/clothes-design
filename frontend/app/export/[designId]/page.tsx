@@ -47,7 +47,7 @@ export default function ExportPage({ params }: PageProps) {
     try {
       const design = await fetchGeneratedDesign(designIdNum);
       setPreviewUrl(design.thumbnail_url || design.image_url || null);
-      const historicalSettings = design.export_settings?.tif ?? design.export_settings?.svg;
+      const historicalSettings = design.export_settings?.tif;
       if (historicalSettings?.content_type) {
         setContentType(historicalSettings.content_type);
       }
@@ -292,23 +292,6 @@ export default function ExportPage({ params }: PageProps) {
 
                 <div className="space-y-3">
                   <button
-                    onClick={() => handleExport('svg')}
-                    disabled={state === 'exporting'}
-                    className="w-full rounded-md border-2 border-zinc-950 dark:border-zinc-50 bg-transparent px-4 py-3 text-sm font-medium text-zinc-950 dark:text-zinc-50 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                  >
-                    {state === 'exporting' && exportFormat === 'svg' ? (
-                      'Exporting SVG...'
-                    ) : (
-                      <span className="flex items-center justify-center gap-2">
-                        <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z" />
-                        </svg>
-                        Export SVG (Vector)
-                      </span>
-                    )}
-                  </button>
-
-                  <button
                     onClick={() => handleExport('tif')}
                     disabled={state === 'exporting'}
                     className="w-full rounded-md bg-zinc-950 dark:bg-zinc-50 px-4 py-3 text-sm font-medium text-white dark:text-zinc-950 hover:bg-zinc-800 dark:hover:bg-zinc-200 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
@@ -327,7 +310,6 @@ export default function ExportPage({ params }: PageProps) {
                 </div>
 
                 <p className="mt-4 text-xs text-zinc-500 dark:text-zinc-500 text-center">
-                  SVG: Infinitely scalable vector format<br />
                   TIF: 300 DPI CMYK for professional printing
                 </p>
               </div>

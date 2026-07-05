@@ -56,7 +56,7 @@ User's library of uploaded design materials (images, textures, patterns).
 - `id` (INTEGER, PRIMARY KEY)
 - `user_id` (INTEGER, FK → users.id, SET NULL, INDEXED) - Owner (nullable for audit)
 - `file_path` (VARCHAR 500) - S3 or storage path
-- `file_type` (VARCHAR 50) - MIME type or file extension (e.g., "png", "jpg", "svg")
+- `file_type` (VARCHAR 50) - MIME type or file extension (e.g., "png", "jpg", "tif")
 - `meta` (JSONB) - File metadata:
   - Original dimensions
   - File size

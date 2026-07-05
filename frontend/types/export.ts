@@ -1,6 +1,6 @@
 export type ExportContentType = 'line-art' | 'pattern';
 
-export type ExportFormat = 'svg' | 'tif';
+export type ExportFormat = 'tif';
 
 export interface ExportResponse {
   task_id: string | null;

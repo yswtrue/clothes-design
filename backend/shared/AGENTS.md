@@ -18,7 +18,6 @@ shared/
 │   ├── stability.py      # Stability AI pattern generation
 │   ├── mockups.py        # Mockup compositing
 │   ├── esrgan.py         # Real-ESRGAN upscaling
-│   └── vectorizer.py     # Raster-to-vector tracing
 └── task_queue/
     ├── celery_integration.py  # enqueue_task bridge to Celery
     ├── tasks.py               # Task helpers
@@ -76,7 +75,6 @@ result = await provider.generate_pattern(
   - GPT4V: Style analysis, design description
   - Stability: Pattern generation, style transfer
   - ESRGAN: Image upscaling (2x, 4x)
-  - Vectorizer: Raster-to-SVG tracing
   - Mockups: Composite design onto garment template
 - **Task Queue**: Celery + Redis. API enqueues, worker consumes. Metadata stored in Redis for status polling.
 - **Used By**: Backend API routes (generate, upload, export, designs) and all worker handlers.

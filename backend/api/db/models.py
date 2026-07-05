@@ -12,7 +12,6 @@ from api.storage.storages import (
     prj_storage,
     thumbnail_storage,
     upscaled_storage,
-    vector_storage,
 )
 from fastapi_storages.integrations.sqlalchemy import FileType
 from sqlalchemy import JSON, Column, ForeignKey, Text, UniqueConstraint, func
@@ -156,7 +155,6 @@ class GeneratedDesign(SoftDeleteMixin, table=True):
     image: Any = Field(default=None, sa_column=Column("image_path", FileType(storage=generated_image_storage), nullable=True))
     thumbnail: Any = Field(default=None, sa_column=Column("thumbnail_path", FileType(storage=thumbnail_storage), nullable=True))
     upscaled_image: Any = Field(default=None, sa_column=Column("upscaled_path", FileType(storage=upscaled_storage), nullable=True))
-    vector_svg: Any = Field(default=None, sa_column=Column("vector_path", FileType(storage=vector_storage), nullable=True))
     export_tif: Any = Field(default=None, sa_column=Column("export_tif_path", FileType(storage=output_tif_storage), nullable=True))
     prompt_used: Optional[str] = Field(default=None)
     seed: Optional[int] = Field(default=None)

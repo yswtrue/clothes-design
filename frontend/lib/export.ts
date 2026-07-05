@@ -32,7 +32,7 @@ export function getExportMultiplierForResolution(targetResolution: number | null
 
 export async function triggerExport(
   designId: number,
-  format: ExportFormat = 'svg',
+  format: ExportFormat = 'tif',
   contentType: ExportContentType = 'pattern',
   sharpen: boolean = false,
   targetResolution: number = 12000,

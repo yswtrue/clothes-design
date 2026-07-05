@@ -16,12 +16,9 @@ export default function ExportProgress({ status, isPolling, error }: ExportProgr
   );
 
   const getStepText = (currentStep: string | null, format: string | null, targetResolution: number | null | undefined): string => {
-    const formatLabel = format === 'tif' ? 'TIF' : 'SVG';
+    const formatLabel = 'TIF';
     if (currentStep === 'upscaling') {
       return `Step 1/2: Upscaling to ${getResolutionText(targetResolution)} resolution...`;
-    }
-    if (currentStep === 'vectorizing') {
-      return `Step 2/2: Vectorizing to ${formatLabel}...`;
     }
     if (currentStep === 'converting') {
       return `Step 2/2: Converting to ${formatLabel} (CMYK)...`;

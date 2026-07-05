@@ -547,10 +547,6 @@ class ReplicateProvider(AIProvider):
     ) -> StyleAnalysis:
         raise NotImplementedError("Use GPT4VProvider for style analysis")
 
-    async def vectorize(self, image: bytes, color_space: str = "rgb") -> bytes:
-        """Not supported - use VectorizerProvider."""
-        raise NotImplementedError("Use VectorizerProvider for vectorization")
-
     async def composite_mockup(self, pattern: bytes, template: bytes, position: Position) -> bytes:
         """Not supported - use MockupsProvider."""
         raise NotImplementedError("Use MockupsProvider for mockup compositing")

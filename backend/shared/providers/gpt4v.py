@@ -182,8 +182,5 @@ Extract 3-5 dominant colors as hex codes. Suggest optimal tiling mode and scale.
     async def upscale_image(self, image: bytes, target_size: int, *, content_type: str = "pattern", sharpen: bool = False) -> bytes:
         raise NotImplementedError("Image upscaling not yet implemented")
 
-    async def vectorize(self, image: bytes, color_space: str = "rgb") -> bytes:
-        raise NotImplementedError("Vectorization not yet implemented")
-
     async def composite_mockup(self, pattern: bytes, template: bytes, position: Position) -> bytes:
         raise NotImplementedError("Mockup compositing not yet implemented")

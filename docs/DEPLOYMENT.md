@@ -786,7 +786,6 @@ docker compose exec postgres psql -U postgres -d clothes_design -c "SELECT pg_si
 
 - OpenAI API: https://platform.openai.com/docs/
 - Stability AI: https://platform.stability.ai/docs/
-- Vectorizer.ai: https://vectorizer.ai/api/
 - Replicate: https://replicate.com/docs/
 
 ## Quick Reference

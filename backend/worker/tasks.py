@@ -27,14 +27,6 @@ async def upscale_task(task_data: dict[str, Any]) -> dict[str, Any]:
     return await handler.handle(task_data)
 
 
-@broker.task(task_name="worker.tasks.vectorize")
-async def vectorize_task(task_data: dict[str, Any]) -> dict[str, Any]:
-    from worker.handlers.vectorize import VectorizeHandler
-
-    handler = VectorizeHandler()
-    return await handler.handle(task_data)
-
-
 @broker.task(task_name="worker.tasks.mockup")
 async def mockup_task(task_data: dict[str, Any]) -> dict[str, Any]:
     from worker.handlers.mockup import MockupHandler
@@ -102,5 +94,4 @@ __all__ = [
     "mockup_task",
     "model_preview_task",
     "upscale_task",
-    "vectorize_task",
 ]

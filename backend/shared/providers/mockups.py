@@ -182,25 +182,6 @@ class MockupsProvider(AIProvider):
         """
         raise NotImplementedError("MockupsProvider does not support upscaling. Use ESRGANProvider.")
 
-    async def vectorize(self, image: bytes, color_space: str = "rgb") -> bytes:
-        """Convert raster image to vector format.
-
-        Note: MockupsProvider doesn't support vectorization.
-
-        Args:
-            image: Raster image bytes
-            color_space: Color space for vectorization
-
-        Returns:
-            Vectorized image as bytes (SVG format)
-
-        Raises:
-            NotImplementedError: This provider doesn't support vectorization
-        """
-        raise NotImplementedError(
-            "MockupsProvider does not support vectorization. Use VectorizerProvider."
-        )
-
 
 __all__ = [
     "MockupsProvider",

@@ -15,14 +15,12 @@ class Capability(str, Enum):
     ANALYSIS = "analysis"
     IMAGE_GENERATION = "image_generation"
     UPSCALE = "upscale"
-    VECTORIZE = "vectorize"
 
 
 CAPABILITY_PROVIDER_TYPES: dict[Capability, list[str]] = {
     Capability.ANALYSIS: ["openai"],
     Capability.IMAGE_GENERATION: ["gptproto", "openai_image_edit"],
     Capability.UPSCALE: ["replicate", "topaz"],
-    Capability.VECTORIZE: ["vectorizer_ai"],
 }
 
 
@@ -32,7 +30,6 @@ def _get_provider_class(provider_type: str) -> type[Any]:
     from shared.providers.openai_image import OpenAIImageProvider
     from shared.providers.replicate import ReplicateProvider
     from shared.providers.topaz import TopazProvider
-    from shared.providers.vectorizer import VectorizerProvider
 
     providers: dict[str, type[Any]] = {
         "openai": GPT4VProvider,
@@ -40,7 +37,6 @@ def _get_provider_class(provider_type: str) -> type[Any]:
         "gptproto": GPTProtoProvider,
         "replicate": ReplicateProvider,
         "topaz": TopazProvider,
-        "vectorizer_ai": VectorizerProvider,
     }
 
     if provider_type not in providers:
@@ -84,7 +80,3 @@ async def get_provider_for_image_generation() -> tuple[AIProvider, str] | None:
 
 async def get_provider_for_upscale() -> tuple[AIProvider, str] | None:
     return await get_provider_by_capability(Capability.UPSCALE)
-
-
-async def get_provider_for_vectorize() -> tuple[AIProvider, str] | None:
-    return await get_provider_by_capability(Capability.VECTORIZE)

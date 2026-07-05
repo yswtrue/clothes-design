@@ -1,6 +1,6 @@
-"""Export API endpoints for high-resolution SVG and TIF CMYK exports."""
+"""Export API endpoints for high-resolution TIF CMYK exports."""
 
-from typing import Annotated, Literal
+from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel
@@ -14,9 +14,9 @@ from api.db.models import GeneratedDesign, Material, User
 from api.storage.storages import (
     output_tif_storage,
     upscaled_storage,
-    vector_storage,
 )
 from shared.export_settings import (
+    ExportFormat,
     export_settings_match,
     get_export_settings,
     normalize_content_type,
@@ -31,8 +31,6 @@ from shared.task_queue import (
 from shared.task_queue.redis_client import get_redis_client
 
 router = APIRouter(prefix="/api/export", tags=["export"])
-
-ExportFormat = Literal["svg", "tif"]
 
 _session_dep = Annotated[AsyncSession, Depends(get_session)]
 _user_dep = Annotated[User, Depends(get_current_user)]
@@ -108,7 +106,7 @@ async def trigger_export(
     generated_design_id: int,
     session: _session_dep,
     current_user: _user_dep,
-    export_format: ExportFormat = Query(default="svg", alias="format", description="Export format: svg or tif"),
+    export_format: ExportFormat = Query(default="tif", alias="format", description="Export format (only tif supported)"),
     target_resolution: int = Query(default=12000, ge=1024, le=16384, description="Target resolution in pixels"),
     content_type: str = Query(default="pattern", pattern="^(line-art|pattern)$", description="Content type: line-art for sharp-edged designs, pattern for textured/photographic"),
     sharpen: bool = Query(default=False, description="Apply post-upscale sharpening"),
@@ -152,7 +150,6 @@ async def trigger_export(
             detail=f"Cannot export design with status: {generated_design.status}",
         )
 
-    existing_vector = _get_file_path(generated_design.vector_svg)
     existing_tif = _get_file_path(generated_design.export_tif)
     export_settings = get_export_settings(generated_design.generation_params, export_format)
     settings_match = export_settings_match(
@@ -164,19 +161,6 @@ async def trigger_export(
         sharpen=sharpen,
     )
     settings_upscaled = export_settings.get("upscaled_filename") if export_settings else None
-
-    if export_format == "svg" and existing_vector and settings_match and settings_upscaled:
-        return ExportResponse(
-            task_id=None,
-            generated_design_id=generated_design_id,
-            format=export_format,
-            status="exported",
-            download_url=vector_storage.get_url(existing_vector),
-            upscaled_url=upscaled_storage.get_url(settings_upscaled),
-            content_type=normalize_content_type(content_type),
-            sharpen=sharpen,
-            target_resolution=target_resolution,
-        )
 
     if export_format == "tif" and existing_tif and settings_match and settings_upscaled:
         return ExportResponse(
@@ -407,10 +391,7 @@ async def get_export_status(
 
     if task_status.status == "processing":
         step_info = task_status.data.get("current_step") if task_status.data else None
-        if step_info == "vectorizing":
-            current_step = "vectorizing"
-            progress = 60
-        elif step_info == "converting":
+        if step_info == "converting":
             current_step = "converting"
             progress = 60
         else:
