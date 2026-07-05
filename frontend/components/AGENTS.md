@@ -20,13 +20,10 @@ components/
 │   └── AnalysisResult.tsx    # Client (analysis UI)
 ├── generate/
 │   ├── MaterialSelector.tsx  # Client (needs "use client")
-│   ├── PrintTypeSelector.tsx # Presentational (server or client)
 │   ├── GenerationProgress.tsx # Client (lazy loaded)
 │   └── PatternResult.tsx     # Client (lazy loaded)
 ├── preview/
-│   ├── TemplateSelector.tsx  # Client (template picker)
-│   ├── PreviewCanvas.tsx     # Client (Konva - lazy loaded, ssr:false)
-│   └── ColorAdjuster.tsx     # Client (color controls)
+│   └── PreviewCanvas.tsx     # Client (Konva - lazy loaded, ssr:false)
 ├── history/
 │   ├── VersionList.tsx       # Client (needs "use client" added)
 │   ├── DesignCard.tsx        # Server Component
@@ -74,14 +71,14 @@ components/
 - ErrorBoundary, RouteGuard, LazyComponents
 - All dashboard tabs (Upload, Generate, History, Templates)
 - upload/* (DropZone, UploadProgress, AnalysisResult)
-- preview/* (TemplateSelector, PreviewCanvas, ColorAdjuster)
+- preview/* (PreviewCanvas)
 - generate/* (GenerationProgress, PatternResult)
 - export/* (ExportProgress, DownloadButton)
 
 **Server Components** (no "use client"):
 - dashboard/OverviewTab
 - history/* (DesignCard, Pagination, ConfirmModal, VersionList*)
-- generate/* (PrintTypeSelector, MaterialSelector*)
+- generate/* (MaterialSelector*)
 
 *Note: VersionList and MaterialSelector should be Client Components but currently lack directive—needs fix.
 
