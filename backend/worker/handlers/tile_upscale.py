@@ -158,7 +158,7 @@ def _resize_longest(img: Image.Image, longest: int) -> Image.Image:
             max(1, round(img.width * ratio)),
             max(1, round(img.height * ratio)),
         ),
-        Image.Resampling.BICUBIC,
+        Image.Resampling.LANCZOS,
     )
 
 
