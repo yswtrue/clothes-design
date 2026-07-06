@@ -63,6 +63,9 @@ REAL_ESRGAN_X4PLUS_MODEL = ESRGAN_MODEL  # alias for content-type routing
 REAL_ESRGAN_ANIME_MODEL = (
     "xinntao/realesrgan:1b976a4d456ed9e4d1a846597b7614e79eadad3032e9124fa63859db0fd59b56"
 )
+CLARITY_UPSCALER_MODEL = (
+    "philz1337x/clarity-upscaler:dfad41707589d68ecdccd1dfa600d55a208f9310748e44bfe35b4a6291453d5e"
+)
 # Models that use the xinntao/realesrgan input schema (img + version, not image)
 _XINTAO_REALESRGAN_PREFIX = "xinntao/realesrgan"
 UPSCALE_MODEL_BY_CONTENT_TYPE = {
@@ -71,7 +74,7 @@ UPSCALE_MODEL_BY_CONTENT_TYPE = {
     # the stable Real-ESRGAN endpoint; line-art differences are handled by
     # bicubic resize plus optional sharpening below.
     "line-art": REAL_ESRGAN_X4PLUS_MODEL,
-    "pattern": REAL_ESRGAN_X4PLUS_MODEL,
+    "pattern": CLARITY_UPSCALER_MODEL,
 }
 UPSCALE_MODEL = SWINIR_MODEL  # better texture preservation; ESRGAN_MODEL for GAN upscale
 SDXL_IMG2IMG_MODEL = (
@@ -367,6 +370,24 @@ class ReplicateProvider(AIProvider):
             current_image = await self._replicate_output_to_bytes(output)
         return current_image
 
+    async def _run_clarity_upscale(
+        self, model: str, image: bytes, raw_scale: float, sharpen: bool
+    ) -> bytes:
+        """Upscale image using Clarity Upscaler with pattern mode on Replicate."""
+        with self._image_file_input(image) as image_file:
+            output = await self._run_prediction(
+                model,
+                {
+                    "image": image_file,
+                    "scale_factor": max(1.0, min(16.0, raw_scale)),
+                    "pattern": True,
+                    "creativity": 0.35,
+                    "resemblance": 1.0,
+                    "sharpen": 8 if sharpen else 0,
+                },
+            )
+        return await self._replicate_output_to_bytes(output)
+
     def _postprocess_upscaled_image(
         self,
         upscaled_bytes: bytes,
@@ -427,6 +448,10 @@ class ReplicateProvider(AIProvider):
             try:
                 if "swinir" in model.lower():
                     upscaled_bytes = await self._run_swinir_upscale(model, image, raw_scale)
+                elif "clarity" in model.lower():
+                    upscaled_bytes = await self._run_clarity_upscale(
+                        model, image, raw_scale, sharpen
+                    )
                 else:
                     upscaled_bytes = await self._run_esrgan_upscale(model, image, raw_scale)
 
@@ -434,7 +459,7 @@ class ReplicateProvider(AIProvider):
                     upscaled_bytes,
                     target_size,
                     content_type=content_type,
-                    sharpen=sharpen,
+                    sharpen=sharpen if "clarity" not in model.lower() else False,
                 )
 
                 logger.info(f"Image upscaled: {input_size}px -> {target_size}px")

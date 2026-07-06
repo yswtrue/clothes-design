@@ -15,6 +15,7 @@ import shared.providers.replicate as replicate_module
 from shared.ai.exceptions import ProviderRateLimitError, ProviderTimeoutError
 from shared.ai.schemas import GenerationParams, StyleAnalysis
 from shared.providers.replicate import (
+    CLARITY_UPSCALER_MODEL,
     ESRGAN_MODEL,
     SDXL_IMG2IMG_MODEL,
     ReplicateProvider,
@@ -162,9 +163,12 @@ async def test_upscale_image_passes_file_input_to_official_sdk(
     assert Image.open(BytesIO(upscaled)).size == (1200, 1200)
     assert len(client.calls) == 1
     call = client.calls[0]
-    assert call["model"] == ESRGAN_MODEL
-    assert call["input"]["scale"] == 2
-    assert call["input"]["face_enhance"] is False
+    assert call["model"] == CLARITY_UPSCALER_MODEL
+    assert call["input"]["scale_factor"] == pytest.approx(1200 / 512)  # ~2.34
+    assert call["input"]["pattern"] is True
+    assert call["input"]["creativity"] == 0.35
+    assert call["input"]["resemblance"] == 1.0
+    assert call["input"]["sharpen"] == 0
     assert call["image_bytes"] == image_bytes
     assert call["image_closed_during_call"] is False
     assert not isinstance(call["input"]["image"], str)
